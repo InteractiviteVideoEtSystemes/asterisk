@@ -547,8 +547,7 @@ chan_ooh323 module for Asterisk
 %endif
 
 %prep
-echo checkout desactive pour ce pkg.Pour permettre une compil sur les machines sibles
-echo %{version}-videocaps > %{name}/.version
+echo %{version} > %{name}/.version
 
 
 %build
