@@ -547,7 +547,8 @@ chan_ooh323 module for Asterisk
 %endif
 
 %prep
-echo %{version} > %{name}/.version
+cd $RPM_SOURCE_DIR/asterisk13
+echo %{version} > .version
 
 
 %build
@@ -556,10 +557,10 @@ echo %{version} > %{name}/.version
 %else
 %define makeflags OPT=
 %endif
+cd $RPM_SOURCE_DIR/asterisk13
 echo %{version}%{?_without_optimizations:-debug} > .version
 
 # Use Bundled pjproject
-cd %{name}
 ./configure --prefix=/usr --libdir=%{_libdir} --with-pjproject-bundled
 make menuselect.makeopts
 #menuselect/menuselect --list-options to get the options passed below

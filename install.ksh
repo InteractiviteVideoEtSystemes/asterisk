@@ -49,8 +49,8 @@ function create_rpm
     # asteriskv.spec.ives
     echo "Nettoyage et copie de l'arbre de source vers l'env de build RPM"
     make clean > /dev/null
-    rm -rf $HOME/rpmbuild/BUILD/${PROJET}
-    cp -rp . $HOME/rpmbuild/BUILD/${PROJET}
+    rm -rf $HOME/rpmbuild/SOURCES/${PROJET}
+    cp -rp . $HOME/rpmbuild/SOURCES/${PROJET}
 
      if [[ -z $1 || $1 -ne nosign ]]
     then
@@ -78,7 +78,7 @@ function clean
 {
   	# On efface les liens ainsi que le package precedemment créé
   	echo Effacement des fichiers et liens gnupg rpmbuild ${PROJET}.rpm ${TEMPDIR}/${PROJET}
-  	rm -rf $HOME/rpmbuild/SPECS/${PROJET}.spec $HOME/rpmbuild/gnupg $HOME/rpmbuild/BUILD/${PROJET}
+  	rm -rf $HOME/rpmbuild/SPECS/${PROJET}.spec $HOME/rpmbuild/gnupg $HOME/rpmbuild/SOURCES/${PROJET}
 }
 
 case $1 in
