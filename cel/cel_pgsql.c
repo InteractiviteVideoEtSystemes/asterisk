@@ -44,8 +44,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <libpq-fe.h>
 
 #include "asterisk/config.h"
@@ -181,11 +179,14 @@ static void pgsql_log(struct ast_event *event)
 	if (connected) {
 		struct columns *cur;
 		struct ast_str *sql = ast_str_create(maxsize), *sql2 = ast_str_create(maxsize2);
-		char buf[257], escapebuf[513];
+		char buf[257];
+		char *escapebuf = NULL;
 		const char *value;
 		int first = 1;
+		size_t bufsize = 513;
 
-		if (!sql || !sql2) {
+		escapebuf = ast_malloc(bufsize);
+		if (!escapebuf || !sql || !sql2) {
 			goto ast_log_cleanup;
 		}
 
@@ -309,6 +310,23 @@ static void pgsql_log(struct ast_event *event)
 					/* XXX Might want to handle dates, times, and other misc fields here XXX */
 				} else {
 					if (value) {
+						size_t required_size = strlen(value) * 2 + 1;
+
+						/* If our argument size exceeds our buffer, grow it,
+						 * as PQescapeStringConn() expects the buffer to be
+						 * adequitely sized and does *NOT* do size checking.
+						 */
+						if (required_size > bufsize) {
+							char *tmpbuf = ast_realloc(escapebuf, required_size);
+
+							if (!tmpbuf) {
+								AST_RWLIST_UNLOCK(&psql_columns);
+								goto ast_log_cleanup;
+							}
+
+							escapebuf = tmpbuf;
+							bufsize = required_size;
+						}
 						PQescapeStringConn(conn, escapebuf, value, strlen(value), NULL);
 					} else {
 						escapebuf[0] = '\0';
@@ -363,8 +381,6 @@ static void pgsql_log(struct ast_event *event)
 					ast_log(LOG_ERROR, "Reason: %s\n", pgerror);
 				}
 			}
-			PQclear(result);
-			goto ast_log_cleanup;
 		}
 		PQclear(result);
 
@@ -379,6 +395,7 @@ static void pgsql_log(struct ast_event *event)
 ast_log_cleanup:
 		ast_free(sql);
 		ast_free(sql2);
+		ast_free(escapebuf);
 	}
 
 	ast_mutex_unlock(&pgsql_lock);
@@ -539,18 +556,18 @@ static int process_my_load_module(struct ast_config *cfg)
 		ast_log(LOG_WARNING,"PostgreSQL Ran out of memory copying schema info\n");
 		return AST_MODULE_LOAD_DECLINE;
 	}
-	if (option_debug) {
+	if (DEBUG_ATLEAST(3)) {
 		if (ast_strlen_zero(pghostname)) {
-			ast_debug(3, "cel_pgsql: using default unix socket\n");
+			ast_log(LOG_DEBUG, "cel_pgsql: using default unix socket\n");
 		} else {
-			ast_debug(3, "cel_pgsql: got hostname of %s\n", pghostname);
+			ast_log(LOG_DEBUG, "cel_pgsql: got hostname of %s\n", pghostname);
 		}
-		ast_debug(3, "cel_pgsql: got port of %s\n", pgdbport);
-		ast_debug(3, "cel_pgsql: got user of %s\n", pgdbuser);
-		ast_debug(3, "cel_pgsql: got dbname of %s\n", pgdbname);
-		ast_debug(3, "cel_pgsql: got password of %s\n", pgpassword);
-		ast_debug(3, "cel_pgsql: got sql table name of %s\n", table);
-		ast_debug(3, "cel_pgsql: got show_user_defined of %s\n",
+		ast_log(LOG_DEBUG, "cel_pgsql: got port of %s\n", pgdbport);
+		ast_log(LOG_DEBUG, "cel_pgsql: got user of %s\n", pgdbuser);
+		ast_log(LOG_DEBUG, "cel_pgsql: got dbname of %s\n", pgdbname);
+		ast_log(LOG_DEBUG, "cel_pgsql: got password of %s\n", pgpassword);
+		ast_log(LOG_DEBUG, "cel_pgsql: got sql table name of %s\n", table);
+		ast_log(LOG_DEBUG, "cel_pgsql: got show_user_defined of %s\n",
 			cel_show_user_def ? "Yes" : "No");
 	}
 
@@ -692,4 +709,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PostgreSQL CEL Backen
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CDR_DRIVER,
+	.requires = "cel",
 );

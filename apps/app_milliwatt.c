@@ -21,7 +21,7 @@
  * \brief Digital Milliwatt Test
  *
  * \author Mark Spencer <markster@digium.com>
- * 
+ *
  * \ingroup applications
  */
 
@@ -30,8 +30,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/channel.h"

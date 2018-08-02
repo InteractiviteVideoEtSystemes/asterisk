@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <math.h>
@@ -444,8 +442,14 @@ struct ast_frame *ast_trans_frameout(struct ast_trans_pvt *pvt,
 	}
 	if (datalen) {
 		f->datalen = datalen;
+		f->data.ptr = pvt->outbuf.c;
 	} else {
 		f->datalen = pvt->datalen;
+		if (!f->datalen) {
+			f->data.ptr = NULL;
+		} else {
+			f->data.ptr = pvt->outbuf.c;
+		}
 		pvt->datalen = 0;
 	}
 
@@ -492,17 +496,16 @@ struct ast_trans_pvt *ast_translator_build_path(struct ast_format *dst, struct a
 			ast_log(LOG_WARNING, "No translator path from %s to %s\n",
 				ast_format_get_name(src), ast_format_get_name(dst));
 			AST_RWLIST_UNLOCK(&translators);
+			ast_translator_free_path(head);
 			return NULL;
 		}
-		if ((t->dst_codec.sample_rate == ast_format_get_sample_rate(dst)) && (t->dst_codec.type == ast_format_get_type(dst)) && (!strcmp(t->dst_codec.name, ast_format_get_name(dst)))) {
+		if ((t->dst_codec.sample_rate == ast_format_get_sample_rate(dst)) && (t->dst_codec.type == ast_format_get_type(dst))) {
 			explicit_dst = dst;
 		}
 		if (!(cur = newpvt(t, explicit_dst))) {
 			ast_log(LOG_WARNING, "Failed to build translator step from %s to %s\n",
 				ast_format_get_name(src), ast_format_get_name(dst));
-			if (head) {
-				ast_translator_free_path(head);
-			}
+			ast_translator_free_path(head);
 			AST_RWLIST_UNLOCK(&translators);
 			return NULL;
 		}
@@ -521,6 +524,34 @@ struct ast_trans_pvt *ast_translator_build_path(struct ast_format *dst, struct a
 	return head;
 }
 
+static struct ast_frame *generate_interpolated_slin(struct ast_trans_pvt *p, struct ast_frame *f)
+{
+	struct ast_frame res = { AST_FRAME_VOICE };
+
+	/*
+	 * If we've gotten here then we should have an interpolated frame that was not handled
+	 * by the translation codec. So create an interpolated frame in the appropriate format
+	 * that was going to be written. This frame might be handled later by other resources.
+	 * For instance, generic plc.
+	 *
+	 * Note, generic plc is currently only available for the format type 'slin' (8KHz only -
+	 * The generic plc code appears to have been based around that). Generic plc is filled
+	 * in later on frame write.
+	 */
+	if (!ast_opt_generic_plc || f->datalen != 0 ||
+		ast_format_cmp(p->explicit_dst, ast_format_slin) == AST_FORMAT_CMP_NOT_EQUAL) {
+		return NULL;
+	}
+
+	res.subclass.format = ast_format_cache_get_slin_by_rate(8000); /* ref bumped on dup */
+	res.samples = f->samples;
+	res.datalen = 0;
+	res.data.ptr = NULL;
+	res.offset = AST_FRIENDLY_OFFSET;
+
+	return ast_frdup(&res);
+}
+
 /*! \brief do the actual translation */
 struct ast_frame *ast_translate(struct ast_trans_pvt *path, struct ast_frame *f, int consume)
 {
@@ -531,6 +562,17 @@ struct ast_frame *ast_translate(struct ast_trans_pvt *path, struct ast_frame *f,
 	long ts;
 	long len;
 	int seqno;
+
+	if (f->frametype == AST_FRAME_RTCP) {
+		/* Just pass the feedback to the right callback, if it exists.
+		 * This "translation" does nothing so return a null frame. */
+		struct ast_trans_pvt *tp;
+		for (tp = p; tp; tp = tp->next) {
+			if (tp->t->feedback)
+				tp->t->feedback(tp, f);
+		}
+		return &ast_null_frame;
+	}
 
 	has_timing_info = ast_test_flag(f, AST_FRFLAG_HAS_TIMING_INFO);
 	ts = f->ts;
@@ -572,6 +614,11 @@ struct ast_frame *ast_translate(struct ast_trans_pvt *path, struct ast_frame *f,
 		}
 		out = p->t->frameout(p);
 	}
+
+	if (!out) {
+		out = generate_interpolated_slin(path, f);
+	}
+
 	if (out) {
 		/* we have a frame, play with times */
 		if (!ast_tvzero(delivery)) {
@@ -886,9 +933,9 @@ const char *ast_translate_path_to_str(struct ast_trans_pvt *p, struct ast_str **
 	return ast_str_buffer(*str);
 }
 
-static char *complete_trans_path_choice(const char *line, const char *word, int pos, int state)
+static char *complete_trans_path_choice(const char *word)
 {
-	int i = 1, which = 0;
+	int i = 1;
 	int wordlen = strlen(word);
 	struct ast_codec *codec;
 
@@ -898,13 +945,15 @@ static char *complete_trans_path_choice(const char *line, const char *word, int 
 			ao2_ref(codec, -1);
 			continue;
 		}
-		if (!strncasecmp(word, codec->name, wordlen) && ++which > state) {
-			char *res = ast_strdup(codec->name);
-			ao2_ref(codec, -1);
-			return res;
+		if (!strncasecmp(word, codec->name, wordlen)) {
+			if (ast_cli_completion_add(ast_strdup(codec->name))) {
+				ao2_ref(codec, -1);
+				break;
+			}
 		}
 		ao2_ref(codec, -1);
 	}
+
 	return NULL;
 }
 
@@ -930,7 +979,8 @@ static void handle_cli_recalc(struct ast_cli_args *a)
 static char *handle_show_translation_table(struct ast_cli_args *a)
 {
 	int x, y, i, k;
-	int longest = 0, num_codecs = 0, curlen = 0;
+	int longest = 7; /* slin192 */
+	int num_codecs = 0, curlen = 0;
 	struct ast_str *out = ast_str_create(1024);
 	struct ast_codec *codec;
 
@@ -967,6 +1017,7 @@ static char *handle_show_translation_table(struct ast_cli_args *a)
 
 		ast_str_set(&out, 0, " ");
 		for (k = 0; k < num_codecs; k++) {
+			int adjust = 0;
 			struct ast_codec *col = k ? ast_codec_get_by_id(k) : NULL;
 
 			y = -1;
@@ -982,6 +1033,12 @@ static char *handle_show_translation_table(struct ast_cli_args *a)
 
 			if (k > 0) {
 				curlen = strlen(col->name);
+				if (!strcmp(col->name, "slin") ||
+					!strcmp(col->name, "speex") ||
+					!strcmp(col->name, "silk")) {
+					adjust = log10(col->sample_rate / 1000) + 1;
+					curlen = curlen + adjust;
+				}
 			}
 
 			if (curlen < 5) {
@@ -993,10 +1050,25 @@ static char *handle_show_translation_table(struct ast_cli_args *a)
 				ast_str_append(&out, 0, "%*u", curlen + 1, (matrix_get(x, y)->table_cost/100));
 			} else if (i == 0 && k > 0) {
 				/* Top row - use a dynamic size */
-				ast_str_append(&out, 0, "%*s", curlen + 1, col->name);
+				if (!strcmp(col->name, "slin") ||
+					!strcmp(col->name, "speex") ||
+					!strcmp(col->name, "silk")) {
+					ast_str_append(&out, 0, "%*s%u", curlen - adjust + 1,
+						col->name, col->sample_rate / 1000);
+				} else {
+					ast_str_append(&out, 0, "%*s", curlen + 1, col->name);
+				}
 			} else if (k == 0 && i > 0) {
 				/* Left column - use a static size. */
-				ast_str_append(&out, 0, "%*s", longest, row->name);
+				if (!strcmp(row->name, "slin") ||
+					!strcmp(row->name, "speex") ||
+					!strcmp(row->name, "silk")) {
+					int adjust_row = log10(row->sample_rate / 1000) + 1;
+					ast_str_append(&out, 0, "%*s%u", longest - adjust_row,
+						row->name, row->sample_rate / 1000);
+				} else {
+					ast_str_append(&out, 0, "%*s", longest, row->name);
+				}
 			} else if (x >= 0 && y >= 0) {
 				/* Codec not supported */
 				ast_str_append(&out, 0, "%*s", curlen + 1, "-");
@@ -1101,10 +1173,10 @@ static char *handle_cli_core_show_translation(struct ast_cli_entry *e, int cmd, 
 		return NULL;
 	case CLI_GENERATE:
 		if (a->pos == 3) {
-			return ast_cli_complete(a->word, option, a->n);
+			return ast_cli_complete(a->word, option, -1);
 		}
 		if (a->pos == 4 && !strcasecmp(a->argv[3], option[1])) {
-			return complete_trans_path_choice(a->line, a->word, a->pos, a->n);
+			return complete_trans_path_choice(a->word);
 		}
 		/* BUGBUG - add tab completion for sample rates */
 		return NULL;
@@ -1268,7 +1340,7 @@ int ast_unregister_translator(struct ast_translator *t)
 	}
 	AST_RWLIST_TRAVERSE_SAFE_END;
 
-	if (found) {
+	if (found && !ast_shutting_down()) {
 		matrix_rebuild(0);
 	}
 
@@ -1292,6 +1364,13 @@ void ast_translator_deactivate(struct ast_translator *t)
 	matrix_rebuild(0);
 	AST_RWLIST_UNLOCK(&translators);
 }
+
+/*! Calculate the absolute difference between sample rate of two formats. */
+#define format_sample_rate_absdiff(fmt1, fmt2) ({ \
+	unsigned int rate1 = ast_format_get_sample_rate(fmt1); \
+	unsigned int rate2 = ast_format_get_sample_rate(fmt2); \
+	(rate1 > rate2 ? rate1 - rate2 : rate2 - rate1); \
+})
 
 /*! \brief Calculate our best translator source format, given costs, and a desired destination */
 int ast_translator_best_choice(struct ast_format_cap *dst_cap,
@@ -1375,6 +1454,18 @@ int ast_translator_best_choice(struct ast_format_cap *dst_cap,
 				ao2_replace(bestdst, dst);
 				besttablecost = matrix_get(x, y)->table_cost;
 				beststeps = matrix_get(x, y)->multistep;
+			} else if (matrix_get(x, y)->table_cost == besttablecost
+					&& matrix_get(x, y)->multistep == beststeps) {
+				unsigned int gap_selected = format_sample_rate_absdiff(best, bestdst);
+				unsigned int gap_current = format_sample_rate_absdiff(src, dst);
+
+				if (gap_current < gap_selected) {
+					/* better than what we have so far */
+					ao2_replace(best, src);
+					ao2_replace(bestdst, dst);
+					besttablecost = matrix_get(x, y)->table_cost;
+					beststeps = matrix_get(x, y)->multistep;
+				}
 			}
 		}
 	}

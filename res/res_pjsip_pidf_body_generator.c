@@ -58,7 +58,7 @@ static int pidf_generate_body_content(void *body, void *data)
 	struct ast_sip_exten_state_data *state_data = data;
 
 	ast_sip_presence_exten_state_to_str(state_data->exten_state, &statestring,
-			&pidfstate, &pidfnote, &local_state);
+			&pidfstate, &pidfnote, &local_state, 0);
 
 	if (!pjpidf_pres_add_note(state_data->pool, pres, pj_cstr(&note, pidfnote))) {
 		ast_log(LOG_WARNING, "Unable to add note to PIDF presence\n");
@@ -75,7 +75,7 @@ static int pidf_generate_body_content(void *body, void *data)
 	pjpidf_tuple_set_contact(state_data->pool, tuple, pj_cstr(&contact, sanitized));
 	pjpidf_tuple_set_contact_prio(state_data->pool, tuple, pj_cstr(&priority, "1"));
 	pjpidf_status_set_basic_open(pjpidf_tuple_get_status(tuple),
-			local_state == NOTIFY_OPEN);
+			local_state == NOTIFY_OPEN || local_state == NOTIFY_INUSE);
 
 	return 0;
 }
@@ -116,8 +116,6 @@ static struct ast_sip_pubsub_body_generator pidf_body_generator = {
 
 static int load_module(void)
 {
-	CHECK_PJSIP_PUBSUB_MODULE_LOADED();
-
 	if (ast_sip_pubsub_register_body_generator(&pidf_body_generator)) {
 		return AST_MODULE_LOAD_DECLINE;
 	}
@@ -135,4 +133,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP Extension State
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_CHANNEL_DEPEND,
+	.requires = "res_pjsip,res_pjsip_pubsub",
 );

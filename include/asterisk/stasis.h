@@ -414,14 +414,14 @@ const struct timeval *stasis_message_timestamp(const struct stasis_message *msg)
  * May return \c NULL, to indicate no representation. The returned object should
  * be ast_json_unref()'ed.
  *
- * \param message Message to convert to JSON string.
+ * \param msg Message to convert to JSON string.
  * \param sanitize Snapshot sanitization callback.
  *
  * \return Newly allocated string with JSON message.
  * \return \c NULL on error.
  * \return \c NULL if JSON format is not supported.
  */
-struct ast_json *stasis_message_to_json(struct stasis_message *message, struct stasis_message_sanitizer *sanitize);
+struct ast_json *stasis_message_to_json(struct stasis_message *msg, struct stasis_message_sanitizer *sanitize);
 
 /*!
  * \brief Build the AMI representation of the message.
@@ -429,12 +429,21 @@ struct ast_json *stasis_message_to_json(struct stasis_message *message, struct s
  * May return \c NULL, to indicate no representation. The returned object should
  * be ao2_cleanup()'ed.
  *
- * \param message Message to convert to AMI.
+ * \param msg Message to convert to AMI.
  * \return \c NULL on error.
  * \return \c NULL if AMI format is not supported.
  */
-struct ast_manager_event_blob *stasis_message_to_ami(
-	struct stasis_message *message);
+struct ast_manager_event_blob *stasis_message_to_ami(struct stasis_message *msg);
+
+/*!
+ * \brief Determine if the given message can be converted to AMI.
+ *
+ * \param msg Message to see if can be converted to AMI.
+ *
+ * \retval 0 Cannot be converted
+ * \retval non-zero Can be converted
+ */
+int stasis_message_can_be_ami(struct stasis_message *msg);
 
 /*!
  * \brief Build the \ref AstGenericEvents representation of the message.
@@ -442,12 +451,11 @@ struct ast_manager_event_blob *stasis_message_to_ami(
  * May return \c NULL, to indicate no representation. The returned object should
  * be disposed of via \ref ast_event_destroy.
  *
- * \param message Message to convert to AMI.
+ * \param msg Message to convert to AMI.
  * \return \c NULL on error.
  * \return \c NULL if AMI format is not supported.
  */
-struct ast_event *stasis_message_to_event(
-	struct stasis_message *message);
+struct ast_event *stasis_message_to_event(struct stasis_message *msg);
 
 /*!
  * \brief A topic to which messages may be posted, and subscribers, well, subscribe
@@ -581,6 +589,20 @@ struct stasis_subscription *stasis_subscribe_pool(struct stasis_topic *topic,
  */
 struct stasis_subscription *stasis_unsubscribe(
 	struct stasis_subscription *subscription);
+
+/*!
+ * \brief Set the high and low alert water marks of the stasis subscription.
+ * \since 13.10.0
+ *
+ * \param subscription Pointer to a stasis subscription
+ * \param low_water New queue low water mark. (-1 to set as 90% of high_water)
+ * \param high_water New queue high water mark.
+ *
+ * \retval 0 on success.
+ * \retval -1 on error (water marks not changed).
+ */
+int stasis_subscription_set_congestion_limits(struct stasis_subscription *subscription,
+	long low_water, long high_water);
 
 /*!
  * \brief Block until the last message is processed on a subscription.
@@ -721,6 +743,16 @@ struct stasis_topic_pool *stasis_topic_pool_create(struct stasis_topic *pooled_t
  * \return \c NULL if the topic was not found and could not be allocated
  */
 struct stasis_topic *stasis_topic_pool_get_topic(struct stasis_topic_pool *pool, const char *topic_name);
+
+/*!
+ * \brief Check if a topic exists in a pool
+ * \param pool Pool to check
+ * \param topic_name Name of the topic to check
+ * \retval 1 exists
+ * \retval 0 does not exist
+ * \since 13.23.0
+ */
+int stasis_topic_pool_topic_exists(const struct stasis_topic_pool *pool, const char *topic_name);
 
 /*! \addtogroup StasisTopicsAndMessages
  * @{

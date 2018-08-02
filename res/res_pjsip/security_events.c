@@ -26,8 +26,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <pjsip.h>
 
 #include "asterisk/res_pjsip.h"
@@ -44,9 +42,9 @@ static enum ast_transport security_event_get_transport(pjsip_rx_data *rdata)
 	} else if (rdata->tp_info.transport->key.type == PJSIP_TRANSPORT_TLS ||
 		rdata->tp_info.transport->key.type == PJSIP_TRANSPORT_TLS6) {
 		return AST_TRANSPORT_TLS;
-	} else if (!strcmp(rdata->tp_info.transport->type_name, "WS")) {
+	} else if (!strcasecmp(rdata->tp_info.transport->type_name, "WS")) {
 		return AST_TRANSPORT_WS;
-	} else if (!strcmp(rdata->tp_info.transport->type_name, "WSS")) {
+	} else if (!strcasecmp(rdata->tp_info.transport->type_name, "WSS")) {
 		return AST_TRANSPORT_WSS;
 	} else {
 		return 0;
@@ -188,7 +186,7 @@ void ast_sip_report_auth_success(struct ast_sip_endpoint *endpoint, pjsip_rx_dat
 					.transport  = transport,
 			},
 			.common.session_id  = call_id,
-			.using_password     = auth ? (uint32_t *)1 : (uint32_t *)0,
+			.using_password     = auth ? 1 : 0,
 	};
 
 	security_event_populate(rdata, call_id, sizeof(call_id), &local, &remote);

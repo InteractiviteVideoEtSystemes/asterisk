@@ -57,8 +57,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/utils.h"
 #include "asterisk/lock.h"
@@ -160,6 +158,9 @@ static enum ast_presence_state ast_presence_state_helper(const char *presence_pr
 		[AST_PRESENCE_XA]          = 6,
 		[AST_PRESENCE_DND]         = 7
 	};
+
+	*subtype = NULL;
+	*message = NULL;
 
 	while ((label = strsep(&labels, "&"))) {
 		enum ast_presence_state next_state = AST_PRESENCE_INVALID;

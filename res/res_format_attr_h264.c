@@ -33,8 +33,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/format.h"
 
@@ -186,6 +184,8 @@ static struct ast_format *h264_parse_sdp_fmtp(const struct ast_format *format, c
 		unsigned int val;
 		unsigned long int val2;
 
+		attrib = ast_strip(attrib);
+
 		if (sscanf(attrib, "profile-level-id=%lx", &val2) == 1) {
 			attr->PROFILE_IDC = ((val2 >> 16) & 0xFF);
 			attr->PROFILE_IOP = ((val2 >> 8) & 0xFF);
@@ -330,9 +330,8 @@ static int load_module(void)
 	return AST_MODULE_LOAD_SUCCESS;
 }
 
-AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "H.264 Format Attribute Module",
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "H.264 Format Attribute Module",
 	.support_level = AST_MODULE_SUPPORT_CORE,
 	.load = load_module,
 	.unload = unload_module,
-	.load_pri = AST_MODPRI_DEFAULT,
 );

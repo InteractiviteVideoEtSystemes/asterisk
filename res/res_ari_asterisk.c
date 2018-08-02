@@ -40,8 +40,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/app.h"
 #include "asterisk/module.h"
 #include "asterisk/stasis_app.h"
@@ -62,11 +60,10 @@ ASTERISK_REGISTER_FILE()
 static void ast_ari_asterisk_get_object_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_get_object_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -135,11 +132,10 @@ int ast_ari_asterisk_update_object_parse_body(
 static void ast_ari_asterisk_update_object_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_update_object_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -156,21 +152,6 @@ static void ast_ari_asterisk_update_object_cb(
 			args.id = (i->value);
 		} else
 		{}
-	}
-	/* Look for a JSON request entity */
-	body = ast_http_get_json(ser, headers);
-	if (!body) {
-		switch (errno) {
-		case EFBIG:
-			ast_ari_response_error(response, 413, "Request Entity Too Large", "Request body too large");
-			goto fin;
-		case ENOMEM:
-			ast_ari_response_error(response, 500, "Internal Server Error", "Error processing request");
-			goto fin;
-		case EIO:
-			ast_ari_response_error(response, 400, "Bad Request", "Error parsing request body");
-			goto fin;
-		}
 	}
 	args.fields = body;
 	ast_ari_asterisk_update_object(headers, &args, response);
@@ -218,11 +199,10 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_delete_object_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_delete_object_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -322,11 +302,10 @@ int ast_ari_asterisk_get_info_parse_body(
 static void ast_ari_asterisk_get_info_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_get_info_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -378,21 +357,6 @@ static void ast_ari_asterisk_get_info_cb(
 		} else
 		{}
 	}
-	/* Look for a JSON request entity */
-	body = ast_http_get_json(ser, headers);
-	if (!body) {
-		switch (errno) {
-		case EFBIG:
-			ast_ari_response_error(response, 413, "Request Entity Too Large", "Request body too large");
-			goto fin;
-		case ENOMEM:
-			ast_ari_response_error(response, 500, "Internal Server Error", "Error processing request");
-			goto fin;
-		case EIO:
-			ast_ari_response_error(response, 400, "Bad Request", "Error parsing request body");
-			goto fin;
-		}
-	}
 	if (ast_ari_asterisk_get_info_parse_body(body, &args)) {
 		ast_ari_response_alloc_failed(response);
 		goto fin;
@@ -441,10 +405,9 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_list_modules_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_list_modules_args args = {};
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -492,11 +455,10 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_get_module_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_get_module_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -552,11 +514,10 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_load_module_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_load_module_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -611,11 +572,10 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_unload_module_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_unload_module_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -671,11 +631,10 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_reload_module_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_reload_module_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -731,10 +690,9 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_list_log_channels_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_list_log_channels_args args = {};
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -795,11 +753,10 @@ int ast_ari_asterisk_add_log_parse_body(
 static void ast_ari_asterisk_add_log_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_add_log_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -816,21 +773,6 @@ static void ast_ari_asterisk_add_log_cb(
 			args.log_channel_name = (i->value);
 		} else
 		{}
-	}
-	/* Look for a JSON request entity */
-	body = ast_http_get_json(ser, headers);
-	if (!body) {
-		switch (errno) {
-		case EFBIG:
-			ast_ari_response_error(response, 413, "Request Entity Too Large", "Request body too large");
-			goto fin;
-		case ENOMEM:
-			ast_ari_response_error(response, 500, "Internal Server Error", "Error processing request");
-			goto fin;
-		case EIO:
-			ast_ari_response_error(response, 400, "Bad Request", "Error parsing request body");
-			goto fin;
-		}
 	}
 	if (ast_ari_asterisk_add_log_parse_body(body, &args)) {
 		ast_ari_response_alloc_failed(response);
@@ -880,11 +822,10 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_delete_log_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_delete_log_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -939,11 +880,10 @@ fin: __attribute__((unused))
 static void ast_ari_asterisk_rotate_log_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_rotate_log_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -1011,11 +951,10 @@ int ast_ari_asterisk_get_global_var_parse_body(
 static void ast_ari_asterisk_get_global_var_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_get_global_var_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -1026,21 +965,6 @@ static void ast_ari_asterisk_get_global_var_cb(
 			args.variable = (i->value);
 		} else
 		{}
-	}
-	/* Look for a JSON request entity */
-	body = ast_http_get_json(ser, headers);
-	if (!body) {
-		switch (errno) {
-		case EFBIG:
-			ast_ari_response_error(response, 413, "Request Entity Too Large", "Request body too large");
-			goto fin;
-		case ENOMEM:
-			ast_ari_response_error(response, 500, "Internal Server Error", "Error processing request");
-			goto fin;
-		case EIO:
-			ast_ari_response_error(response, 400, "Bad Request", "Error parsing request body");
-			goto fin;
-		}
 	}
 	if (ast_ari_asterisk_get_global_var_parse_body(body, &args)) {
 		ast_ari_response_alloc_failed(response);
@@ -1106,11 +1030,10 @@ int ast_ari_asterisk_set_global_var_parse_body(
 static void ast_ari_asterisk_set_global_var_cb(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response)
+	struct ast_variable *headers, struct ast_json *body, struct ast_ari_response *response)
 {
 	struct ast_ari_asterisk_set_global_var_args args = {};
 	struct ast_variable *i;
-	RAII_VAR(struct ast_json *, body, NULL, ast_json_unref);
 #if defined(AST_DEVMODE)
 	int is_valid;
 	int code;
@@ -1124,21 +1047,6 @@ static void ast_ari_asterisk_set_global_var_cb(
 			args.value = (i->value);
 		} else
 		{}
-	}
-	/* Look for a JSON request entity */
-	body = ast_http_get_json(ser, headers);
-	if (!body) {
-		switch (errno) {
-		case EFBIG:
-			ast_ari_response_error(response, 413, "Request Entity Too Large", "Request body too large");
-			goto fin;
-		case ENOMEM:
-			ast_ari_response_error(response, 500, "Internal Server Error", "Error processing request");
-			goto fin;
-		case EIO:
-			ast_ari_response_error(response, 400, "Bad Request", "Error parsing request body");
-			goto fin;
-		}
 	}
 	if (ast_ari_asterisk_set_global_var_parse_body(body, &args)) {
 		ast_ari_response_alloc_failed(response);
@@ -1178,7 +1086,7 @@ fin: __attribute__((unused))
 	return;
 }
 
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_config_dynamic_configClass_objectType_id = {
 	.path_segment = "id",
 	.is_wildcard = 1,
@@ -1190,7 +1098,7 @@ static struct stasis_rest_handlers asterisk_config_dynamic_configClass_objectTyp
 	.num_children = 0,
 	.children = {  }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_config_dynamic_configClass_objectType = {
 	.path_segment = "objectType",
 	.is_wildcard = 1,
@@ -1199,7 +1107,7 @@ static struct stasis_rest_handlers asterisk_config_dynamic_configClass_objectTyp
 	.num_children = 1,
 	.children = { &asterisk_config_dynamic_configClass_objectType_id, }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_config_dynamic_configClass = {
 	.path_segment = "configClass",
 	.is_wildcard = 1,
@@ -1208,7 +1116,7 @@ static struct stasis_rest_handlers asterisk_config_dynamic_configClass = {
 	.num_children = 1,
 	.children = { &asterisk_config_dynamic_configClass_objectType, }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_config_dynamic = {
 	.path_segment = "dynamic",
 	.callbacks = {
@@ -1216,7 +1124,7 @@ static struct stasis_rest_handlers asterisk_config_dynamic = {
 	.num_children = 1,
 	.children = { &asterisk_config_dynamic_configClass, }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_config = {
 	.path_segment = "config",
 	.callbacks = {
@@ -1224,7 +1132,7 @@ static struct stasis_rest_handlers asterisk_config = {
 	.num_children = 1,
 	.children = { &asterisk_config_dynamic, }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_info = {
 	.path_segment = "info",
 	.callbacks = {
@@ -1233,7 +1141,7 @@ static struct stasis_rest_handlers asterisk_info = {
 	.num_children = 0,
 	.children = {  }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_modules_moduleName = {
 	.path_segment = "moduleName",
 	.is_wildcard = 1,
@@ -1246,7 +1154,7 @@ static struct stasis_rest_handlers asterisk_modules_moduleName = {
 	.num_children = 0,
 	.children = {  }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_modules = {
 	.path_segment = "modules",
 	.callbacks = {
@@ -1255,7 +1163,7 @@ static struct stasis_rest_handlers asterisk_modules = {
 	.num_children = 1,
 	.children = { &asterisk_modules_moduleName, }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_logging_logChannelName_rotate = {
 	.path_segment = "rotate",
 	.callbacks = {
@@ -1264,7 +1172,7 @@ static struct stasis_rest_handlers asterisk_logging_logChannelName_rotate = {
 	.num_children = 0,
 	.children = {  }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_logging_logChannelName = {
 	.path_segment = "logChannelName",
 	.is_wildcard = 1,
@@ -1275,7 +1183,7 @@ static struct stasis_rest_handlers asterisk_logging_logChannelName = {
 	.num_children = 1,
 	.children = { &asterisk_logging_logChannelName_rotate, }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_logging = {
 	.path_segment = "logging",
 	.callbacks = {
@@ -1284,7 +1192,7 @@ static struct stasis_rest_handlers asterisk_logging = {
 	.num_children = 1,
 	.children = { &asterisk_logging_logChannelName, }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk_variable = {
 	.path_segment = "variable",
 	.callbacks = {
@@ -1294,7 +1202,7 @@ static struct stasis_rest_handlers asterisk_variable = {
 	.num_children = 0,
 	.children = {  }
 };
-/*! \brief REST handler for /api-docs/asterisk.{format} */
+/*! \brief REST handler for /api-docs/asterisk.json */
 static struct stasis_rest_handlers asterisk = {
 	.path_segment = "asterisk",
 	.callbacks = {
@@ -1303,24 +1211,29 @@ static struct stasis_rest_handlers asterisk = {
 	.children = { &asterisk_config,&asterisk_info,&asterisk_modules,&asterisk_logging,&asterisk_variable, }
 };
 
-static int load_module(void)
-{
-	int res = 0;
-	stasis_app_ref();
-	res |= ast_ari_add_handler(&asterisk);
-	return res;
-}
-
 static int unload_module(void)
 {
 	ast_ari_remove_handler(&asterisk);
-	stasis_app_unref();
 	return 0;
+}
+
+static int load_module(void)
+{
+	int res = 0;
+
+
+	res |= ast_ari_add_handler(&asterisk);
+	if (res) {
+		unload_module();
+		return AST_MODULE_LOAD_DECLINE;
+	}
+
+	return AST_MODULE_LOAD_SUCCESS;
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "RESTful API module - Asterisk resources",
 	.support_level = AST_MODULE_SUPPORT_CORE,
 	.load = load_module,
 	.unload = unload_module,
-	.nonoptreq = "res_ari,res_stasis",
+	.requires = "res_ari,res_ari_model,res_stasis",
 );

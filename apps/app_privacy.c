@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/lock.h"
 #include "asterisk/file.h"
 #include "asterisk/utils.h"
@@ -40,7 +38,6 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/pbx.h"
 #include "asterisk/module.h"
 #include "asterisk/translate.h"
-#include "asterisk/image.h"
 #include "asterisk/callerid.h"
 #include "asterisk/app.h"
 #include "asterisk/config.h"

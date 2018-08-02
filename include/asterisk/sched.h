@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-/*! 
+/*!
  * \brief Remove a scheduler entry
  *
  * This is a loop construct to ensure that
@@ -39,8 +39,8 @@ extern "C" {
  *
  * Since macro expansion essentially works like pass-by-name
  * parameter passing, this macro will still work correctly even
- * if the id of the task to delete changes. This holds as long as 
- * the name of the id which could change is passed to the macro 
+ * if the id of the task to delete changes. This holds as long as
+ * the name of the id which could change is passed to the macro
  * and not a copy of the value of the id.
  */
 #define AST_SCHED_DEL(sched, id) \
@@ -260,8 +260,8 @@ int ast_sched_add_variable(struct ast_sched_context *con, int when, ast_sched_cb
  */
 int ast_sched_replace_variable(int old_id, struct ast_sched_context *con, int when, ast_sched_cb callback, const void *data, int variable) attribute_warn_unused_result;
 
-/*! 
- * \brief Find a sched structure and return the data field associated with it. 
+/*!
+ * \brief Find a sched structure and return the data field associated with it.
  *
  * \param con scheduling context in which to search fro the matching id
  * \param id ID of the scheduled item to find
@@ -284,12 +284,7 @@ const void *ast_sched_find_data(struct ast_sched_context *con, int id);
  *
  * \return Returns 0 on success, -1 on failure
  */
-#ifndef AST_DEVMODE
 int ast_sched_del(struct ast_sched_context *con, int id) attribute_warn_unused_result;
-#else
-int _ast_sched_del(struct ast_sched_context *con, int id, const char *file, int line, const char *function) attribute_warn_unused_result;
-#define	ast_sched_del(a, b)	_ast_sched_del(a, b, __FILE__, __LINE__, __PRETTY_FUNCTION__)
-#endif
 
 /*!
  * \brief Determines number of seconds until the next outstanding event to take place

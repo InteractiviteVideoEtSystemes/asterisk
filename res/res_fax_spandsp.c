@@ -52,8 +52,6 @@
 #define ASTMM_LIBC ASTMM_IGNORE
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/logger.h"
 #include "asterisk/module.h"
 #include "asterisk/strings.h"
@@ -861,7 +859,7 @@ static int spandsp_fax_gateway_start(struct ast_fax_session *s)
 	t38_set_fill_bit_removal(p->t38_core_state, t38_param->fill_bit_removal);
 	t38_set_mmr_transcoding(p->t38_core_state, t38_param->transcoding_mmr);
 	t38_set_jbig_transcoding(p->t38_core_state, t38_param->transcoding_jbig);
-	t38_set_data_rate_management_method(p->t38_core_state, 
+	t38_set_data_rate_management_method(p->t38_core_state,
 			(t38_param->rate_management == AST_T38_RATE_MANAGEMENT_TRANSFERRED_TCF)? 1 : 2);
 
 	t38_gateway_set_transmit_on_idle(&p->t38_gw_state, TRUE);
@@ -870,7 +868,7 @@ static int spandsp_fax_gateway_start(struct ast_fax_session *s)
 
 	t38_gateway_set_supported_modems(&p->t38_gw_state, spandsp_modems(s->details));
 
-	/* engage udptl nat on other side of T38 line 
+	/* engage udptl nat on other side of T38 line
 	 * (Asterisk changes media ports thus we send a few packets to reinitialize
 	 * pinholes in NATs and FWs
 	 */
@@ -1268,4 +1266,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Spandsp G.711 and T.38 F
 	.support_level = AST_MODULE_SUPPORT_EXTENDED,
 	.load = load_module,
 	.unload = unload_module,
+	.enhances = "res_fax",
 );

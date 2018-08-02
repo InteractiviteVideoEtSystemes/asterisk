@@ -1,6 +1,6 @@
 #
 # Asterisk -- A telephony toolkit for Linux.
-# 
+#
 # Makefile for Menuselect
 #
 # Copyright (C) 2005-2008, Digium, Inc.
@@ -23,6 +23,14 @@ endif
 # Basic set of sources and flags/libraries/includes
 OBJS:=menuselect.o strcompat.o
 CFLAGS+=-g -D_GNU_SOURCE -Wall
+
+ifneq ($(findstring dragonfly,$(OSARCH)),)
+  CFLAGS += -isystem /usr/local/include
+else ifneq ($(findstring netbsd,$(OSARCH)),)
+  CFLAGS += -isystem /usr/pkg/include
+else ifneq ($(findstring bsd,$(OSARCH)),)
+  CFLAGS += -isystem /usr/local/include
+endif
 
 ifeq ($(MENUSELECT_DEBUG),yes)
   CFLAGS += -DMENUSELECT_DEBUG
@@ -64,7 +72,7 @@ all: $(ALL_TGTS)
 
 $(OBJS) $(C_OBJS) $(N_OBJS) $(G_OBJS) $(M_OBJS): autoconfig.h menuselect.h
 
-makeopts autoconfig.h: autoconfig.h.in makeopts.in
+makeopts: configure
 	@./configure $(CONFIGURE_SILENT)
 	@echo "****"
 	@echo "**** The configure script was just executed, so 'make' needs to be"

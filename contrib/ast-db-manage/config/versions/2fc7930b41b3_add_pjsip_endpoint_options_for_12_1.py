@@ -120,17 +120,15 @@ def upgrade():
     op.create_index('ps_registrations_id', 'ps_registrations', ['id'])
 
     ########################## add columns ###########################
-
     # new columns for endpoints
     op.add_column('ps_endpoints', sa.Column('media_address', sa.String(40)))
     op.add_column('ps_endpoints', sa.Column('redirect_method',
-                                            pjsip_redirect_method_values))
+        pjsip_redirect_method_values))
     op.add_column('ps_endpoints', sa.Column('set_var', sa.Text()))
 
     # rename mwi_fromuser to mwi_from_user
     op.alter_column('ps_endpoints', 'mwi_fromuser',
-                    new_column_name='mwi_from_user',
-                    existing_type=sa.String(40))
+        new_column_name='mwi_from_user', existing_type=sa.String(40))
 
     # new columns for contacts
     op.add_column('ps_contacts', sa.Column('outbound_proxy', sa.String(40)))
@@ -144,6 +142,8 @@ def upgrade():
 def downgrade():
     ########################## drop columns ##########################
 
+    if op.get_context().bind.dialect.name == 'mssql':
+        op.drop_constraint('ck_ps_aors_support_path_yesno_values', 'ps_aors')
     op.drop_column('ps_aors', 'support_path')
     op.drop_column('ps_aors', 'outbound_proxy')
     op.drop_column('ps_aors', 'maximum_expiration')
@@ -152,10 +152,11 @@ def downgrade():
     op.drop_column('ps_contacts', 'outbound_proxy')
 
     op.alter_column('ps_endpoints', 'mwi_from_user',
-                    new_column_name='mwi_fromuser',
-                    existing_type=sa.String(40))
+        new_column_name='mwi_fromuser', existing_type=sa.String(40))
 
     op.drop_column('ps_endpoints', 'set_var')
+    if op.get_context().bind.dialect.name == 'mssql':
+        op.drop_constraint('ck_ps_endpoints_redirect_method_pjsip_redirect_method_values', 'ps_endpoints')
     op.drop_column('ps_endpoints', 'redirect_method')
     op.drop_column('ps_endpoints', 'media_address')
 

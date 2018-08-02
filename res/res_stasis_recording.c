@@ -30,8 +30,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/dsp.h"
 #include "asterisk/file.h"
 #include "asterisk/module.h"
@@ -265,7 +263,13 @@ static enum stasis_app_control_channel_result check_rule_recording(
 	return STASIS_APP_CHANNEL_RECORDING;
 }
 
-struct stasis_app_control_rule rule_recording = {
+/*
+ * XXX This only works because there is one and only one rule in
+ * the system so it can be added to any number of channels
+ * without issue.  However, as soon as there is another rule then
+ * watch out for weirdness because of cross linked lists.
+ */
+static struct stasis_app_control_rule rule_recording = {
 	.check_rule = check_rule_recording
 };
 
@@ -358,6 +362,7 @@ static void recording_dtor(void *obj)
 	struct stasis_app_recording *recording = obj;
 
 	ast_free(recording->absolute_name);
+	ao2_cleanup(recording->control);
 	ao2_cleanup(recording->options);
 }
 
@@ -413,6 +418,7 @@ struct stasis_app_recording *stasis_app_control_record(
 
 	ao2_ref(options, +1);
 	recording->options = options;
+	ao2_ref(control, +1);
 	recording->control = control;
 	recording->state = STASIS_APP_RECORDING_STATE_QUEUED;
 
@@ -465,15 +471,7 @@ const char *stasis_app_recording_get_name(
 
 struct stasis_app_recording *stasis_app_recording_find_by_name(const char *name)
 {
-	RAII_VAR(struct stasis_app_recording *, recording, NULL, ao2_cleanup);
-
-	recording = ao2_find(recordings, name, OBJ_KEY);
-	if (recording == NULL) {
-		return NULL;
-	}
-
-	ao2_ref(recording, +1);
-	return recording;
+	return ao2_find(recordings, name, OBJ_KEY);
 }
 
 struct ast_json *stasis_app_recording_to_json(
@@ -633,13 +631,14 @@ static int load_module(void)
 
 	r = STASIS_MESSAGE_TYPE_INIT(stasis_app_recording_snapshot_type);
 	if (r != 0) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	recordings = ao2_container_alloc(RECORDING_BUCKETS, recording_hash,
 		recording_cmp);
 	if (!recordings) {
-		return AST_MODULE_LOAD_FAILURE;
+		STASIS_MESSAGE_TYPE_CLEANUP(stasis_app_recording_snapshot_type);
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	return AST_MODULE_LOAD_SUCCESS;
 }
@@ -656,6 +655,6 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_GLOBAL_SYMBOLS | AST_MODFLAG_LOAD_
 	.support_level = AST_MODULE_SUPPORT_CORE,
 	.load = load_module,
 	.unload = unload_module,
-	.nonoptreq = "res_stasis",
+	.requires = "res_stasis",
 	.load_pri = AST_MODPRI_APP_DEPEND
 );

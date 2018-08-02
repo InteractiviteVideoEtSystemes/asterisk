@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/file.h"
 #include "asterisk/module.h"
 #include "asterisk/channel.h"
@@ -44,7 +42,7 @@ ASTERISK_REGISTER_FILE()
 		</synopsis>
 		<syntax />
 		<description>
-			<para>Echos back any media or DTMF frames read from the calling 
+			<para>Echos back any media or DTMF frames read from the calling
 			channel back to itself. This will not echo CONTROL, MODEM, or NULL
 			frames. Note: If '#' detected application exits.</para>
 			<para>This application does not automatically answer and should be
@@ -58,6 +56,7 @@ static const char app[] = "Echo";
 static int echo_exec(struct ast_channel *chan, const char *data)
 {
 	int res = -1;
+	int fir_sent = 0;
 
 	while (ast_waitfor(chan, -1) > -1) {
 		struct ast_frame *f = ast_read(chan);
@@ -66,6 +65,23 @@ static int echo_exec(struct ast_channel *chan, const char *data)
 		}
 		f->delivery.tv_sec = 0;
 		f->delivery.tv_usec = 0;
+		if (f->frametype == AST_FRAME_CONTROL
+			&& f->subclass.integer == AST_CONTROL_VIDUPDATE
+			&& !fir_sent) {
+			if (ast_write(chan, f) < 0) {
+				ast_frfree(f);
+				goto end;
+			}
+			fir_sent = 1;
+		}
+		if (!fir_sent && f->frametype == AST_FRAME_VIDEO) {
+			struct ast_frame frame = {
+				.frametype = AST_FRAME_CONTROL,
+				.subclass.integer = AST_CONTROL_VIDUPDATE,
+			};
+			ast_write(chan, &frame);
+			fir_sent = 1;
+		}
 		if (f->frametype != AST_FRAME_CONTROL
 			&& f->frametype != AST_FRAME_MODEM
 			&& f->frametype != AST_FRAME_NULL

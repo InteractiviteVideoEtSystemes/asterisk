@@ -19,7 +19,7 @@
 /*!\file
  *
  * \brief Headerless G.726 (16/24/32/40kbps) data format for Asterisk.
- * 
+ *
  * File name extensions:
  * \arg 40 kbps: g726-40
  * \arg 32 kbps: g726-32
@@ -31,10 +31,8 @@
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -51,7 +49,7 @@ ASTERISK_REGISTER_FILE()
 
 #define	BUF_SIZE	(5*FRAME_TIME)	/* max frame size in bytes ? */
 /* Frame sizes in bytes */
-static int frame_size[4] = { 
+static int frame_size[4] = {
 		FRAME_TIME * 5,
 		FRAME_TIME * 4,
 		FRAME_TIME * 3,
@@ -119,15 +117,18 @@ static int g726_16_rewrite(struct ast_filestream *s, const char *comment)
 
 static struct ast_frame *g726_read(struct ast_filestream *s, int *whennext)
 {
-	int res;
+	size_t res;
 	struct g726_desc *fs = (struct g726_desc *)s->_private;
 
 	/* Send a frame from the file to the appropriate channel */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, frame_size[fs->rate]);
 	s->fr.samples = 8 * FRAME_TIME;
 	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) != s->fr.datalen) {
-		if (res)
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples;
@@ -140,12 +141,12 @@ static int g726_write(struct ast_filestream *s, struct ast_frame *f)
 	struct g726_desc *fs = (struct g726_desc *)s->_private;
 
 	if (f->datalen % frame_size[fs->rate]) {
-		ast_log(LOG_WARNING, "Invalid data length %d, should be multiple of %d\n", 
+		ast_log(LOG_WARNING, "Invalid data length %d, should be multiple of %d\n",
 						f->datalen, frame_size[fs->rate]);
 		return -1;
 	}
 	if ((res = fwrite(f->data.ptr, 1, f->datalen, s->f)) != f->datalen) {
-		ast_log(LOG_WARNING, "Bad write (%d/%d): %s\n", 
+		ast_log(LOG_WARNING, "Bad write (%d/%d): %s\n",
 				res, frame_size[fs->rate], strerror(errno));
 			return -1;
 	}
@@ -223,20 +224,6 @@ static struct ast_format_def f[] = {
 	{	.desc_size = 0 }	/* terminator */
 };
 
-static int load_module(void)
-{
-	int i;
-
-	for (i = 0; f[i].desc_size ; i++) {
-		f[i].format = ast_format_g726;
-		if (ast_format_def_register(&f[i])) {	/* errors are fatal */
-			ast_log(LOG_WARNING, "Failed to register format %s.\n", f[i].name);
-			return AST_MODULE_LOAD_FAILURE;
-		}
-	}
-	return AST_MODULE_LOAD_SUCCESS;
-}
-
 static int unload_module(void)
 {
 	int i;
@@ -246,6 +233,21 @@ static int unload_module(void)
 			ast_log(LOG_WARNING, "Failed to unregister format %s.\n", f[i].name);
 	}
 	return(0);
+}
+
+static int load_module(void)
+{
+	int i;
+
+	for (i = 0; f[i].desc_size ; i++) {
+		f[i].format = ast_format_g726;
+		if (ast_format_def_register(&f[i])) {	/* errors are fatal */
+			ast_log(LOG_WARNING, "Failed to register format %s.\n", f[i].name);
+			unload_module();
+			return AST_MODULE_LOAD_DECLINE;
+		}
+	}
+	return AST_MODULE_LOAD_SUCCESS;
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Raw G.726 (16/24/32/40kbps) data",

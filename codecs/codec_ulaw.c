@@ -19,7 +19,7 @@
 /*! \file
  *
  * \brief codec_ulaw.c - translate between signed linear and ulaw
- * 
+ *
  * \ingroup codecs
  */
 
@@ -28,8 +28,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/config.h"
@@ -183,7 +181,7 @@ static int load_module(void)
 
 	if (res) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;

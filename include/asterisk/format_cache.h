@@ -184,6 +184,11 @@ extern struct ast_format *ast_format_mp4;
 extern struct ast_format *ast_format_vp8;
 
 /*!
+ * \brief Built-in cached vp9 format.
+ */
+extern struct ast_format *ast_format_vp9;
+
+/*!
  * \brief Built-in cached jpeg format.
  */
 extern struct ast_format *ast_format_jpeg;
@@ -209,6 +214,11 @@ extern struct ast_format *ast_format_siren7;
 extern struct ast_format *ast_format_opus;
 
 /*!
+ * \brief Built-in cached Codec 2 format.
+ */
+extern struct ast_format *ast_format_codec2;
+
+/*!
  * \brief Built-in cached t140 format.
  */
 extern struct ast_format *ast_format_t140;
@@ -219,9 +229,22 @@ extern struct ast_format *ast_format_t140;
 extern struct ast_format *ast_format_t140_red;
 
 /*!
+ * \brief Built-in cached T.38 format.
+ */
+extern struct ast_format *ast_format_t38;
+
+/*!
  * \brief Built-in "null" format.
  */
 extern struct ast_format *ast_format_none;
+
+/*!
+ * \brief Built-in SILK format.
+ */
+extern struct ast_format *ast_format_silk8;
+extern struct ast_format *ast_format_silk12;
+extern struct ast_format *ast_format_silk16;
+extern struct ast_format *ast_format_silk24;
 
 /*!
  * \brief Initialize format cache support within the core.

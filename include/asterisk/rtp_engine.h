@@ -81,8 +81,17 @@ extern "C" {
 /*! Maximum number of payload types RTP can support. */
 #define AST_RTP_MAX_PT 128
 
+/*!
+ * Last RTP payload type statically assigned, see
+ * http://www.iana.org/assignments/rtp-parameters
+ */
+#define AST_RTP_PT_LAST_STATIC 34
+
 /*! First dynamic RTP payload type */
 #define AST_RTP_PT_FIRST_DYNAMIC 96
+
+/*! Last reassignable RTP payload type */
+#define AST_RTP_PT_LAST_REASSIGN 63
 
 /*! Maximum number of generations */
 #define AST_RED_MAX_GENERATION 5
@@ -111,6 +120,14 @@ enum ast_rtp_property {
 	AST_RTP_PROPERTY_STUN,
 	/*! Enable RTCP support */
 	AST_RTP_PROPERTY_RTCP,
+	/*! Enable Asymmetric RTP Codecs */
+	AST_RTP_PROPERTY_ASYMMETRIC_CODEC,
+	/*! Enable packet retransmission for received packets */
+	AST_RTP_PROPERTY_RETRANS_RECV,
+	/*! Enable packet retransmission for sent packets */
+	AST_RTP_PROPERTY_RETRANS_SEND,
+	/*! Enable REMB sending and receiving passthrough support */
+	AST_RTP_PROPERTY_REMB,
 
 	/*!
 	 * \brief Maximum number of RTP properties supported
@@ -228,6 +245,19 @@ enum ast_rtp_instance_stat {
 	AST_RTP_INSTANCE_STAT_REMOTE_SSRC,
 	/*! Retrieve channel unique ID */
 	AST_RTP_INSTANCE_STAT_CHANNEL_UNIQUEID,
+	/*! Retrieve number of octets transmitted */
+	AST_RTP_INSTANCE_STAT_TXOCTETCOUNT,
+	/*! Retrieve number of octets received */
+	AST_RTP_INSTANCE_STAT_RXOCTETCOUNT,
+};
+
+enum ast_rtp_instance_rtcp {
+	/*! RTCP should not be sent/received */
+	AST_RTP_INSTANCE_RTCP_DISABLED = 0,
+	/*! RTCP should be sent/received based on standard port rules */
+	AST_RTP_INSTANCE_RTCP_STANDARD,
+	/*! RTCP should be sent/received on the same port as RTP */
+	AST_RTP_INSTANCE_RTCP_MUX,
 };
 
 /* Codes for RTP-specific data - not defined by our AST_FORMAT codes */
@@ -262,6 +292,20 @@ struct ast_rtp_payload_type {
 #define AST_RTP_RTCP_SR 200
 /*! Receiver Report */
 #define AST_RTP_RTCP_RR 201
+/*! Transport Layer Feed Back (From RFC4585 also RFC5104) */
+#define AST_RTP_RTCP_RTPFB	205
+/*! Payload Specific Feed Back (From RFC4585 also RFC5104) */
+#define AST_RTP_RTCP_PSFB	206
+
+/* Common RTCP feedback message types */
+/*! Generic NACK (From RFC4585 also RFC5104) */
+#define AST_RTP_RTCP_FMT_NACK	1
+/*! Picture loss indication (From RFC4585) */
+#define AST_RTP_RTCP_FMT_PLI	1
+/*! Full INTRA-frame Request (From RFC5104) */
+#define AST_RTP_RTCP_FMT_FIR	4
+/*! REMB Information (From draft-alvestrand-rmcat-remb-03) */
+#define AST_RTP_RTCP_FMT_REMB	15
 
 /*!
  * \since 12
@@ -295,6 +339,24 @@ struct ast_rtp_rtcp_report {
 	 * \c reception_report_count.
 	 */
 	struct ast_rtp_rtcp_report_block *report_block[0];
+};
+
+/*!
+ * \since 15.4.0
+ * \brief A REMB feedback message (see draft-alvestrand-rmcat-remb-03 for details) */
+struct ast_rtp_rtcp_feedback_remb {
+	unsigned int br_exp;		/*!< Exponential scaling of the mantissa for the maximum total media bit rate value */
+	unsigned int br_mantissa;	/*!< The mantissa of the maximum total media bit rate */
+};
+
+/*!
+ * \since 15.4.0
+ * \brief An object that represents data received in a feedback report */
+struct ast_rtp_rtcp_feedback {
+	unsigned int fmt; /*!< The feedback message type */
+	union {
+		struct ast_rtp_rtcp_feedback_remb remb; /*!< REMB feedback information */
+	};
 };
 
 /*! Structure that represents statistics from an RTP instance */
@@ -359,10 +421,14 @@ struct ast_rtp_instance_stats {
 	unsigned int remote_ssrc;
 	/*! The Asterisk channel's unique ID that owns this instance */
 	char channel_uniqueid[MAX_CHANNEL_ID];
+	/*! Number of octets transmitted */
+	unsigned int txoctetcount;
+	/*! Number of octets received */
+	unsigned int rxoctetcount;
 };
 
 #define AST_RTP_STAT_SET(current_stat, combined, placement, value) \
-if (stat == current_stat || stat == AST_RTP_INSTANCE_STAT_ALL || (combined >= 0 && combined == current_stat)) { \
+if (stat == current_stat || stat == AST_RTP_INSTANCE_STAT_ALL || (combined >= 0 && combined == stat)) { \
 placement = value; \
 if (stat == current_stat) { \
 return 0; \
@@ -370,7 +436,7 @@ return 0; \
 }
 
 #define AST_RTP_STAT_STRCPY(current_stat, combined, placement, value) \
-if (stat == current_stat || stat == AST_RTP_INSTANCE_STAT_ALL || (combined >= 0 && combined == current_stat)) { \
+if (stat == current_stat || stat == AST_RTP_INSTANCE_STAT_ALL || (combined >= 0 && combined == stat)) { \
 	ast_copy_string(placement, value, sizeof(placement)); \
 	if (stat == current_stat) { \
 		return 0; \
@@ -436,6 +502,8 @@ struct ast_rtp_engine_ice {
 	void (*turn_request)(struct ast_rtp_instance *instance, enum ast_rtp_ice_component_type component,
 		enum ast_transport transport, const char *server, unsigned int port,
 		const char *username, const char *password);
+	/*! Callback to alter the number of ICE components on a session */
+	void (*change_components)(struct ast_rtp_instance *instance, int num_components);
 };
 
 /*! \brief DTLS setup types */
@@ -465,6 +533,18 @@ enum ast_rtp_dtls_verify {
 	AST_RTP_DTLS_VERIFY_CERTIFICATE = (1 << 1), /*!< Verify the certificate */
 };
 
+/*!
+ * \brief Known RTP extensions
+ */
+enum ast_rtp_extension {
+	/*! Per the RFC 0 should not be used, so we treat it as an unsupported extension placeholder */
+	AST_RTP_EXTENSION_UNSUPPORTED = 0,
+	/*! abs-send-time from https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03 */
+	AST_RTP_EXTENSION_ABS_SEND_TIME,
+	/*! The maximum number of known RTP extensions */
+	AST_RTP_EXTENSION_MAX,
+};
+
 /*! \brief DTLS configuration structure */
 struct ast_rtp_dtls_cfg {
 	unsigned int enabled:1;                /*!< Whether DTLS support is enabled or not */
@@ -478,6 +558,7 @@ struct ast_rtp_dtls_cfg {
 	char *cipher;                          /*!< Cipher to use */
 	char *cafile;                          /*!< Certificate authority file */
 	char *capath;                          /*!< Path to certificate authority */
+	unsigned int ephemeral_cert:1;         /*!< Whether to not to generate an ephemeral certificate - defaults to 0 (off) */
 };
 
 /*! \brief Structure that represents the optional DTLS SRTP support within an RTP engine */
@@ -571,10 +652,22 @@ struct ast_rtp_engine {
 	void (*available_formats)(struct ast_rtp_instance *instance, struct ast_format_cap *to_endpoint, struct ast_format_cap *to_asterisk, struct ast_format_cap *result);
 	/*! Callback to send CNG */
 	int (*sendcng)(struct ast_rtp_instance *instance, int level);
+	/*! Callback to retrieve local SSRC */
+	unsigned int (*ssrc_get)(struct ast_rtp_instance *instance);
+	/*! Callback to retrieve RTCP SDES CNAME */
+	const char *(*cname_get)(struct ast_rtp_instance *instance);
+	/*! Callback to bundle an RTP instance to another */
+	int (*bundle)(struct ast_rtp_instance *child, struct ast_rtp_instance *parent);
+	/*! Callback to set remote SSRC information */
+	void (*set_remote_ssrc)(struct ast_rtp_instance *instance, unsigned int ssrc);
+	/*! Callback to set the stream identifier */
+	void (*set_stream_num)(struct ast_rtp_instance *instance, int stream_num);
 	/*! Callback to pointer for optional ICE support */
 	struct ast_rtp_engine_ice *ice;
 	/*! Callback to pointer for optional DTLS SRTP support */
 	struct ast_rtp_engine_dtls *dtls;
+	/*! Callback to enable an RTP extension (returns non-zero if supported) */
+	int (*extension_enable)(struct ast_rtp_instance *instance, enum ast_rtp_extension extension);
 	/*! Linked list information */
 	AST_RWLIST_ENTRY(ast_rtp_engine) entry;
 };
@@ -608,12 +701,13 @@ struct ast_rtp_glue {
 	/*!
 	 * \brief Used to prevent two channels from remotely bridging audio rtp if the channel tech has a
 	 *        reason for prohibiting it based on qualities that need to be compared from both channels.
-	 * \note This function may be NULL for a given channel driver. This should be accounted for and if that is the case, function this is not used.
+	 * \note This function may be NULL for a given channel driver. This should be accounted for and if that is the case, this function is not used.
 	 */
 	int (*allow_rtp_remote)(struct ast_channel *chan1, struct ast_rtp_instance *instance);
 	/*!
 	 * \brief Callback for retrieving the RTP instance carrying video
 	 * \note This function increases the reference count on the returned RTP instance.
+	 * \note This function may be NULL for a given channel driver. This should be accounted for and if that is the case, this function is not used.
 	 */
 	enum ast_rtp_glue_result (*get_vrtp_info)(struct ast_channel *chan, struct ast_rtp_instance **instance);
 	/*!
@@ -626,14 +720,34 @@ struct ast_rtp_glue {
 	/*!
 	 * \brief Callback for retrieving the RTP instance carrying text
 	 * \note This function increases the reference count on the returned RTP instance.
+	 * \note This function may be NULL for a given channel driver. This should be accounted for and if that is the case, this function is not used.
 	 */
 	enum ast_rtp_glue_result (*get_trtp_info)(struct ast_channel *chan, struct ast_rtp_instance **instance);
 	/*! Callback for updating the destination that the remote side should send RTP to */
 	int (*update_peer)(struct ast_channel *chan, struct ast_rtp_instance *instance, struct ast_rtp_instance *vinstance, struct ast_rtp_instance *tinstance, const struct ast_format_cap *cap, int nat_active);
-	/*! Callback for retrieving codecs that the channel can do.  Result returned in result_cap. */
+	/*!
+	 * \brief Callback for retrieving codecs that the channel can do.  Result returned in result_cap.
+	 * \note This function may be NULL for a given channel driver. This should be accounted for and if that is the case, this function is not used.
+	 */
 	void (*get_codec)(struct ast_channel *chan, struct ast_format_cap *result_cap);
 	/*! Linked list information */
 	AST_RWLIST_ENTRY(ast_rtp_glue) entry;
+};
+
+/*!
+ * \brief Directions for RTP extensions
+ */
+enum ast_rtp_extension_direction {
+	/*! The extension is not negotiated and is not flowing */
+	AST_RTP_EXTENSION_DIRECTION_NONE,
+	/*! Send and receive */
+	AST_RTP_EXTENSION_DIRECTION_SENDRECV,
+	/*! Send only */
+	AST_RTP_EXTENSION_DIRECTION_SENDONLY,
+	/*! Receive only */
+	AST_RTP_EXTENSION_DIRECTION_RECVONLY,
+	/*! Negotiated but not sending or receiving */
+	AST_RTP_EXTENSION_DIRECTION_INACTIVE,
 };
 
 /*!
@@ -935,7 +1049,7 @@ int ast_rtp_instance_set_requested_target_address(struct ast_rtp_instance *insta
  * \since 1.8
  */
 #define ast_rtp_instance_set_remote_address(instance, address) \
-	ast_rtp_instance_set_requested_target_address((instance), (address));
+	ast_rtp_instance_set_requested_target_address((instance), (address))
 
 /*!
  * \brief Set the address that we are expecting to receive RTP on
@@ -1047,7 +1161,7 @@ void ast_rtp_instance_get_requested_target_address(struct ast_rtp_instance *inst
  * \since 1.8
  */
 #define ast_rtp_instance_get_remote_address(instance, address) \
-	ast_rtp_instance_get_incoming_source_address((instance), (address));
+	ast_rtp_instance_get_incoming_source_address((instance), (address))
 
 /*!
  * \brief Get the requested target address of the remote endpoint and
@@ -1083,7 +1197,7 @@ int ast_rtp_instance_get_and_cmp_requested_target_address(struct ast_rtp_instanc
  * \since 1.8
  */
 #define ast_rtp_instance_get_and_cmp_remote_address(instance, address) \
-	ast_rtp_instance_get_and_cmp_requested_target_address((instance), (address));
+	ast_rtp_instance_get_and_cmp_requested_target_address((instance), (address))
 
 /*!
  * \brief Set the value of an RTP instance extended property
@@ -1161,6 +1275,109 @@ int ast_rtp_instance_get_prop(struct ast_rtp_instance *instance, enum ast_rtp_pr
  * \since 1.8
  */
 struct ast_rtp_codecs *ast_rtp_instance_get_codecs(struct ast_rtp_instance *instance);
+
+/*!
+ * \brief Enable support for an RTP extension on an instance
+ *
+ * \param instance The RTP instance to enable the extension on
+ * \param id The unique local identifier to use for this extension (-1 to have one auto selected)
+ * \param extension The RTP extension
+ * \param direction The initial direction that the RTP extension should be used in
+ *
+ * \retval 0 success
+ * \retval -1 failure
+ *
+ * \since 15.5.0
+ */
+int ast_rtp_instance_extmap_enable(struct ast_rtp_instance *instance, int id, enum ast_rtp_extension extension,
+	enum ast_rtp_extension_direction direction);
+
+/*!
+ * \brief Negotiate received RTP extension information
+ *
+ * \param instance The RTP instance to set the extension on
+ * \param id The local identifier for the extension
+ * \param direction The direction that the extension should be used in
+ * \param uri The unique URI for the extension
+ * \param attributes Attributes specific to this extension (if NULL or empty then no attributes)
+ *
+ * \retval 0 success
+ * \retval -1 failure
+ *
+ * \since 15.5.0
+ */
+int ast_rtp_instance_extmap_negotiate(struct ast_rtp_instance *instance, int id, enum ast_rtp_extension_direction direction,
+	const char *uri, const char *attributes);
+
+/*!
+ * \brief Clear negotiated RTP extension information
+ *
+ * \param instance The RTP instance to clear negotiated extension information on
+ */
+void ast_rtp_instance_extmap_clear(struct ast_rtp_instance *instance);
+
+/*!
+ * \brief Retrieve the id for an RTP extension
+ *
+ * \param instance The RTP instance to retrieve the id from
+ * \param extension The RTP extension
+ *
+ * \retval -1 not negotiated
+ * \retval id if negotiated
+ *
+ * \since 15.5.0
+ */
+int ast_rtp_instance_extmap_get_id(struct ast_rtp_instance *instance, enum ast_rtp_extension extension);
+
+/*!
+ * \brief Get the number of known unique identifiers
+ *
+ * \param instance The RTP instance to retrieve the count from
+ *
+ * \return the number of known unique identifiers
+ *
+ * \since 15.5.0
+ */
+size_t ast_rtp_instance_extmap_count(struct ast_rtp_instance *instance);
+
+/*!
+ * \brief Retrieve the extension for an RTP extension id
+ *
+ * \param instance The RTP instance to retrieve the extension from
+ * \param id The negotiated RTP extension id
+ *
+ * \retval extension the extension that maps to the id
+ *
+ * \since 15.5.0
+ *
+ * \note This will return AST_RTP_EXTENSION_UNSUPPORTED if an extension was proposed for this unique identifier
+ * but it is not supported or if the unique identifier is unused.
+ */
+enum ast_rtp_extension ast_rtp_instance_extmap_get_extension(struct ast_rtp_instance *instance, int id);
+
+/*!
+ * \brief Retrieve the negotiated direction for an RTP extension id
+ *
+ * \param instance The RTP instance to retrieve the direction from
+ * \param id The negotiated RTP extension id
+ *
+ * \retval direction the direction that has been negotiated
+ *
+ * \since 15.5.0
+ */
+enum ast_rtp_extension_direction ast_rtp_instance_extmap_get_direction(struct ast_rtp_instance *instance, int id);
+
+/*!
+ * \brief Retrieve the URI for an RTP extension id
+ *
+ * \param instance The RTP instance to retrieve the direction from
+ * \param id The negotiated RTP extension id
+ *
+ * \retval uri The URI for the RTP extension
+ *
+ * \since 15.5.0
+ */
+const char *ast_rtp_instance_extmap_get_uri(struct ast_rtp_instance *instance, int id);
 
 /*!
  * \brief Initialize an RTP codecs structure
@@ -1337,6 +1554,16 @@ int ast_rtp_codecs_payloads_set_rtpmap_type_rate(struct ast_rtp_codecs *codecs, 
 void ast_rtp_codecs_payloads_unset(struct ast_rtp_codecs *codecs, struct ast_rtp_instance *instance, int payload);
 
 /*!
+ * \brief Determine the type of RTP stream media from the codecs mapped.
+ * \since 13.19.0
+ *
+ * \param codecs Codecs structure to look in
+ *
+ * \return Media type or AST_MEDIA_TYPE_UNKNOWN if no codecs mapped.
+ */
+enum ast_media_type ast_rtp_codecs_get_stream_type(struct ast_rtp_codecs *codecs);
+
+/*!
  * \brief Retrieve rx payload mapped information by payload type
  *
  * \param codecs Codecs structure to look in
@@ -1421,7 +1648,8 @@ unsigned int ast_rtp_codecs_get_framing(struct ast_rtp_codecs *codecs);
  *
  * \since 1.8
  */
-unsigned int ast_rtp_lookup_sample_rate2(int asterisk_format, struct ast_format *format, int code);
+unsigned int ast_rtp_lookup_sample_rate2(int asterisk_format,
+	const struct ast_format *format, int code);
 
 /*!
  * \brief Retrieve all formats that were found
@@ -1474,6 +1702,20 @@ void ast_rtp_codecs_payload_formats(struct ast_rtp_codecs *codecs, struct ast_fo
 int ast_rtp_codecs_payload_code(struct ast_rtp_codecs *codecs, int asterisk_format, struct ast_format *format, int code);
 
 /*!
+ * \brief Set a payload code for use with a specific Asterisk format
+ *
+ * \param codecs Codecs structure to manipulate
+ * \param code The payload code
+ * \param format Asterisk format
+ *
+ * \retval 0 Payload was set to the given format
+ * \retval -1 Payload was in use or could not be set
+ *
+ * \since 15.0.0
+ */
+int ast_rtp_codecs_payload_set_rx(struct ast_rtp_codecs *codecs, int code, struct ast_format *format);
+
+/*!
  * \brief Retrieve a tx mapped payload type based on whether it is an Asterisk format and the code
  * \since 14.0.0
  *
@@ -1498,7 +1740,7 @@ int ast_rtp_codecs_payload_code_tx(struct ast_rtp_codecs *codecs, int asterisk_f
  * Example usage:
  *
  * \code
- * int payload = ast_rtp_codecs_payload_code(&codecs, 0);
+ * int payload = ast_rtp_codecs_find_payload_code(&codecs, 0);
  * \endcode
  *
  * This looks for the numerical payload for ULAW in the codecs structure.
@@ -1526,7 +1768,8 @@ int ast_rtp_codecs_find_payload_code(struct ast_rtp_codecs *codecs, int payload)
  *
  * \since 1.8
  */
-const char *ast_rtp_lookup_mime_subtype2(const int asterisk_format, struct ast_format *format, int code, enum ast_rtp_options options);
+const char *ast_rtp_lookup_mime_subtype2(const int asterisk_format,
+	const struct ast_format *format, int code, enum ast_rtp_options options);
 
 /*!
  * \brief Convert formats into a string and put them into a buffer
@@ -2228,20 +2471,24 @@ int ast_rtp_instance_sendcng(struct ast_rtp_instance *instance, int level);
  * \param instance the RTP instance
  * \param remote_policy the remote endpoint's policy
  * \param local_policy our policy for this RTP instance's remote endpoint
+ * \param rtcp 1 for dedicated RTCP policies
  *
  * \retval 0 Success
  * \retval non-zero Failure
+ *
+ * \note If no remote policy is provided any existing SRTP policies are left and the new local policy is added
  */
-int ast_rtp_instance_add_srtp_policy(struct ast_rtp_instance *instance, struct ast_srtp_policy* remote_policy, struct ast_srtp_policy *local_policy);
+int ast_rtp_instance_add_srtp_policy(struct ast_rtp_instance *instance, struct ast_srtp_policy* remote_policy, struct ast_srtp_policy *local_policy, int rtcp);
 
 /*!
  * \brief Obtain the SRTP instance associated with an RTP instance
  *
  * \param instance the RTP instance
+ * \param rtcp 1 to request instance for RTCP
  * \retval the SRTP instance on success
  * \retval NULL if no SRTP instance exists
  */
-struct ast_srtp *ast_rtp_instance_get_srtp(struct ast_rtp_instance *instance);
+struct ast_srtp *ast_rtp_instance_get_srtp(struct ast_rtp_instance *instance, int rtcp);
 
 /*! \brief Custom formats declared in codecs.conf at startup must be communicated to the rtp_engine
  * so their mime type can payload number can be initialized. */
@@ -2283,6 +2530,16 @@ struct ast_rtp_engine_dtls *ast_rtp_instance_get_dtls(struct ast_rtp_instance *i
  * \retval -1 if not handled
  */
 int ast_rtp_dtls_cfg_parse(struct ast_rtp_dtls_cfg *dtls_cfg, const char *name, const char *value);
+
+/*!
+ * \brief Validates DTLS related configuration options
+ *
+ * \param dtls_cfg a DTLS configuration structure
+ *
+ * \retval 0 if valid
+ * \retval -1 if invalid
+ */
+int ast_rtp_dtls_cfg_validate(struct ast_rtp_dtls_cfg *dtls_cfg);
 
 /*!
  * \brief Copy contents of a DTLS configuration structure
@@ -2356,6 +2613,54 @@ time_t ast_rtp_instance_get_last_rx(const struct ast_rtp_instance *rtp);
  * \param time The last reception time
  */
 void ast_rtp_instance_set_last_rx(struct ast_rtp_instance *rtp, time_t time);
+
+/*!
+ * \brief Retrieve the local SSRC value that we will be using
+ *
+ * \param rtp The RTP instance
+ * \return The SSRC value
+ */
+unsigned int ast_rtp_instance_get_ssrc(struct ast_rtp_instance *rtp);
+
+/*!
+ * \brief Retrieve the CNAME used in RTCP SDES items
+ *
+ * This is a pointer directly into the RTP struct, not a copy.
+ *
+ * \param rtp The RTP instance
+ * \return the CNAME
+ */
+const char *ast_rtp_instance_get_cname(struct ast_rtp_instance *rtp);
+
+/*!
+ * \brief Request that an RTP instance be bundled with another
+ * \since 15.0.0
+ *
+ * \param child The child RTP instance
+ * \param parent The parent RTP instance the child should be bundled with
+ *
+ * \retval 0 success
+ * \retval -1 failure
+ */
+int ast_rtp_instance_bundle(struct ast_rtp_instance *child, struct ast_rtp_instance *parent);
+
+/*!
+ * \brief Set the remote SSRC for an RTP instance
+ * \since 15.0.0
+ *
+ * \param rtp The RTP instance
+ * \param ssrc The remote SSRC
+ */
+void ast_rtp_instance_set_remote_ssrc(struct ast_rtp_instance *rtp, unsigned int ssrc);
+
+/*!
+ * \brief Set the stream number for an RTP instance
+ * \since 15.0.0
+ *
+ * \param rtp The RTP instance
+ * \param stream_num The stream identifier number
+ */
+void ast_rtp_instance_set_stream_num(struct ast_rtp_instance *instance, int stream_num);
 
 /*! \addtogroup StasisTopicsAndMessages
  * @{

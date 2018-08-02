@@ -21,7 +21,7 @@
  * \brief Substitution Test
  *
  * \author\verbatim Tilghman Lesher <tlesher AT digium DOT com> \endverbatim
- * 
+ *
  * \ingroup tests
  */
 
@@ -33,8 +33,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/file.h"
 #include "asterisk/channel.h"
 #include "asterisk/pbx.h"
@@ -45,6 +43,7 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/stringfields.h"
 #include "asterisk/threadstorage.h"
 #include "asterisk/test.h"
+#include "asterisk/vector.h"
 
 static enum ast_test_result_state test_chan_integer(struct ast_test *test,
 		struct ast_channel *c, int *ifield, const char *expression)
@@ -227,6 +226,7 @@ AST_TEST_DEFINE(test_substitution)
 	struct ast_channel *c;
 	int i;
 	enum ast_test_result_state res = AST_TEST_PASS;
+	struct ast_vector_string *funcs;
 
 	switch (cmd) {
 	case TEST_INIT:
@@ -287,7 +287,16 @@ AST_TEST_DEFINE(test_substitution)
 	TEST(test_expected_result(test, c, "A${${baz}o:-2:1}A", "A2A"));
 	TEST(test_expected_result(test, c, "A${${baz}o:-2:-1}A", "A2A"));
 	pbx_builtin_setvar_helper(c, "list1", "ab&cd&ef");
+	TEST(test_expected_result(test, c, "${LISTFILTER(list1,&,ab)}", "cd&ef"));
 	TEST(test_expected_result(test, c, "${LISTFILTER(list1,&,cd)}", "ab&ef"));
+	TEST(test_expected_result(test, c, "${LISTFILTER(list1,&,ef)}", "ab&cd"));
+	TEST(test_expected_result(test, c, "${LISTFILTER(list1,&,gh)}", "ab&cd&ef"));
+	TEST(test_expected_result(test, c, "${LISTFILTER(list1,&,c)}", "ab&cd&ef"));
+	TEST(test_expected_result(test, c, "${LISTFILTER(list1,&,d)}", "ab&cd&ef"));
+	pbx_builtin_setvar_helper(c, "list2", "ab");
+	TEST(test_expected_result(test, c, "${LISTFILTER(list2,&,ab)}", ""));
+	pbx_builtin_setvar_helper(c, "list_empty", "");
+	TEST(test_expected_result(test, c, "${LISTFILTER(list_empty,&,ab)}", ""));
 	TEST(test_expected_result(test, c, "${SHELL(printf '%d' 123)},${SHELL(printf '%d' 456)}", "123,456"));
 	TEST(test_expected_result(test, c, "${foo},${CDR(answer)},${SHELL(printf '%d' 456)}", "123,,456"));
 	TEST(test_expected_result(test, c, "${foo},${CDR(answer,u)},${SHELL(printf '%d' 456)}", "123,0.000000,456"));
@@ -295,11 +304,12 @@ AST_TEST_DEFINE(test_substitution)
 #undef TEST
 
 	/* For testing dialplan functions */
-	for (i = 0; ; i++) {
-		char *cmd = ast_cli_generator("core show function", "", i);
-		if (cmd == NULL) {
-			break;
-		}
+	funcs = ast_cli_completion_vector("core show function", "");
+
+	/* Skip "best match" element 0 */
+	for (i = 1; funcs && i < AST_VECTOR_SIZE(funcs); i++) {
+		char *cmd = AST_VECTOR_GET(funcs, i);
+
 		if (strcmp(cmd, "CHANNEL") && strcmp(cmd, "CALLERID") && strncmp(cmd, "CURL", 4) &&
 				strncmp(cmd, "AES", 3) && strncmp(cmd, "BASE64", 6) &&
 				strcmp(cmd, "CDR") && strcmp(cmd, "ENV") && strcmp(cmd, "GLOBAL") &&
@@ -314,10 +324,14 @@ AST_TEST_DEFINE(test_substitution)
 				}
 			}
 		}
-		ast_free(cmd);
 	}
 
+	if (funcs) {
+		AST_VECTOR_CALLBACK_VOID(funcs, ast_free);
+		AST_VECTOR_PTR_FREE(funcs);
+	}
 	ast_hangup(c);
+
 	return res;
 }
 

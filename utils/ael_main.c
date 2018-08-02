@@ -11,14 +11,13 @@
 	<support_level>extended</support_level>
  ***/
 
+#define ASTMM_LIBC ASTMM_IGNORE
 #include "asterisk.h"
 
 #include <locale.h>
 #include <ctype.h>
 #include <regex.h>
 #include <limits.h>
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/backtrace.h"
 #include "asterisk/channel.h"
@@ -32,10 +31,6 @@ ASTERISK_REGISTER_FILE()
 
 int option_debug = 0;
 int option_verbose = 0;
-#if !defined(LOW_MEMORY)
-void __ast_register_file(const char *file) { }
-void __ast_unregister_file(const char *file) { }
-#endif
 
 /*** MODULEINFO
   	<depend>res_ael_share</depend>
@@ -180,7 +175,6 @@ struct ast_custom_function *ast_custom_function_find(const char *name)
 	return 0; /* in "standalone" mode, functions are just not avail */
 }
 
-#if !defined(LOW_MEMORY)
 int ast_add_profile(const char *x, uint64_t scale)
 {
 	if (!no_comp)
@@ -188,7 +182,6 @@ int ast_add_profile(const char *x, uint64_t scale)
 
 	return 0;
 }
-#endif
 
 int ast_loader_register(int (*updater)(void))
 {
@@ -381,7 +374,7 @@ void ast_context_add_switch2(struct ast_context *con, const char *value, const c
 	if( dump_extensions ) {
 		struct namelist *x;
 		x = create_name((char*)value);
-		strncpy(x->name2,data,100);
+		strncpy(x->name2, data, 99);
 		if( eval ) {
 
 			ADD_LAST(con->switches,x);
@@ -606,11 +599,9 @@ unsigned int ast_hashtab_hash_contexts(const void *obj)
 }
 
 #ifdef DEBUG_THREADS
-#if !defined(LOW_MEMORY)
 void ast_mark_lock_acquired(void *lock_addr)
 {
 }
-#ifdef HAVE_BKTR
 void ast_remove_lock_info(void *lock_addr, struct ast_bt *bt)
 {
 }
@@ -620,6 +611,7 @@ void ast_store_lock_info(enum ast_lock_type type, const char *filename,
 {
 }
 
+#ifdef HAVE_BKTR
 int __ast_bt_get_addresses(struct ast_bt *bt)
 {
 	return 0;
@@ -636,15 +628,6 @@ char **__ast_bt_get_symbols(void **addresses, size_t num_frames)
 	}
 	return foo;
 }
-#else
-void ast_remove_lock_info(void *lock_addr)
-{
-}
-
-void ast_store_lock_info(enum ast_lock_type type, const char *filename,
-	int line_num, const char *func, const char *lock_name, void *lock_addr)
-{
-}
 #endif /* HAVE_BKTR */
 void ast_suspend_lock_info(void *lock_addr)
 {
@@ -652,5 +635,4 @@ void ast_suspend_lock_info(void *lock_addr)
 void ast_restore_lock_info(void *lock_addr)
 {
 }
-#endif /* !defined(LOW_MEMORY) */
 #endif /* DEBUG_THREADS */

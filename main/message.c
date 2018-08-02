@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 
 #include "asterisk/module.h"
@@ -123,16 +121,14 @@ ASTERISK_REGISTER_FILE()
 		<syntax>
 			<parameter name="to" required="true">
 				<para>A To URI for the message.</para>
-				<xi:include xpointer="xpointer(/docs/info[@name='PJSIPMessageToInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='SIPMessageToInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='XMPPMessageToInfo'])" />
+				<xi:include xpointer="xpointer(/docs/info[@name='MessageToInfo'])" />
 			</parameter>
 			<parameter name="from" required="false">
 				<para>A From URI for the message if needed for the
-				message technology being used to send this message.</para>
-				<xi:include xpointer="xpointer(/docs/info[@name='PJSIPMessageFromInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='SIPMessageFromInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='XMPPMessageFromInfo'])" />
+				message technology being used to send this message. This can be a
+				SIP(S) URI, such as <literal>Alice &lt;sip:alice@atlanta.com&gt;</literal>,
+				a string in the format <literal>alice@atlanta.com</literal>, or simply
+				a username such as <literal>alice</literal>.</para>
 			</parameter>
 		</syntax>
 		<description>
@@ -168,16 +164,12 @@ ASTERISK_REGISTER_FILE()
 			<xi:include xpointer="xpointer(/docs/manager[@name='Login']/syntax/parameter[@name='ActionID'])" />
 			<parameter name="To" required="true">
 				<para>The URI the message is to be sent to.</para>
-				<xi:include xpointer="xpointer(/docs/info[@name='PJSIPMessageToInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='SIPMessageToInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='XMPPMessageToInfo'])" />
+				<xi:include xpointer="xpointer(/docs/info[@name='MessageToInfo'])" />
 			</parameter>
 			<parameter name="From">
 				<para>A From URI for the message if needed for the
 				message technology being used to send this message.</para>
-				<xi:include xpointer="xpointer(/docs/info[@name='PJSIPMessageFromInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='SIPMessageFromInfo'])" />
-				<xi:include xpointer="xpointer(/docs/info[@name='XMPPMessageFromInfo'])" />
+				<xi:include xpointer="xpointer(/docs/info[@name='MessageFromInfo'])" />
 			</parameter>
 			<parameter name="Body">
 				<para>The message body text.  This must not contain any newlines as that
@@ -398,7 +390,7 @@ static void msg_destructor(void *obj)
 	struct ast_msg *msg = obj;
 
 	ast_string_field_free_memory(msg);
-	ao2_ref(msg->vars, -1);
+	ao2_cleanup(msg->vars);
 }
 
 struct ast_msg *ast_msg_alloc(void)
@@ -785,10 +777,19 @@ static void chan_cleanup(struct ast_channel *chan)
 	if (msg_ds) {
 		ast_channel_datastore_add(chan, msg_ds);
 	}
+
 	/*
 	 * Clear softhangup flags.
 	 */
 	ast_channel_clear_softhangup(chan, AST_SOFTHANGUP_ALL);
+
+	/*
+	 * Flush the alert pipe in case we miscounted somewhere when
+	 * messing with frames on the read queue, we had to flush the
+	 * read queue above, or we had an "Exceptionally long queue
+	 * length" event.
+	 */
+	ast_channel_internal_alert_flush(chan);
 
 	ast_channel_unlock(chan);
 }
@@ -1347,6 +1348,148 @@ int ast_msg_send(struct ast_msg *msg, const char *to, const char *from)
 	return res;
 }
 
+/*!
+ * \brief Structure used to transport a message through the frame core
+ * \since 13.22.0
+ * \since 15.5.0
+ */
+struct ast_msg_data {
+	/*! The length of this structure plus the actual length of the allocated buffer */
+	size_t length;
+	enum ast_msg_data_source_type source;
+	/*! These are indices into the buffer where teh attribute starts */
+	int attribute_value_offsets[__AST_MSG_DATA_ATTR_LAST];
+	/*! The buffer containing the NULL separated attributes */
+	char buf[0];
+};
+
+#define ATTRIBUTE_UNSET -1
+
+struct ast_msg_data *ast_msg_data_alloc(enum ast_msg_data_source_type source,
+	struct ast_msg_data_attribute attributes[], size_t count)
+{
+	struct ast_msg_data *msg;
+	size_t len = sizeof(*msg);
+	size_t i;
+	size_t current_offset = 0;
+	enum ast_msg_data_attribute_type attr_type;
+
+	if (!attributes) {
+		ast_assert(attributes != NULL);
+		return NULL;
+	}
+
+	if (!count) {
+		ast_assert(count > 0);
+		return NULL;
+	}
+
+	/* Calculate the length required for the buffer */
+	for (i=0; i < count; i++) {
+		if (!attributes[i].value) {
+			ast_assert(attributes[i].value != NULL);
+			return NULL;
+		}
+		len += (strlen(attributes[i].value) + 1);
+	}
+
+	msg = ast_calloc(1, len);
+	if (!msg) {
+		return NULL;
+	}
+	msg->source = source;
+	msg->length = len;
+
+	/* Mark all of the attributes as unset */
+	for (attr_type = 0; attr_type < __AST_MSG_DATA_ATTR_LAST; attr_type++) {
+		msg->attribute_value_offsets[attr_type] = ATTRIBUTE_UNSET;
+	}
+
+	/* Set the ones we have and increment the offset */
+	for (i=0; i < count; i++) {
+		len = (strlen(attributes[i].value) + 1);
+		strcpy(msg->buf + current_offset, attributes[i].value); /* Safe */
+		msg->attribute_value_offsets[attributes[i].type] = current_offset;
+		current_offset += len;
+	}
+
+	return msg;
+}
+
+struct ast_msg_data *ast_msg_data_dup(struct ast_msg_data *msg)
+{
+	struct ast_msg_data *dest;
+
+	if (!msg) {
+		ast_assert(msg != NULL);
+		return NULL;
+	}
+
+	dest = ast_malloc(msg->length);
+	if (!dest) {
+		return NULL;
+	}
+	memcpy(dest, msg, msg->length);
+
+	return dest;
+}
+
+size_t ast_msg_data_get_length(struct ast_msg_data *msg)
+{
+	if (!msg) {
+		ast_assert(msg != NULL);
+		return 0;
+	}
+
+	return msg->length;
+}
+
+enum ast_msg_data_source_type ast_msg_data_get_source_type(struct ast_msg_data *msg)
+{
+	if (!msg) {
+		ast_assert(msg != NULL);
+		return AST_MSG_DATA_SOURCE_TYPE_UNKNOWN;
+	}
+
+	return msg->source;
+}
+
+const char *ast_msg_data_get_attribute(struct ast_msg_data *msg,
+	enum ast_msg_data_attribute_type attribute_type)
+{
+	if (!msg) {
+		ast_assert(msg != NULL);
+		return "";
+	}
+
+	if (msg->attribute_value_offsets[attribute_type] > ATTRIBUTE_UNSET) {
+		return msg->buf + msg->attribute_value_offsets[attribute_type];
+	}
+
+	return "";
+}
+
+int ast_msg_data_queue_frame(struct ast_channel *channel, struct ast_msg_data *msg)
+{
+	struct ast_frame f;
+
+	if (!channel) {
+		ast_assert(channel != NULL);
+		return -1;
+	}
+
+	if (!msg) {
+		ast_assert(msg != NULL);
+		return -1;
+	}
+
+	memset(&f, 0, sizeof(f));
+	f.frametype = AST_FRAME_TEXT_DATA;
+	f.data.ptr = msg;
+	f.datalen = msg->length;
+	return ast_queue_frame(channel, &f);
+}
+
 int ast_msg_tech_register(const struct ast_msg_tech *tech)
 {
 	const struct ast_msg_tech *match;
@@ -1361,7 +1504,12 @@ int ast_msg_tech_register(const struct ast_msg_tech *tech)
 		return -1;
 	}
 
-	AST_VECTOR_APPEND(&msg_techs, tech);
+	if (AST_VECTOR_APPEND(&msg_techs, tech)) {
+		ast_log(LOG_ERROR, "Failed to register message technology for '%s'\n",
+		        tech->name);
+		ast_rwlock_unlock(&msg_techs_lock);
+		return -1;
+	}
 	ast_verb(3, "Message technology '%s' registered.\n", tech->name);
 
 	ast_rwlock_unlock(&msg_techs_lock);
@@ -1416,7 +1564,12 @@ int ast_msg_handler_register(const struct ast_msg_handler *handler)
 		return -1;
 	}
 
-	AST_VECTOR_APPEND(&msg_handlers, handler);
+	if (AST_VECTOR_APPEND(&msg_handlers, handler)) {
+		ast_log(LOG_ERROR, "Failed to register message handler for '%s'\n",
+		        handler->name);
+		ast_rwlock_unlock(&msg_handlers_lock);
+		return -1;
+	}
 	ast_verb(2, "Message handler '%s' registered.\n", handler->name);
 
 	ast_rwlock_unlock(&msg_handlers_lock);

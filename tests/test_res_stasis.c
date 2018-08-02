@@ -32,8 +32,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/test.h"
 #include "asterisk/stasis_app.h"
@@ -138,6 +136,7 @@ AST_TEST_DEFINE(app_replaced)
 	RAII_VAR(struct ast_json *, expected_message1, NULL, ast_json_unref);
 	RAII_VAR(struct ast_json *, message, NULL, ast_json_unref);
 	RAII_VAR(struct ast_json *, expected_message2, NULL, ast_json_unref);
+	char eid[20];
 	int res;
 
 	switch (cmd) {
@@ -158,9 +157,10 @@ AST_TEST_DEFINE(app_replaced)
 
 	stasis_app_register(app_name, test_handler, app_data1);
 	stasis_app_register(app_name, test_handler, app_data2);
-	expected_message1 = ast_json_pack("[{s: s, s: s}]",
+	expected_message1 = ast_json_pack("[{s: s, s: s, s: s}]",
 		"type", "ApplicationReplaced",
-		"application", app_name);
+		"application", app_name,
+		"asterisk_id", ast_eid_to_str(eid, sizeof(eid), &ast_eid_default));
 	message = ast_json_pack("{ s: o }", "test-message", ast_json_null());
 	expected_message2 = ast_json_pack("[o]", ast_json_ref(message));
 
@@ -179,13 +179,11 @@ static int unload_module(void)
 	AST_TEST_UNREGISTER(app_invoke_dne);
 	AST_TEST_UNREGISTER(app_invoke_one);
 	AST_TEST_UNREGISTER(app_replaced);
-	stasis_app_unref();
 	return 0;
 }
 
 static int load_module(void)
 {
-	stasis_app_ref();
 	AST_TEST_REGISTER(app_replaced);
 	AST_TEST_REGISTER(app_invoke_one);
 	AST_TEST_REGISTER(app_invoke_dne);
@@ -195,5 +193,5 @@ static int load_module(void)
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Stasis Core testing",
 	.load = load_module,
 	.unload = unload_module,
-	.nonoptreq = "res_stasis",
+	.requires = "res_stasis",
 );

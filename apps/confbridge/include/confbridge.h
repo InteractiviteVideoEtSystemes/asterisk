@@ -30,18 +30,21 @@
 #include "asterisk/bridge_features.h"
 #include "conf_state.h"
 
-/* Maximum length of a conference bridge name */
+/*! Maximum length of a conference bridge name */
 #define MAX_CONF_NAME AST_MAX_EXTENSION
-/* Maximum length of a conference pin */
+/*! Maximum length of a conference pin */
 #define MAX_PIN     80
-/* Maximum length of bridge/user/menu profile names */
+/*! Maximum length of bridge/user/menu profile names */
 #define MAX_PROFILE_NAME 128
 
 #define DEFAULT_USER_PROFILE "default_user"
 #define DEFAULT_BRIDGE_PROFILE "default_bridge"
 #define DEFAULT_MENU_PROFILE "default_menu"
 
+/*! Default minimum average magnitude threshold to determine talking by the DSP. */
 #define DEFAULT_TALKING_THRESHOLD 160
+
+/*! Default time in ms of silence necessary to declare talking stopped by the bridge. */
 #define DEFAULT_SILENCE_THRESHOLD 2500
 
 enum user_profile_flags {
@@ -62,6 +65,8 @@ enum user_profile_flags {
 	USER_OPT_ANNOUNCEUSERCOUNTALL = (1 << 14), /*!< Sets if the number of users should be announced to everyone. */
 	USER_OPT_JITTERBUFFER =  (1 << 15), /*!< Places a jitterbuffer on the user. */
 	USER_OPT_ANNOUNCE_JOIN_LEAVE_REVIEW = (1 << 16), /*!< modifies ANNOUNCE_JOIN_LEAVE - user reviews the recording before continuing */
+	USER_OPT_SEND_EVENTS = (1 << 17), /*!< Send text message events to users */
+	USER_OPT_ECHO_EVENTS = (1 << 18), /*!< Send events only to the admin(s) */
 };
 
 enum bridge_profile_flags {
@@ -70,7 +75,13 @@ enum bridge_profile_flags {
 	BRIDGE_OPT_VIDEO_SRC_FIRST_MARKED = (1 << 2), /*!< Set if conference should feed video of first marked user to all participants. */
 	BRIDGE_OPT_VIDEO_SRC_FOLLOW_TALKER = (1 << 3), /*!< Set if conference set the video feed to follow the loudest talker.  */
 	BRIDGE_OPT_RECORD_FILE_APPEND = (1 << 4), /*!< Set if the record file should be appended to between start/stops.  */
-	BRIDGE_OPT_RECORD_FILE_TIMESTAMP = (1 << 5), /*< Set if the record file should have a timestamp appended */
+	BRIDGE_OPT_RECORD_FILE_TIMESTAMP = (1 << 5), /*!< Set if the record file should have a timestamp appended */
+	BRIDGE_OPT_BINAURAL_ACTIVE = (1 << 6), /*!< Set if binaural convolution is activated */
+	BRIDGE_OPT_VIDEO_SRC_SFU = (1 << 7), /*!< Selective forwarding unit */
+	BRIDGE_OPT_REMB_BEHAVIOR_AVERAGE = (1 << 8), /*!< The average of all REMB reports is sent to the sender */
+	BRIDGE_OPT_REMB_BEHAVIOR_LOWEST = (1 << 9), /*!< The lowest estimated maximum bitrate is sent to the sender */
+	BRIDGE_OPT_REMB_BEHAVIOR_HIGHEST = (1 << 10), /*!< The highest estimated maximum bitrate is sent to the sender */
+	BRIDGE_OPT_ENABLE_EVENTS = (1 << 11), /*!< Enable sending events to participants */
 };
 
 enum conf_menu_action_id {
@@ -92,6 +103,7 @@ enum conf_menu_action_id {
 	MENU_ACTION_RELEASE_SINGLE_VIDEO_SRC,
 	MENU_ACTION_PARTICIPANT_COUNT,
 	MENU_ACTION_ADMIN_TOGGLE_MUTE_PARTICIPANTS,
+	MENU_ACTION_TOGGLE_BINAURAL,
 };
 
 /*! The conference menu action contains both
@@ -137,9 +149,9 @@ struct user_profile {
 	char announcement[PATH_MAX];
 	unsigned int flags;
 	unsigned int announce_user_count_all_after;
-	/*! The time in ms of talking before a user is considered to be talking by the dsp. */
+	/*! Minimum average magnitude threshold to determine talking by the DSP. */
 	unsigned int talking_threshold;
-	/*! The time in ms of silence before a user is considered to be silent by the dsp. */
+	/*! Time in ms of silence necessary to declare talking stopped by the bridge. */
 	unsigned int silence_threshold;
 	/*! The time in ms the user may stay in the confbridge */
 	unsigned int timeout;
@@ -169,6 +181,8 @@ enum conf_sounds {
 	CONF_SOUND_PARTICIPANTS_MUTED,
 	CONF_SOUND_PARTICIPANTS_UNMUTED,
 	CONF_SOUND_BEGIN,
+	CONF_SOUND_BINAURAL_ON,
+	CONF_SOUND_BINAURAL_OFF,
 };
 
 struct bridge_profile_sounds {
@@ -196,6 +210,8 @@ struct bridge_profile_sounds {
 		AST_STRING_FIELD(participantsmuted);
 		AST_STRING_FIELD(participantsunmuted);
 		AST_STRING_FIELD(begin);
+		AST_STRING_FIELD(binauralon);
+		AST_STRING_FIELD(binauraloff);
 	);
 };
 
@@ -210,6 +226,9 @@ struct bridge_profile {
 	unsigned int internal_sample_rate; /*!< The internal sample rate of the bridge. 0 when set to auto adjust mode. */
 	unsigned int mix_interval;  /*!< The internal mixing interval used by the bridge. When set to 0 the bridgewill use a default interval. */
 	struct bridge_profile_sounds *sounds;
+	char regcontext[AST_MAX_CONTEXT];
+	unsigned int video_update_discard; /*!< Amount of time after sending a video update request that subsequent requests should be discarded */
+	unsigned int remb_send_interval; /*!< Interval at which a combined REMB frame is sent to video sources */
 };
 
 /*! \brief The structure that represents a conference bridge */
@@ -227,9 +246,9 @@ struct confbridge_conference {
 	struct ast_channel *record_chan;                                  /*!< Channel used for recording the conference */
 	struct ast_str *record_filename;                                  /*!< Recording filename. */
 	struct ast_str *orig_rec_file;                                    /*!< Previous b_profile.rec_file. */
-	ast_mutex_t playback_lock;                                        /*!< Lock used for playback channel */
 	AST_LIST_HEAD_NOLOCK(, confbridge_user) active_list;              /*!< List of users participating in the conference bridge */
 	AST_LIST_HEAD_NOLOCK(, confbridge_user) waiting_list;             /*!< List of users waiting to join the conference bridge */
+	struct ast_taskprocessor *playback_queue;                         /*!< Queue for playing back bridge announcements and managing the announcer channel */
 };
 
 extern struct ao2_container *conference_bridges;
@@ -253,6 +272,7 @@ struct confbridge_user {
 	unsigned int muted:1;                        /*!< Has the user requested to be muted? */
 	unsigned int kicked:1;                       /*!< User has been kicked from the conference */
 	unsigned int playing_moh:1;                  /*!< MOH is currently being played to the user */
+	unsigned int talking:1;                      /*!< User is currently talking */
 	AST_LIST_HEAD_NOLOCK(, post_join_action) post_join_list; /*!< List of sounds to play after joining */;
 	AST_LIST_ENTRY(confbridge_user) list;        /*!< Linked list information */
 };
@@ -387,6 +407,37 @@ int func_confbridge_helper(struct ast_channel *chan, const char *cmd, char *data
  * \retval -1 failure
  */
 int play_sound_file(struct confbridge_conference *conference, const char *filename);
+
+/*!
+ * \brief Play sound file into conference bridge asynchronously
+ *
+ * If the initiator parameter is non-NULL, then the playback will wait for
+ * that initiator channel to get back in the bridge before playing the sound
+ * file. This way, the initiator has no danger of hearing a "clipped" file.
+ *
+ * \param conference The conference bridge to play sound file into
+ * \param filename Sound file to play
+ * \param initiator Channel that initiated playback.
+ *
+ * \retval 0 success
+ * \retval -1 failure
+ */
+int async_play_sound_file(struct confbridge_conference *conference, const char *filename,
+	struct ast_channel *initiator);
+
+/*!
+ * \brief Indicate the initiator of an async sound file is ready for it to play.
+ *
+ * When playing an async sound file, the initiator is typically either out of the bridge
+ * or not in a position to hear the queued announcement. This function lets the announcement
+ * thread know that the initiator is now ready for the sound to play.
+ *
+ * If an async announcement was queued and no initiator channel was provided, then this is
+ * a no-op
+ *
+ * \param chan The channel that initiated the async announcement
+ */
+void async_play_sound_ready(struct ast_channel *chan);
 
 /*! \brief Callback to be called when the conference has become empty
  * \param conference The conference bridge
@@ -578,6 +629,26 @@ struct stasis_message_type *confbridge_unmute_type(void);
 struct stasis_message_type *confbridge_talking_type(void);
 
 /*!
+ * \since 15.5
+ * \brief get the confbridge welcome stasis message type
+ *
+ * \retval stasis message type for confbridge welcome messages if it's available
+ * \retval NULL if it isn't
+ */
+struct stasis_message_type *confbridge_welcome_type(void);
+
+/*!
+ * \since 15.5
+ * \brief Get the string representation of a confbridge stasis message type
+ *
+ * \param event_type The confbridge event type such as 'confbridge_welcome_type()'
+ *
+ * \retval The string representation of the message type
+ * \retval "unknown" if not found
+ */
+const char *confbridge_event_type_to_string(struct stasis_message_type *event_type);
+
+/*!
  * \since 12.0
  * \brief register stasis message routers to handle manager events for confbridge messages
  *
@@ -609,16 +680,6 @@ struct ast_channel_tech *conf_record_get_tech(void);
 struct ast_channel_tech *conf_announce_get_tech(void);
 
 /*!
- * \brief Remove the announcer channel from the conference.
- * \since 12.0.0
- *
- * \param chan Either channel in the announcer channel pair.
- *
- * \return Nothing
- */
-void conf_announce_channel_depart(struct ast_channel *chan);
-
-/*!
  * \brief Push the announcer channel into the conference.
  * \since 12.0.0
  *
@@ -628,4 +689,18 @@ void conf_announce_channel_depart(struct ast_channel *chan);
  * \retval -1 on error.
  */
 int conf_announce_channel_push(struct ast_channel *ast);
+
+/*!
+ * \brief Find a confbridge by name.
+ * \since 13.22.0
+ * \since 15.5.0
+ *
+ * \param confbridge_name The name to search for
+ *
+ * \return ConfBridge (which must be unreffed) or NULL.
+ */
+struct confbridge_conference *conf_find_bridge(const char *conference_name);
+
+
+
 #endif

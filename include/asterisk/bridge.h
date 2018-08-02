@@ -102,6 +102,10 @@ enum ast_bridge_video_mode_type {
 	/*! A single user's video feed is distributed to all bridge channels, but
 	 *  that feed is automatically picked based on who is talking the most. */
 	AST_BRIDGE_VIDEO_MODE_TALKER_SRC,
+	/*! Operate as a selective forwarding unit. Video from each participant is
+	 * cloned to a dedicated stream on a subset of the remaining participants.
+	 */
+	AST_BRIDGE_VIDEO_MODE_SFU,
 };
 
 /*! \brief This is used for both SINGLE_SRC mode to set what channel
@@ -122,6 +126,24 @@ struct ast_bridge_video_talker_src_data {
 	struct ast_channel *chan_old_vsrc;
 };
 
+/*! \brief REMB report behaviors */
+enum ast_bridge_video_sfu_remb_behavior {
+	/*! The average of all reports is sent to the sender */
+	AST_BRIDGE_VIDEO_SFU_REMB_AVERAGE = 0,
+	/*! The lowest reported bitrate is forwarded to the sender */
+	AST_BRIDGE_VIDEO_SFU_REMB_LOWEST,
+	/*! The highest reported bitrate is forwarded to the sender */
+	AST_BRIDGE_VIDEO_SFU_REMB_HIGHEST,
+};
+
+/*! \brief This is used for selective forwarding unit configuration */
+struct ast_bridge_video_sfu_data {
+	/*! The interval at which a REMB report is generated and sent */
+	unsigned int remb_send_interval;
+	/*! How the combined REMB report is generated */
+	enum ast_bridge_video_sfu_remb_behavior remb_behavior;
+};
+
 /*! \brief Data structure that defines a video source mode */
 struct ast_bridge_video_mode {
 	enum ast_bridge_video_mode_type mode;
@@ -129,7 +151,10 @@ struct ast_bridge_video_mode {
 	union {
 		struct ast_bridge_video_single_src_data single_src_data;
 		struct ast_bridge_video_talker_src_data talker_src_data;
+		struct ast_bridge_video_sfu_data sfu_data;
 	} mode_data;
+	/*! The minimum interval between video updates */
+	unsigned int video_update_discard;
 };
 
 /*!
@@ -263,7 +288,11 @@ struct ast_bridge_softmix {
 	 * for itself.
 	 */
 	unsigned int internal_mixing_interval;
+	/*! TRUE if binaural convolve is activated in configuration. */
+	unsigned int binaural_active;
 };
+
+AST_LIST_HEAD_NOLOCK(ast_bridge_channels_list, ast_bridge_channel);
 
 /*!
  * \brief Structure that contains information about a bridge
@@ -282,7 +311,7 @@ struct ast_bridge {
 	/*! Call ID associated with the bridge */
 	ast_callid callid;
 	/*! Linked list of channels participating in the bridge */
-	AST_LIST_HEAD_NOLOCK(, ast_bridge_channel) channels;
+	struct ast_bridge_channels_list channels;
 	/*! Queue of actions to perform on the bridge. */
 	AST_LIST_HEAD_NOLOCK(, ast_frame) action_queue;
 	/*! Softmix technology parameters. */
@@ -321,6 +350,9 @@ struct ast_bridge {
 		/*! Immutable bridge UUID. */
 		AST_STRING_FIELD(uniqueid);
 	);
+
+	/*! Type mapping used for media routing */
+	struct ast_vector_int media_types;
 };
 
 /*! \brief Bridge base class virtual method table. */
@@ -868,6 +900,14 @@ void ast_bridge_set_internal_sample_rate(struct ast_bridge *bridge, unsigned int
 void ast_bridge_set_mixing_interval(struct ast_bridge *bridge, unsigned int mixing_interval);
 
 /*!
+ * \brief Activates the use of binaural signals in a conference bridge.
+ *
+ *  \param bridge Channel to activate the binaural signals.
+ *  \param binaural_active If true binaural signal processing will be active for the bridge.
+ */
+void ast_bridge_set_binaural_active(struct ast_bridge *bridge, unsigned int binaural_active);
+
+/*!
  * \brief Set a bridge to feed a single video source to all participants.
  */
 void ast_bridge_set_single_src_video_mode(struct ast_bridge *bridge, struct ast_channel *video_src_chan);
@@ -877,6 +917,39 @@ void ast_bridge_set_single_src_video_mode(struct ast_bridge *bridge, struct ast_
  * video as the single source video feed
  */
 void ast_bridge_set_talker_src_video_mode(struct ast_bridge *bridge);
+
+/*!
+ * \brief Set the bridge to be a selective forwarding unit
+ */
+void ast_bridge_set_sfu_video_mode(struct ast_bridge *bridge);
+
+/*!
+ * \brief Set the amount of time to discard subsequent video updates after a video update has been sent
+ *
+ * \param bridge Bridge to set the minimum video update wait time on
+ * \param video_update_discard Amount of time after sending a video update that others should be discarded
+ */
+void ast_bridge_set_video_update_discard(struct ast_bridge *bridge, unsigned int video_update_discard);
+
+/*!
+ * \brief Set the interval at which a combined REMB frame will be sent to video sources
+ *
+ * \param bridge Bridge to set the REMB send interval on
+ * \param remb_send_interval The REMB send interval
+ *
+ * \note This can only be called when the bridge has been set to the SFU video mode.
+ */
+void ast_bridge_set_remb_send_interval(struct ast_bridge *bridge, unsigned int remb_send_interval);
+
+/*!
+ * \brief Set the REMB report generation behavior on a bridge
+ *
+ * \param bridge Bridge to set the REMB behavior on
+ * \param behavior How REMB reports are generated
+ *
+ * \note This can only be called when the bridge has been set to the SFU video mode.
+ */
+void ast_brige_set_remb_behavior(struct ast_bridge *bridge, enum ast_bridge_video_sfu_remb_behavior behavior);
 
 /*!
  * \brief Update information about talker energy for talker src video mode.
@@ -902,6 +975,26 @@ int ast_bridge_is_video_src(struct ast_bridge *bridge, struct ast_channel *chan)
  * \brief remove a channel as a source of video for the bridge.
  */
 void ast_bridge_remove_video_src(struct ast_bridge *bridge, struct ast_channel *chan);
+
+/*!
+ * \brief Converts an enum representation of a bridge video mode to string
+ *
+ * \param video_mode The video mode
+ *
+ * \retval A string representation of \c video_mode
+ */
+const char *ast_bridge_video_mode_to_string(enum ast_bridge_video_mode_type video_mode);
+
+/*!
+ * \brief Acquire the channel's bridge for transfer purposes.
+ * \since 13.21.0
+ *
+ * \param chan Channel involved in a transfer.
+ *
+ * \return The bridge the channel is in or NULL if it either isn't
+ * in a bridge or should not be considered to be in a bridge.
+ */
+struct ast_bridge *ast_bridge_transfer_acquire_bridge(struct ast_channel *chan);
 
 enum ast_transfer_result {
 	/*! The transfer completed successfully */

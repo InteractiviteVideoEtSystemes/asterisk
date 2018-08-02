@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE();
-
 #include <stdbool.h>
 #include <math.h>
 #include <unistd.h>
@@ -132,11 +130,9 @@ static void *pthread_timer_open(void)
 	}
 
 	for (i = 0; i < ARRAY_LEN(timer->pipe); ++i) {
-		int flags = fcntl(timer->pipe[i], F_GETFL);
-		flags |= O_NONBLOCK;
-		fcntl(timer->pipe[i], F_SETFL, flags);
+		ast_fd_set_flags(timer->pipe[i], O_NONBLOCK);
 	}
-	
+
 	ao2_lock(pthread_timers);
 	if (!ao2_container_count(pthread_timers)) {
 		ast_mutex_lock(&timing_thread.lock);

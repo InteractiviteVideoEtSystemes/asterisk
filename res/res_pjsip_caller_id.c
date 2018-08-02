@@ -19,7 +19,6 @@
 /*** MODULEINFO
 	<depend>pjproject</depend>
 	<depend>res_pjsip</depend>
-	<depend>res_pjsip_session</depend>
 	<support_level>core</support_level>
  ***/
 
@@ -46,10 +45,28 @@ static void set_id_from_hdr(pjsip_fromto_hdr *hdr, struct ast_party_id *id)
 	char cid_num[AST_CHANNEL_NAME];
 	pjsip_sip_uri *uri;
 	pjsip_name_addr *id_name_addr = (pjsip_name_addr *) hdr->uri;
+	char *semi;
 
 	uri = pjsip_uri_get_uri(id_name_addr);
 	ast_copy_pj_str(cid_name, &id_name_addr->display, sizeof(cid_name));
 	ast_copy_pj_str(cid_num, &uri->user, sizeof(cid_num));
+
+	/* Always truncate caller-id number at a semicolon. */
+	semi = strchr(cid_num, ';');
+	if (semi) {
+		/*
+		 * We need to be able to handle URI's looking like
+		 * "sip:1235557890;phone-context=national@x.x.x.x;user=phone"
+		 *
+		 * Where the uri->user field will result in:
+		 * "1235557890;phone-context=national"
+		 *
+		 * People don't care about anything after the semicolon
+		 * showing up on their displays even though the RFC
+		 * allows the semicolon.
+		 */
+		*semi = '\0';
+	}
 
 	ast_free(id->name.str);
 	id->name.str = ast_strdup(cid_name);
@@ -131,12 +148,12 @@ static int set_id_from_pai(pjsip_rx_data *rdata, struct ast_party_id *id)
 	}
 
 	privacy = pjsip_msg_find_hdr_by_name(rdata->msg_info.msg, &privacy_str, NULL);
-	if (privacy && !pj_stricmp2(&privacy->hvalue, "id")) {
-		id->number.presentation = AST_PRES_PROHIB_USER_NUMBER_NOT_SCREENED;
-		id->name.presentation = AST_PRES_PROHIB_USER_NUMBER_NOT_SCREENED;
-	} else {
+	if (!privacy || !pj_stricmp2(&privacy->hvalue, "none")) {
 		id->number.presentation = AST_PRES_ALLOWED_USER_NUMBER_NOT_SCREENED;
 		id->name.presentation = AST_PRES_ALLOWED_USER_NUMBER_NOT_SCREENED;
+	} else {
+		id->number.presentation = AST_PRES_PROHIB_USER_NUMBER_NOT_SCREENED;
+		id->name.presentation = AST_PRES_PROHIB_USER_NUMBER_NOT_SCREENED;
 	}
 
 	return 0;
@@ -398,66 +415,46 @@ static void caller_id_incoming_response(struct ast_sip_session *session, pjsip_r
 
 /*!
  * \internal
- * \brief Set name and number information on an identity header.
- * \param pool Memory pool to use for string duplication
- * \param id_hdr A From, P-Asserted-Identity, or Remote-Party-ID header to modify
- * \param id The identity information to apply to the header
- */
-static void modify_id_header(pj_pool_t *pool, pjsip_fromto_hdr *id_hdr, const struct ast_party_id *id)
-{
-	pjsip_name_addr *id_name_addr;
-	pjsip_sip_uri *id_uri;
-
-	id_name_addr = (pjsip_name_addr *) id_hdr->uri;
-	id_uri = pjsip_uri_get_uri(id_name_addr->uri);
-
-	if (id->name.valid) {
-		int name_buf_len = strlen(id->name.str) * 2 + 1;
-		char *name_buf = ast_alloca(name_buf_len);
-
-		ast_escape_quoted(id->name.str, name_buf, name_buf_len);
-		pj_strdup2(pool, &id_name_addr->display, name_buf);
-	}
-
-	if (id->number.valid) {
-		pj_strdup2(pool, &id_uri->user, id->number.str);
-	}
-}
-
-/*!
- * \internal
  * \brief Create an identity header for an outgoing message
  * \param hdr_name The name of the header to create
  * \param tdata The message to place the header on
  * \param id The identification information for the new header
  * \return newly-created header
  */
-static pjsip_fromto_hdr *create_new_id_hdr(const pj_str_t *hdr_name, pjsip_tx_data *tdata, const struct ast_party_id *id)
+static pjsip_fromto_hdr *create_new_id_hdr(const pj_str_t *hdr_name, pjsip_fromto_hdr *base, pjsip_tx_data *tdata, const struct ast_party_id *id)
 {
 	pjsip_fromto_hdr *id_hdr;
-	pjsip_fromto_hdr *base;
 	pjsip_name_addr *id_name_addr;
 	pjsip_sip_uri *id_uri;
 
-	base = tdata->msg->type == PJSIP_REQUEST_MSG ? PJSIP_MSG_FROM_HDR(tdata->msg) :
-		PJSIP_MSG_TO_HDR(tdata->msg);
 	id_hdr = pjsip_from_hdr_create(tdata->pool);
 	id_hdr->type = PJSIP_H_OTHER;
 	pj_strdup(tdata->pool, &id_hdr->name, hdr_name);
-	id_hdr->sname.slen = 0;
+	id_hdr->sname = id_hdr->name;
 
 	id_name_addr = pjsip_uri_clone(tdata->pool, base->uri);
 	id_uri = pjsip_uri_get_uri(id_name_addr->uri);
 
-	if (id->name.valid) {
+	if (id->name.valid && !ast_strlen_zero(id->name.str)) {
 		int name_buf_len = strlen(id->name.str) * 2 + 1;
 		char *name_buf = ast_alloca(name_buf_len);
 
 		ast_escape_quoted(id->name.str, name_buf, name_buf_len);
 		pj_strdup2(tdata->pool, &id_name_addr->display, name_buf);
+	} else {
+		/*
+		 * We need to clear the remnants of the clone or it'll be left set.
+		 * pj_strdup2 is safe to call with a NULL src and it resets both slen and ptr.
+		 */
+		pj_strdup2(tdata->pool, &id_name_addr->display, NULL);
 	}
 
-	pj_strdup2(tdata->pool, &id_uri->user, id->number.str);
+	if (id->number.valid) {
+		pj_strdup2(tdata->pool, &id_uri->user, id->number.str);
+	} else {
+		/* Similar to name, make sure the number is also cleared when invalid */
+		pj_strdup2(tdata->pool, &id_uri->user, NULL);
+	}
 
 	id_hdr->uri = (pjsip_uri *) id_name_addr;
 	return id_hdr;
@@ -500,9 +497,10 @@ static void add_privacy_header(pjsip_tx_data *tdata, const struct ast_party_id *
  * \param tdata The message to add the header to
  * \param id The identification information used to populate the header
  */
-static void add_pai_header(pjsip_tx_data *tdata, const struct ast_party_id *id)
+static void add_pai_header(const struct ast_sip_session *session, pjsip_tx_data *tdata, const struct ast_party_id *id)
 {
 	static const pj_str_t pj_pai_name = { "P-Asserted-Identity", 19 };
+	pjsip_fromto_hdr *base;
 	pjsip_fromto_hdr *pai_hdr;
 	pjsip_fromto_hdr *old_pai;
 
@@ -511,12 +509,31 @@ static void add_pai_header(pjsip_tx_data *tdata, const struct ast_party_id *id)
 	 */
 	old_pai = pjsip_msg_find_hdr_by_name(tdata->msg, &pj_pai_name, NULL);
 	if (old_pai) {
-		modify_id_header(tdata->pool, old_pai, id);
-		add_privacy_header(tdata, id);
-		return;
+		/* If type is OTHER, then the existing header was most likely
+		 * added by the PJSIP_HEADER dial plan function as a simple
+		 * name/value pair.  We can't pass this to modify_id_header because
+		 * there are no virtual functions to get the uri.  We could parse
+		 * it into a pjsip_fromto_hdr but it isn't worth it since
+		 * modify_id_header is just going to overwrite the name and number
+		 * anyway.  We'll just remove it from the header list instead
+		 * and create a new one.
+		 */
+		if (old_pai->type == PJSIP_H_OTHER) {
+			pj_list_erase(old_pai);
+		} else {
+			ast_sip_modify_id_header(tdata->pool, old_pai, id);
+			add_privacy_header(tdata, id);
+			return;
+		}
 	}
 
-	pai_hdr = create_new_id_hdr(&pj_pai_name, tdata, id);
+	if (tdata->msg->type == PJSIP_REQUEST_MSG) {
+		base = session->saved_from_hdr ? session->saved_from_hdr : PJSIP_MSG_FROM_HDR(tdata->msg);
+	} else {
+		base = PJSIP_MSG_TO_HDR(tdata->msg);
+	}
+
+	pai_hdr = create_new_id_hdr(&pj_pai_name, base, tdata, id);
 	if (!pai_hdr) {
 		return;
 	}
@@ -589,9 +606,10 @@ static void add_privacy_params(pjsip_tx_data *tdata, pjsip_fromto_hdr *hdr, cons
  * \param tdata The message to add the header to
  * \param id The identification information used to populate the header
  */
-static void add_rpid_header(pjsip_tx_data *tdata, const struct ast_party_id *id)
+static void add_rpid_header(const struct ast_sip_session *session, pjsip_tx_data *tdata, const struct ast_party_id *id)
 {
 	static const pj_str_t pj_rpid_name = { "Remote-Party-ID", 15 };
+	pjsip_fromto_hdr *base;
 	pjsip_fromto_hdr *rpid_hdr;
 	pjsip_fromto_hdr *old_rpid;
 
@@ -600,12 +618,31 @@ static void add_rpid_header(pjsip_tx_data *tdata, const struct ast_party_id *id)
 	 */
 	old_rpid = pjsip_msg_find_hdr_by_name(tdata->msg, &pj_rpid_name, NULL);
 	if (old_rpid) {
-		modify_id_header(tdata->pool, old_rpid, id);
-		add_privacy_params(tdata, old_rpid, id);
-		return;
+		/* If type is OTHER, then the existing header was most likely
+		 * added by the PJSIP_HEADER dial plan function as a simple
+		 * name/value pair.  We can't pass this to modify_id_header because
+		 * there are no virtual functions to get the uri.  We could parse
+		 * it into a pjsip_fromto_hdr but it isn't worth it since
+		 * modify_id_header is just going to overwrite the name and number
+		 * anyway.  We'll just remove it from the header list instead
+		 * and create a new one.
+		 */
+		if (old_rpid->type == PJSIP_H_OTHER) {
+			pj_list_erase(old_rpid);
+		} else {
+			ast_sip_modify_id_header(tdata->pool, old_rpid, id);
+			add_privacy_params(tdata, old_rpid, id);
+			return;
+		}
 	}
 
-	rpid_hdr = create_new_id_hdr(&pj_rpid_name, tdata, id);
+	if (tdata->msg->type == PJSIP_REQUEST_MSG) {
+		base = session->saved_from_hdr ? session->saved_from_hdr : PJSIP_MSG_FROM_HDR(tdata->msg);
+	} else {
+		base = PJSIP_MSG_TO_HDR(tdata->msg);
+	}
+
+	rpid_hdr = create_new_id_hdr(&pj_rpid_name, base, tdata, id);
 	if (!rpid_hdr) {
 		return;
 	}
@@ -632,10 +669,10 @@ static void add_id_headers(const struct ast_sip_session *session, pjsip_tx_data 
 		return;
 	}
 	if (session->endpoint->id.send_pai) {
-		add_pai_header(tdata, id);
+		add_pai_header(session, tdata, id);
 	}
 	if (session->endpoint->id.send_rpid) {
-		add_rpid_header(tdata, id);
+		add_rpid_header(session, tdata, id);
 	}
 }
 
@@ -643,10 +680,9 @@ static void add_id_headers(const struct ast_sip_session *session, pjsip_tx_data 
  * \internal
  * \brief Session supplement callback for outgoing INVITE requests
  *
- * For an initial INVITE request, we may change the From header to appropriately
- * reflect the identity information. On all INVITEs (initial and reinvite) we may
- * add other identity headers such as P-Asserted-Identity and Remote-Party-ID based
- * on configuration and privacy settings
+ * On all INVITEs (initial and reinvite) we may add other identity headers
+ * such as P-Asserted-Identity and Remote-Party-ID based on configuration
+ * and privacy settings
  *
  * \param session The session on which the INVITE will be sent
  * \param tdata The outbound INVITE request
@@ -660,33 +696,12 @@ static void caller_id_outgoing_request(struct ast_sip_session *session, pjsip_tx
 		return;
 	}
 
-	/* Must do a deep copy unless we hold the channel lock the entire time. */
 	ast_party_id_init(&connected_id);
 	ast_channel_lock(session->channel);
 	effective_id = ast_channel_connected_effective_id(session->channel);
 	ast_party_id_copy(&connected_id, &effective_id);
 	ast_channel_unlock(session->channel);
 
-	if (session->inv_session->state < PJSIP_INV_STATE_CONFIRMED) {
-		/* Only change the From header on the initial outbound INVITE. Switching it
-		 * mid-call might confuse some UAs.
-		 */
-		pjsip_fromto_hdr *from;
-		pjsip_dialog *dlg;
-
-		from = pjsip_msg_find_hdr(tdata->msg, PJSIP_H_FROM, tdata->msg->hdr.next);
-		dlg = session->inv_session->dlg;
-
-		if (ast_strlen_zero(session->endpoint->fromuser)
-			&& (session->endpoint->id.trust_outbound
-				|| (ast_party_id_presentation(&connected_id) & AST_PRES_RESTRICTION) == AST_PRES_ALLOWED)) {
-			modify_id_header(tdata->pool, from, &connected_id);
-			modify_id_header(dlg->pool, dlg->local.info, &connected_id);
-		}
-
-		ast_sip_add_usereqphone(session->endpoint, tdata->pool, from->uri);
-		ast_sip_add_usereqphone(session->endpoint, dlg->pool, dlg->local.info->uri);
-	}
 	add_id_headers(session, tdata, &connected_id);
 	ast_party_id_free(&connected_id);
 }
@@ -731,8 +746,6 @@ static struct ast_sip_session_supplement caller_id_supplement = {
 
 static int load_module(void)
 {
-	CHECK_PJSIP_SESSION_MODULE_LOADED();
-
 	ast_sip_session_register_supplement(&caller_id_supplement);
 	return AST_MODULE_LOAD_SUCCESS;
 }
@@ -748,4 +761,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP Caller ID Suppo
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip",
 );

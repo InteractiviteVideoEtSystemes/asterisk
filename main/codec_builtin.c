@@ -29,14 +29,17 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
+#include "asterisk/ilbc.h"
 #include "asterisk/logger.h"
 #include "asterisk/astobj2.h"
 #include "asterisk/codec.h"
 #include "asterisk/format.h"
 #include "asterisk/format_cache.h"
 #include "asterisk/frame.h"
+#include "asterisk/smoother.h"
+
+int __ast_codec_register_with_format(struct ast_codec *codec, const char *format_name,
+	struct ast_module *mod);
 
 enum frame_type {
 	TYPE_HIGH,     /* 0x0 */
@@ -102,6 +105,30 @@ static struct ast_codec g723 = {
 	.minimum_bytes = 20,
 	.samples_count = g723_samples,
 	.get_length = g723_length,
+};
+
+static int codec2_samples(struct ast_frame *frame)
+{
+	return 160 * (frame->datalen / 6);
+}
+
+static int codec2_length(unsigned int samples)
+{
+	return (samples / 160) * 6;
+}
+
+static struct ast_codec codec2 = {
+	.name = "codec2",
+	.description = "Codec 2",
+	.type = AST_MEDIA_TYPE_AUDIO,
+	.sample_rate = 8000,
+	.minimum_ms = 20,
+	.maximum_ms = 300,
+	.default_ms = 20,
+	.minimum_bytes = 6,
+	.samples_count = codec2_samples,
+	.get_length = codec2_length,
+	.smooth = 1,
 };
 
 static int none_samples(struct ast_frame *frame)
@@ -262,6 +289,7 @@ static struct ast_codec slin8 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin12 = {
@@ -276,6 +304,7 @@ static struct ast_codec slin12 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin16 = {
@@ -290,6 +319,7 @@ static struct ast_codec slin16 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin24 = {
@@ -304,6 +334,7 @@ static struct ast_codec slin24 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin32 = {
@@ -318,6 +349,7 @@ static struct ast_codec slin32 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin44 = {
@@ -332,6 +364,7 @@ static struct ast_codec slin44 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin48 = {
@@ -346,6 +379,7 @@ static struct ast_codec slin48 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin96 = {
@@ -360,6 +394,7 @@ static struct ast_codec slin96 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static struct ast_codec slin192 = {
@@ -374,6 +409,7 @@ static struct ast_codec slin192 = {
 	.samples_count = slin_samples,
 	.get_length = slin_length,
 	.smooth = 1,
+	.smoother_flags = AST_SMOOTHER_FLAG_BE | AST_SMOOTHER_FLAG_FORCED,
 };
 
 static int lpc10_samples(struct ast_frame *frame)
@@ -585,7 +621,12 @@ static struct ast_codec speex32 = {
 
 static int ilbc_samples(struct ast_frame *frame)
 {
-	return 240 * (frame->datalen / 50);
+	struct ilbc_attr *attr = ast_format_get_attribute_data(frame->subclass.format);
+	const unsigned int mode = attr ? attr->mode : 30;
+	const unsigned int samples_per_frame = mode * ast_format_get_sample_rate(frame->subclass.format) / 1000;
+	const unsigned int octets_per_frame = (mode == 20) ? 38 : 50;
+
+	return samples_per_frame * frame->datalen / octets_per_frame;
 }
 
 static struct ast_codec ilbc = {
@@ -593,12 +634,12 @@ static struct ast_codec ilbc = {
 	.description = "iLBC",
 	.type = AST_MEDIA_TYPE_AUDIO,
 	.sample_rate = 8000,
-	.minimum_ms = 30,
+	.minimum_ms = 20,
 	.maximum_ms = 300,
-	.default_ms = 30,
-	.minimum_bytes = 50,
+	.default_ms = 20,
+	.minimum_bytes = 38,
 	.samples_count = ilbc_samples,
-	.smooth = 1,
+	.smooth = 0,
 };
 
 static struct ast_codec g722 = {
@@ -698,6 +739,21 @@ static struct ast_codec g719 = {
 	.get_length = g719_length,
 };
 
+static int opus_samples(struct ast_frame *frame)
+{
+	/*
+	 * XXX This is likely not at all what's intended from this
+	 * callback.  If you have codec_opus.so loaded then this
+	 * function is overridden anyway.  However, since opus is
+	 * variable bit rate and I cannot extract the calculation code
+	 * from the opus library, I am going to punt and assume 20ms
+	 * worth of samples.  In testing, this has worked just fine.
+	 * Pass through support doesn't seem to care about the value
+	 * returned anyway.
+	 */
+	return ast_format_get_sample_rate(frame->subclass.format) / 50;
+}
+
 static struct ast_codec opus = {
 	.name = "opus",
 	.description = "Opus Codec",
@@ -706,6 +762,7 @@ static struct ast_codec opus = {
 	.minimum_ms = 20,
 	.maximum_ms = 60,
 	.default_ms = 20,
+	.samples_count = opus_samples,
 	.minimum_bytes = 10,
 };
 
@@ -725,36 +782,49 @@ static struct ast_codec h261 = {
 	.name = "h261",
 	.description = "H.261 video",
 	.type = AST_MEDIA_TYPE_VIDEO,
+	.sample_rate = 1000,
 };
 
 static struct ast_codec h263 = {
 	.name = "h263",
 	.description = "H.263 video",
 	.type = AST_MEDIA_TYPE_VIDEO,
+	.sample_rate = 1000,
 };
 
 static struct ast_codec h263p = {
 	.name = "h263p",
 	.description = "H.263+ video",
 	.type = AST_MEDIA_TYPE_VIDEO,
+	.sample_rate = 1000,
 };
 
 static struct ast_codec h264 = {
 	.name = "h264",
 	.description = "H.264 video",
 	.type = AST_MEDIA_TYPE_VIDEO,
+	.sample_rate = 1000,
 };
 
 static struct ast_codec mpeg4 = {
 	.name = "mpeg4",
 	.description = "MPEG4 video",
 	.type = AST_MEDIA_TYPE_VIDEO,
+	.sample_rate = 1000,
 };
 
 static struct ast_codec vp8 = {
 	.name = "vp8",
 	.description = "VP8 video",
 	.type = AST_MEDIA_TYPE_VIDEO,
+	.sample_rate = 1000,
+};
+
+static struct ast_codec vp9 = {
+	.name = "vp9",
+	.description = "VP9 video",
+	.type = AST_MEDIA_TYPE_VIDEO,
+	.sample_rate = 1000,
 };
 
 static struct ast_codec t140red = {
@@ -769,12 +839,77 @@ static struct ast_codec t140 = {
 	.type = AST_MEDIA_TYPE_TEXT,
 };
 
+static struct ast_codec t38 = {
+	.name = "t38",
+	.description = "T.38 UDPTL Fax",
+	.type = AST_MEDIA_TYPE_IMAGE,
+};
+
+static int silk_samples(struct ast_frame *frame)
+{
+	/* XXX This is likely not at all what's intended from this callback. However,
+	 * since SILK is variable bit rate, I have no idea how to take a frame of data
+	 * and determine the number of samples present. Instead, we base this on the
+	 * sample rate of the codec and the expected number of samples to receive in 20ms.
+	 * In testing, this has worked just fine.
+	 */
+	return ast_format_get_sample_rate(frame->subclass.format) / 50;
+}
+
+static struct ast_codec silk8 = {
+	.name = "silk",
+	.description = "SILK Codec (8 KHz)",
+	.type = AST_MEDIA_TYPE_AUDIO,
+	.sample_rate = 8000,
+	.minimum_ms = 20,
+	.maximum_ms = 100,
+	.default_ms = 20,
+	.minimum_bytes = 160,
+	.samples_count = silk_samples
+};
+
+static struct ast_codec silk12 = {
+	.name = "silk",
+	.description = "SILK Codec (12 KHz)",
+	.type = AST_MEDIA_TYPE_AUDIO,
+	.sample_rate = 12000,
+	.minimum_ms = 20,
+	.maximum_ms = 100,
+	.default_ms = 20,
+	.minimum_bytes = 240,
+	.samples_count = silk_samples
+};
+
+static struct ast_codec silk16 = {
+	.name = "silk",
+	.description = "SILK Codec (16 KHz)",
+	.type = AST_MEDIA_TYPE_AUDIO,
+	.sample_rate = 16000,
+	.minimum_ms = 20,
+	.maximum_ms = 100,
+	.default_ms = 20,
+	.minimum_bytes = 320,
+	.samples_count = silk_samples
+};
+
+static struct ast_codec silk24 = {
+	.name = "silk",
+	.description = "SILK Codec (24 KHz)",
+	.type = AST_MEDIA_TYPE_AUDIO,
+	.sample_rate = 24000,
+	.minimum_ms = 20,
+	.maximum_ms = 100,
+	.default_ms = 20,
+	.minimum_bytes = 480,
+	.samples_count = silk_samples
+};
+
 #define CODEC_REGISTER_AND_CACHE(codec) \
 	({ \
 		int __res_ ## __LINE__ = 0; \
 		struct ast_format *__fmt_ ## __LINE__; \
 		struct ast_codec *__codec_ ## __LINE__; \
-		res |= __ast_codec_register(&(codec), NULL); \
+		res |= __ast_codec_register_with_format(&(codec), (codec).name, NULL); \
 		__codec_ ## __LINE__ = ast_codec_get((codec).name, (codec).type, (codec).sample_rate); \
 		__fmt_ ## __LINE__ = __codec_ ## __LINE__ ? ast_format_create(__codec_ ## __LINE__) : NULL; \
 		res |= ast_format_cache_set(__fmt_ ## __LINE__); \
@@ -783,14 +918,14 @@ static struct ast_codec t140 = {
 		__res_ ## __LINE__; \
 	})
 
-#define CODEC_REGISTER_AND_CACHE_NAMED(format_name, codec) \
+#define CODEC_REGISTER_AND_CACHE_NAMED(fmt_name, codec) \
 	({ \
 		int __res_ ## __LINE__ = 0; \
 		struct ast_format *__fmt_ ## __LINE__; \
 		struct ast_codec *__codec_ ## __LINE__; \
-		res |= __ast_codec_register(&(codec), NULL); \
+		res |= __ast_codec_register_with_format(&(codec), fmt_name, NULL); \
 		__codec_ ## __LINE__ = ast_codec_get((codec).name, (codec).type, (codec).sample_rate); \
-		__fmt_ ## __LINE__ = ast_format_create_named((format_name), __codec_ ## __LINE__); \
+		__fmt_ ## __LINE__ = ast_format_create_named((fmt_name), __codec_ ## __LINE__); \
 		res |= ast_format_cache_set(__fmt_ ## __LINE__); \
 		ao2_ref(__fmt_ ## __LINE__, -1); \
 		ao2_ref(__codec_ ## __LINE__, -1); \
@@ -801,6 +936,7 @@ int ast_codec_builtin_init(void)
 {
 	int res = 0;
 
+	res |= CODEC_REGISTER_AND_CACHE(codec2);
 	res |= CODEC_REGISTER_AND_CACHE(g723);
 	res |= CODEC_REGISTER_AND_CACHE(ulaw);
 	res |= CODEC_REGISTER_AND_CACHE(alaw);
@@ -837,9 +973,15 @@ int ast_codec_builtin_init(void)
 	res |= CODEC_REGISTER_AND_CACHE(h264);
 	res |= CODEC_REGISTER_AND_CACHE(mpeg4);
 	res |= CODEC_REGISTER_AND_CACHE(vp8);
+	res |= CODEC_REGISTER_AND_CACHE(vp9);
 	res |= CODEC_REGISTER_AND_CACHE(t140red);
 	res |= CODEC_REGISTER_AND_CACHE(t140);
+	res |= CODEC_REGISTER_AND_CACHE(t38);
 	res |= CODEC_REGISTER_AND_CACHE(none);
+	res |= CODEC_REGISTER_AND_CACHE_NAMED("silk8", silk8);
+	res |= CODEC_REGISTER_AND_CACHE_NAMED("silk12", silk12);
+	res |= CODEC_REGISTER_AND_CACHE_NAMED("silk16", silk16);
+	res |= CODEC_REGISTER_AND_CACHE_NAMED("silk24", silk24);
 
 	return res;
 }

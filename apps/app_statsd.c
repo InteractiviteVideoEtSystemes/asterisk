@@ -24,8 +24,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <math.h>
 
 #include "asterisk/module.h"
@@ -422,4 +420,9 @@ static int load_module(void)
 	return ast_register_application_xml(app, statsd_exec);
 }
 
-AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "StatsD Dialplan Application");
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "StatsD Dialplan Application",
+	.support_level = AST_MODULE_SUPPORT_EXTENDED,
+	.load = load_module,
+	.unload = unload_module,
+	.requires = "res_statsd",
+);

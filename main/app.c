@@ -35,8 +35,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
@@ -388,6 +386,7 @@ int ast_app_run_macro(struct ast_channel *autoservice_chan, struct ast_channel *
 	return res;
 }
 
+/* BUGBUG this is not thread safe. */
 static const struct ast_app_stack_funcs *app_stack_callbacks;
 
 void ast_install_stack_functions(const struct ast_app_stack_funcs *funcs)
@@ -401,16 +400,16 @@ const char *ast_app_expand_sub_args(struct ast_channel *chan, const char *args)
 	const char *new_args;
 
 	funcs = app_stack_callbacks;
-	if (!funcs || !funcs->expand_sub_args) {
+	if (!funcs || !funcs->expand_sub_args || !ast_module_running_ref(funcs->module)) {
 		ast_log(LOG_WARNING,
 			"Cannot expand 'Gosub(%s)' arguments.  The app_stack module is not available.\n",
 			args);
 		return NULL;
 	}
-	ast_module_ref(funcs->module);
 
 	new_args = funcs->expand_sub_args(chan, args);
 	ast_module_unref(funcs->module);
+
 	return new_args;
 }
 
@@ -420,13 +419,12 @@ int ast_app_exec_sub(struct ast_channel *autoservice_chan, struct ast_channel *s
 	int res;
 
 	funcs = app_stack_callbacks;
-	if (!funcs || !funcs->run_sub) {
+	if (!funcs || !funcs->run_sub || !ast_module_running_ref(funcs->module)) {
 		ast_log(LOG_WARNING,
 			"Cannot run 'Gosub(%s)'.  The app_stack module is not available.\n",
 			sub_args);
 		return -1;
 	}
-	ast_module_ref(funcs->module);
 
 	if (autoservice_chan) {
 		ast_autoservice_start(autoservice_chan);
@@ -875,25 +873,37 @@ int ast_vm_test_destroy_user(const char *context, const char *mailbox)
 }
 #endif
 
-int ast_dtmf_stream(struct ast_channel *chan, struct ast_channel *peer, const char *digits, int between, unsigned int duration)
+static int external_sleep(struct ast_channel *chan, int ms)
+{
+	usleep(ms * 1000);
+	return 0;
+}
+
+static int dtmf_stream(struct ast_channel *chan, const char *digits, int between, unsigned int duration, int is_external)
 {
 	const char *ptr;
 	int res;
 	struct ast_silence_generator *silgen = NULL;
+	int (*my_sleep)(struct ast_channel *chan, int ms);
+	int (*my_senddigit)(struct ast_channel *chan, char digit, unsigned int duration);
+
+	if (is_external) {
+		my_sleep = external_sleep;
+		my_senddigit = ast_senddigit_external;
+	} else {
+		my_sleep = ast_safe_sleep;
+		my_senddigit = ast_senddigit;
+	}
 
 	if (!between) {
 		between = 100;
-	}
-
-	if (peer && ast_autoservice_start(peer)) {
-		return -1;
 	}
 
 	/* Need a quiet time before sending digits. */
 	if (ast_opt_transmit_silence) {
 		silgen = ast_channel_start_silence_generator(chan);
 	}
-	res = ast_safe_sleep(chan, 100);
+	res = my_sleep(chan, 100);
 	if (res) {
 		goto dtmf_stream_cleanup;
 	}
@@ -901,12 +911,14 @@ int ast_dtmf_stream(struct ast_channel *chan, struct ast_channel *peer, const ch
 	for (ptr = digits; *ptr; ptr++) {
 		if (*ptr == 'w') {
 			/* 'w' -- wait half a second */
-			if ((res = ast_safe_sleep(chan, 500))) {
+			res = my_sleep(chan, 500);
+			if (res) {
 				break;
 			}
 		} else if (*ptr == 'W') {
 			/* 'W' -- wait a second */
-			if ((res = ast_safe_sleep(chan, 1000))) {
+			res = my_sleep(chan, 1000);
+			if (res) {
 				break;
 			}
 		} else if (strchr("0123456789*#abcdfABCDF", *ptr)) {
@@ -915,10 +927,11 @@ int ast_dtmf_stream(struct ast_channel *chan, struct ast_channel *peer, const ch
 				ast_indicate(chan, AST_CONTROL_FLASH);
 			} else {
 				/* Character represents valid DTMF */
-				ast_senddigit(chan, *ptr, duration);
+				my_senddigit(chan, *ptr, duration);
 			}
 			/* pause between digits */
-			if ((res = ast_safe_sleep(chan, between))) {
+			res = my_sleep(chan, between);
+			if (res) {
 				break;
 			}
 		} else {
@@ -930,11 +943,28 @@ dtmf_stream_cleanup:
 	if (silgen) {
 		ast_channel_stop_silence_generator(chan, silgen);
 	}
+
+	return res;
+}
+
+int ast_dtmf_stream(struct ast_channel *chan, struct ast_channel *peer, const char *digits, int between, unsigned int duration)
+{
+	int res;
+
+	if (peer && ast_autoservice_start(peer)) {
+		return -1;
+	}
+	res = dtmf_stream(chan, digits, between, duration, 0);
 	if (peer && ast_autoservice_stop(peer)) {
 		res = -1;
 	}
 
 	return res;
+}
+
+void ast_dtmf_stream_external(struct ast_channel *chan, const char *digits, int between, unsigned int duration)
+{
+	dtmf_stream(chan, digits, between, duration, 1);
 }
 
 struct linear_state {
@@ -1029,30 +1059,42 @@ int ast_linear_stream(struct ast_channel *chan, const char *filename, int fd, in
 {
 	struct linear_state *lin;
 	char tmpf[256];
-	int res = -1;
 	int autoclose = 0;
+
 	if (fd < 0) {
 		if (ast_strlen_zero(filename)) {
 			return -1;
 		}
+
 		autoclose = 1;
+
 		if (filename[0] == '/') {
 			ast_copy_string(tmpf, filename, sizeof(tmpf));
 		} else {
 			snprintf(tmpf, sizeof(tmpf), "%s/%s/%s", ast_config_AST_DATA_DIR, "sounds", filename);
 		}
-		if ((fd = open(tmpf, O_RDONLY)) < 0) {
+
+		fd = open(tmpf, O_RDONLY);
+		if (fd < 0) {
 			ast_log(LOG_WARNING, "Unable to open file '%s': %s\n", tmpf, strerror(errno));
 			return -1;
 		}
 	}
-	if ((lin = ast_calloc(1, sizeof(*lin)))) {
-		lin->fd = fd;
-		lin->allowoverride = allowoverride;
-		lin->autoclose = autoclose;
-		res = ast_activate_generator(chan, &linearstream, lin);
+
+	lin = ast_calloc(1, sizeof(*lin));
+	if (!lin) {
+		if (autoclose) {
+			close(fd);
+		}
+
+		return -1;
 	}
-	return res;
+
+	lin->fd = fd;
+	lin->allowoverride = allowoverride;
+	lin->autoclose = autoclose;
+
+	return ast_activate_generator(chan, &linearstream, lin);
 }
 
 static int control_streamfile(struct ast_channel *chan,
@@ -1073,6 +1115,7 @@ static int control_streamfile(struct ast_channel *chan,
 	int res;
 	long pause_restart_point = 0;
 	long offset = 0;
+	struct ast_silence_generator *silgen = NULL;
 
 	if (!file) {
 		return -1;
@@ -1112,6 +1155,8 @@ static int control_streamfile(struct ast_channel *chan,
 		if (!strcasecmp(end, ":end")) {
 			*end = '\0';
 			end++;
+		} else {
+			end = NULL;
 		}
 	}
 
@@ -1161,6 +1206,10 @@ static int control_streamfile(struct ast_channel *chan,
 
 		if ((suspend && strchr(suspend, res)) || res == AST_CONTROL_STREAM_SUSPEND) {
 			pause_restart_point = ast_tellstream(ast_channel_stream(chan));
+
+			if (ast_opt_transmit_silence) {
+				silgen = ast_channel_start_silence_generator(chan);
+			}
 			ast_test_suite_event_notify("PLAYBACK","Channel: %s\r\n"
 				"Control: %s\r\n",
 				ast_channel_name(chan),
@@ -1174,6 +1223,11 @@ static int control_streamfile(struct ast_channel *chan,
 					break;
 				}
 			}
+			if (silgen) {
+				ast_channel_stop_silence_generator(chan, silgen);
+				silgen = NULL;
+			}
+
 			if ((suspend && (res == *suspend)) || res == AST_CONTROL_STREAM_SUSPEND) {
 				res = 0;
 				ast_test_suite_event_notify("PLAYBACK","Channel: %s\r\n"
@@ -1339,10 +1393,10 @@ int ast_control_tone(struct ast_channel *chan, const char *tone)
 	ts = ast_get_indication_tone(zone ? zone : ast_channel_zone(chan), tone_indication);
 
 	if (ast_playtones_start(chan, 0, ts ? ts->data : tone_indication, 0)) {
-		return -1;
+		res = -1;
 	}
 
-	for (;;) {
+	while (!res) {
 		struct ast_frame *fr;
 
 		if (ast_waitfor(chan, -1) < 0) {
@@ -1412,22 +1466,20 @@ static struct ast_frame *make_silence(const struct ast_frame *orig)
 	size_t size;
 	size_t datalen;
 	size_t samples = 0;
-	struct ast_frame *next;
 
 	if (!orig) {
 		return NULL;
 	}
+	do {
+		if (ast_format_cmp(orig->subclass.format, ast_format_slin) == AST_FORMAT_CMP_NOT_EQUAL) {
+			ast_log(LOG_WARNING, "Attempting to silence non-slin frame\n");
+			return NULL;
+		}
 
-	if (ast_format_cmp(orig->subclass.format, ast_format_slin) == AST_FORMAT_CMP_NOT_EQUAL) {
-		ast_log(LOG_WARNING, "Attempting to silence non-slin frame\n");
-		return NULL;
-	}
-
-	for (next = AST_LIST_NEXT(orig, frame_list);
-		 orig;
-		 orig = next, next = orig ? AST_LIST_NEXT(orig, frame_list) : NULL) {
 		samples += orig->samples;
-	}
+
+		orig = AST_LIST_NEXT(orig, frame_list);
+	} while (orig);
 
 	ast_verb(4, "Silencing %zu samples\n", samples);
 
@@ -1445,7 +1497,7 @@ static struct ast_frame *make_silence(const struct ast_frame *orig)
 	silence->samples = samples;
 	silence->datalen = datalen;
 
-	silence->subclass.format = ast_format_slin;
+	silence->subclass.format = ao2_bump(ast_format_slin);
 
 	return silence;
 }
@@ -1651,14 +1703,13 @@ static int __ast_play_and_record(struct ast_channel *chan, const char *playfile,
 					/* It's all good */
 					res = 0;
 				} else {
-					RAII_VAR(struct ast_frame *, silence, NULL, ast_frame_dtor);
+					struct ast_frame *silence = NULL;
 					struct ast_frame *orig = f;
 
 					if (muted) {
 						silence = make_silence(orig);
 						if (!silence) {
-							ast_log(LOG_WARNING,
-								"Error creating silence\n");
+							ast_log(LOG_WARNING, "Error creating silence\n");
 							break;
 						}
 						f = silence;
@@ -1669,6 +1720,7 @@ static int __ast_play_and_record(struct ast_channel *chan, const char *playfile,
 						}
 						res = ast_writestream(others[x], f);
 					}
+					ast_frame_dtor(silence);
 					f = orig;
 				}
 
@@ -3052,19 +3104,32 @@ int ast_app_parse_timelen(const char *timestr, int *result, enum ast_timelen uni
 		case 'h':
 		case 'H':
 			unit = TIMELEN_HOURS;
+			if (u[1] != '\0') {
+				return -1;
+			}
 			break;
 		case 's':
 		case 'S':
 			unit = TIMELEN_SECONDS;
+			if (u[1] != '\0') {
+				return -1;
+			}
 			break;
 		case 'm':
 		case 'M':
 			if (toupper(u[1]) == 'S') {
 				unit = TIMELEN_MILLISECONDS;
+				if (u[2] != '\0') {
+					return -1;
+				}
 			} else if (u[1] == '\0') {
 				unit = TIMELEN_MINUTES;
+			} else {
+				return -1;
 			}
 			break;
+		default:
+			return -1;
 		}
 	}
 
@@ -3117,7 +3182,7 @@ struct stasis_topic *ast_mwi_topic(const char *uniqueid)
 
 struct ast_mwi_state *ast_mwi_create(const char *mailbox, const char *context)
 {
-	RAII_VAR(struct ast_mwi_state *, mwi_state, NULL, ao2_cleanup);
+	struct ast_mwi_state *mwi_state;
 
 	ast_assert(!ast_strlen_zero(mailbox));
 
@@ -3127,6 +3192,7 @@ struct ast_mwi_state *ast_mwi_create(const char *mailbox, const char *context)
 	}
 
 	if (ast_string_field_init(mwi_state, 256)) {
+		ao2_ref(mwi_state, -1);
 		return NULL;
 	}
 	if (!ast_strlen_zero(context)) {
@@ -3135,7 +3201,6 @@ struct ast_mwi_state *ast_mwi_create(const char *mailbox, const char *context)
 		ast_string_field_set(mwi_state, uniqueid, mailbox);
 	}
 
-	ao2_ref(mwi_state, +1);
 	return mwi_state;
 }
 
@@ -3308,8 +3373,8 @@ struct stasis_message *ast_mwi_blob_create(struct ast_mwi_state *mwi_state,
 					       struct stasis_message_type *message_type,
 					       struct ast_json *blob)
 {
-	RAII_VAR(struct ast_mwi_blob *, obj, NULL, ao2_cleanup);
-	RAII_VAR(struct stasis_message *, msg, NULL, ao2_cleanup);
+	struct ast_mwi_blob *obj;
+	struct stasis_message *msg;
 
 	ast_assert(blob != NULL);
 
@@ -3328,11 +3393,8 @@ struct stasis_message *ast_mwi_blob_create(struct ast_mwi_state *mwi_state,
 
 	/* This is not a normal MWI event.  Only used by the MinivmNotify app. */
 	msg = stasis_message_create(message_type, obj);
-	if (!msg) {
-		return NULL;
-	}
+	ao2_ref(obj, -1);
 
-	ao2_ref(msg, +1);
 	return msg;
 }
 
@@ -3399,4 +3461,3 @@ int app_init(void)
 	}
 	return 0;
 }
-

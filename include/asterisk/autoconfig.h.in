@@ -9,6 +9,9 @@
 /* Define to 1 if internal poll should be used. */
 #undef AST_POLL_COMPAT
 
+/* Define to enable XML documentation. */
+#undef AST_XML_DOCS
+
 /* Define to 1 if your system's implementation of mutexes supports comparison
    of a mutex to its initializer. */
 #undef CAN_COMPARE_MUTEX_TO_INIT_VALUE
@@ -27,9 +30,6 @@
 
 /* Define to 1 if using `alloca.c'. */
 #undef C_ALLOCA
-
-/* Use the FreeRADIUS-client library */
-#undef FREERADIUS_CLIENT
 
 /* Define to 1 if anonymous semaphores work. */
 #undef HAS_WORKING_SEMAPHORE
@@ -64,6 +64,9 @@
 
 /* Define to 1 if you have the `asprintf' function. */
 #undef HAVE_ASPRINTF
+
+/* Define to 1 if you have the <assert.h> header file. */
+#undef HAVE_ASSERT_H
 
 /* Define to 1 if you have the `atan' function. */
 #undef HAVE_ATAN
@@ -102,6 +105,9 @@
 /* Define to 1 if your GCC C compiler supports the 'may_alias' attribute. */
 #undef HAVE_ATTRIBUTE_may_alias
 
+/* Define to 1 if your GCC C compiler supports the 'noreturn' attribute. */
+#undef HAVE_ATTRIBUTE_noreturn
+
 /* Define to 1 if your GCC C compiler supports the 'pure' attribute. */
 #undef HAVE_ATTRIBUTE_pure
 
@@ -115,6 +121,9 @@
    attribute. */
 #undef HAVE_ATTRIBUTE_warn_unused_result
 
+/* Define to 1 if you have the Beanstalk Job Queue library. */
+#undef HAVE_BEANSTALK
+
 /* Define to 1 if you have the Debug symbol decoding library. */
 #undef HAVE_BFD
 
@@ -123,6 +132,10 @@
 
 /* Define to 1 if you have the Bluetooth library. */
 #undef HAVE_BLUETOOTH
+
+/* Define to 1 if you have the file `bridges/bridge_softmix/include/hrirs.h'.
+   */
+#undef HAVE_BRIDGES_BRIDGE_SOFTMIX_INCLUDE_HRIRS_H
 
 /* Define to 1 if byteswap.h macros are available. */
 #undef HAVE_BYTESWAP_H
@@ -142,6 +155,9 @@
 /* Define to 1 if you have the `closefrom' function. */
 #undef HAVE_CLOSEFROM
 
+/* Define to 1 if you have the Codec 2 Audio Decoder/Encoder library. */
+#undef HAVE_CODEC2
+
 /* Define to 1 if you have the Corosync library. */
 #undef HAVE_COROSYNC
 
@@ -154,20 +170,23 @@
 /* Define to 1 if you have the `cosl' function. */
 #undef HAVE_COSL
 
-/* Define to 1 if you have the `crypt' function. */
+/* Define to 1 if you have the 'crypt' function. */
 #undef HAVE_CRYPT
 
 /* Define to 1 if you have the OpenSSL Cryptography library. */
 #undef HAVE_CRYPTO
 
-/* Define to 1 if you have the `crypt_r' function. */
+/* Define to 1 if you have the 'crypt_r' function. */
 #undef HAVE_CRYPT_R
+
+/* Define to 1 if you have the <ctype.h> header file. */
+#undef HAVE_CTYPE_H
 
 /* Define to 1 if you have a functional curl library. */
 #undef HAVE_CURL
 
-/* Define to 1 if you have the curses library. */
-#undef HAVE_CURSES
+/* Define to 1 if your C compiler provides __atomic operations. */
+#undef HAVE_C_ATOMICS
 
 /* Define if your system has the DAHDI headers. */
 #undef HAVE_DAHDI
@@ -191,6 +210,9 @@
 /* Define to 1 if your system has the dladdr() GNU extension */
 #undef HAVE_DLADDR
 
+/* Define to 1 if you have the <dlfcn.h> header file. */
+#undef HAVE_DLFCN_H
+
 /* Define to 1 if you don't have `vprintf' but do have `_doprnt.' */
 #undef HAVE_DOPRNT
 
@@ -203,8 +225,15 @@
 /* Define to 1 if you have the `endpwent' function. */
 #undef HAVE_ENDPWENT
 
+/* Define to 1 if you have the <errno.h> header file. */
+#undef HAVE_ERRNO_H
+
 /* Define to 1 if you have the `euidaccess' function. */
 #undef HAVE_EUIDACCESS
+
+/* Define to 1 if your system supports eventfd and the EFD_NONBLOCK and
+   EFD_SEMAPHORE flags. */
+#undef HAVE_EVENTFD
 
 /* Define to 1 if you have the `exp' function. */
 #undef HAVE_EXP
@@ -233,6 +262,12 @@
 /* Define to 1 if you have the `ffsll' function. */
 #undef HAVE_FFSLL
 
+/* Define to 1 if you have the LIBFFTW3 library. */
+#undef HAVE_FFTW3
+
+/* Define to 1 if you have the <float.h> header file. */
+#undef HAVE_FLOAT_H
+
 /* Define to 1 if you have the `floor' function. */
 #undef HAVE_FLOOR
 
@@ -244,9 +279,6 @@
 
 /* Define to 1 if you have the `fmodl' function. */
 #undef HAVE_FMODL
-
-/* Define to 1 if you have the `fopencookie' function. */
-#undef HAVE_FOPENCOOKIE
 
 /* Define to 1 if you have the `fork' function. */
 #undef HAVE_FORK
@@ -260,10 +292,7 @@
 /* Define to 1 if you have the `ftruncate' function. */
 #undef HAVE_FTRUNCATE
 
-/* Define to 1 if you have the `funopen' function. */
-#undef HAVE_FUNOPEN
-
-/* Define to 1 if your GCC C compiler provides atomic operations. */
+/* Define to 1 if your GCC C compiler provides __sync atomic operations. */
 #undef HAVE_GCC_ATOMICS
 
 /* Define to 1 if you have the `getcwd' function. */
@@ -307,6 +336,9 @@
 
 /* Define if your system has the GMIME libraries. */
 #undef HAVE_GMIME
+
+/* Define to 1 if you have the <grp.h> header file. */
+#undef HAVE_GRP_H
 
 /* Define to indicate the GSM library */
 #undef HAVE_GSM
@@ -375,7 +407,7 @@
 /* Define to 1 if you have the Jack Audio Connection Kit library. */
 #undef HAVE_JACK
 
-/* Define to 1 if you have the Jansson JSON library library. */
+/* Define if your system has the JANSSON libraries. */
 #undef HAVE_JANSSON
 
 /* Define to 1 if you have the `kevent64' function. */
@@ -389,6 +421,9 @@
 
 /* Define if your system has the LIBEDIT libraries. */
 #undef HAVE_LIBEDIT
+
+/* Define if your system has the LIBEDIT_IS_UNICODE headers. */
+#undef HAVE_LIBEDIT_IS_UNICODE
 
 /* Define to 1 if you have the <libintl.h> header file. */
 #undef HAVE_LIBINTL_H
@@ -445,14 +480,14 @@
    than `double'. */
 #undef HAVE_LONG_DOUBLE_WIDER
 
-/* Define to 1 if you have the libtool library. */
-#undef HAVE_LTDL
-
 /* Define to 1 if you have the Lua library. */
 #undef HAVE_LUA
 
 /* Define to 1 if you have the <malloc.h> header file. */
 #undef HAVE_MALLOC_H
+
+/* Define to 1 if you have the <math.h> header file. */
+#undef HAVE_MATH_H
 
 /* Define to 1 if you have the `memchr' function. */
 #undef HAVE_MEMCHR
@@ -496,9 +531,6 @@
 /* Define to 1 if you have the Network Broadcast Sound library. */
 #undef HAVE_NBS
 
-/* Define to 1 if you have the ncurses library. */
-#undef HAVE_NCURSES
-
 /* Define to 1 if you have the <ndir.h> header file, and it defines `DIR'. */
 #undef HAVE_NDIR_H
 
@@ -535,20 +567,11 @@
 /* Define to 1 if you have the OGG library. */
 #undef HAVE_OGG
 
-/* Define if your system has the OpenH323 libraries. */
-#undef HAVE_OPENH323
-
 /* Define to 1 if you have the MFR2 library. */
 #undef HAVE_OPENR2
 
 /* Define to 1 if you have the OpenSSL Secure Sockets Layer library. */
 #undef HAVE_OPENSSL
-
-/* Define to 1 if CRYPTO has the OpenSSL Elliptic Curve Support feature. */
-#undef HAVE_OPENSSL_EC
-
-/* Define if your system has SSL_CTX_set_ecdh_auto declared. */
-#undef HAVE_OPENSSL_ECDH_AUTO
 
 /* Define to 1 if CRYPTO has the OpenSSL SRTP Extension Support feature. */
 #undef HAVE_OPENSSL_SRTP
@@ -556,14 +579,14 @@
 /* Define to 1 if you have the Opus library. */
 #undef HAVE_OPUS
 
+/* Define to 1 if you have the Opusfile library. */
+#undef HAVE_OPUSFILE
+
 /* Define this to indicate the ${OSPTK_DESCRIP} library */
 #undef HAVE_OSPTK
 
 /* Define to 1 if you have the Open Sound System library. */
 #undef HAVE_OSS
-
-/* Define to 1 if OSX atomic operations are supported. */
-#undef HAVE_OSX_ATOMICS
 
 /* Define to 1 if your system defines the file flag O_EVTONLY in fcntl.h */
 #undef HAVE_O_EVTONLY
@@ -580,6 +603,19 @@
 /* Define if your system has the PJPROJECT libraries. */
 #undef HAVE_PJPROJECT
 
+/* Define if your system has PJPROJECT_BUNDLED */
+#undef HAVE_PJPROJECT_BUNDLED
+
+/* Define to 1 if PJPROJECT has the pjsip_auth_clt_deinit support feature. */
+#undef HAVE_PJSIP_AUTH_CLT_DEINIT
+
+/* Define to 1 if PJPROJECT has the PJSIP Dialog Create UAS with Incremented
+   Lock feature. */
+#undef HAVE_PJSIP_DLG_CREATE_UAS_AND_INC_LOCK
+
+/* Define to 1 if PJPROJECT has the PJSIP EVSUB Group Lock support feature. */
+#undef HAVE_PJSIP_EVSUB_GRP_LOCK
+
 /* Define to 1 if PJPROJECT has the PJSIP External Resolver Support feature.
    */
 #undef HAVE_PJSIP_EXTERNAL_RESOLVER
@@ -587,8 +623,23 @@
 /* Define to 1 if PJPROJECT has the pjsip_get_dest_info support feature. */
 #undef HAVE_PJSIP_GET_DEST_INFO
 
+/* Define if your system has the PJSIP_INV_ACCEPT_MULTIPLE_SDP_ANSWERS
+   headers. */
+#undef HAVE_PJSIP_INV_ACCEPT_MULTIPLE_SDP_ANSWERS
+
+/* Define to 1 if PJPROJECT has the PJSIP INVITE Session Reference Count
+   support feature. */
+#undef HAVE_PJSIP_INV_SESSION_REF
+
 /* Define if your system has the PJSIP_REPLACE_MEDIA_STREAM headers. */
 #undef HAVE_PJSIP_REPLACE_MEDIA_STREAM
+
+/* Define if your system has the PJSIP_TLS_TRANSPORT_PROTO headers. */
+#undef HAVE_PJSIP_TLS_TRANSPORT_PROTO
+
+/* Define to 1 if PJPROJECT has the pjsip_tsx_layer_find_tsx2 support feature.
+   */
+#undef HAVE_PJSIP_TSX_LAYER_FIND_TSX2
 
 /* Define to 1 if PJPROJECT has the pj_ssl_cert_load_from_files2 support
    feature. */
@@ -604,7 +655,7 @@
 /* Define to 1 if you have the popt library. */
 #undef HAVE_POPT
 
-/* Define to 1 if you have the PortAudio library. */
+/* Define if your system has the PORTAUDIO libraries. */
 #undef HAVE_PORTAUDIO
 
 /* Define to 1 if you have the `pow' function. */
@@ -698,6 +749,9 @@
    */
 #undef HAVE_PTHREAD_MUTEX_RECURSIVE_NP
 
+/* Have PTHREAD_PRIO_INHERIT. */
+#undef HAVE_PTHREAD_PRIO_INHERIT
+
 /* Define if your system has the PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
    headers. */
 #undef HAVE_PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
@@ -721,14 +775,20 @@
 /* Define to 1 if you have the `putenv' function. */
 #undef HAVE_PUTENV
 
-/* Define if your system has the PWLib libraries. */
-#undef HAVE_PWLIB
+/* Define to 1 if you have the <pwd.h> header file. */
+#undef HAVE_PWD_H
+
+/* Define if your system has the PYTHONDEV libraries. */
+#undef HAVE_PYTHONDEV
 
 /* Define to 1 if you have the Radius Client library. */
 #undef HAVE_RADIUS
 
 /* Define to 1 if you have the `regcomp' function. */
 #undef HAVE_REGCOMP
+
+/* Define to 1 if you have the <regex.h> header file. */
+#undef HAVE_REGEX_H
 
 /* Define to 1 if you have the `remainder' function. */
 #undef HAVE_REMAINDER
@@ -738,6 +798,9 @@
 
 /* Define to 1 if you have the LIBRESAMPLE library. */
 #undef HAVE_RESAMPLE
+
+/* Define to 1 if you have the <resolv.h> header file. */
+#undef HAVE_RESOLV_H
 
 /* Define to 1 if your system has the close resolver function. */
 #undef HAVE_RES_CLOSE
@@ -775,6 +838,9 @@
 /* Define to 1 if your system has /sbin/launchd. */
 #undef HAVE_SBIN_LAUNCHD
 
+/* Define to 1 if you have the <sched.h> header file. */
+#undef HAVE_SCHED_H
+
 /* Define if your system has the SDL libraries. */
 #undef HAVE_SDL
 
@@ -792,6 +858,9 @@
 
 /* Define to 1 if you have the `sinl' function. */
 #undef HAVE_SINL
+
+/* Define to 1 if you have the libsndfile library. */
+#undef HAVE_SNDFILE
 
 /* Define to 1 if you have the `socket' function. */
 #undef HAVE_SOCKET
@@ -826,8 +895,21 @@
 /* Define to 1 if you have the Secure RTP library. */
 #undef HAVE_SRTP
 
+/* Define to 1 if SRTP has the SRTP Library AES-192 (ICM) feature. */
+#undef HAVE_SRTP_192
+
+/* Define to 1 if SRTP has the SRTP Library AES-256 (ICM) feature. */
+#undef HAVE_SRTP_256
+
+/* Define to 1 if SRTP has the SRTP Library AES-128 (GCM) and AES-256 (GCM)
+   feature. */
+#undef HAVE_SRTP_GCM
+
 /* Define to 1 if SRTP has the SRTP Library Shutdown Function feature. */
 #undef HAVE_SRTP_SHUTDOWN
+
+/* Define to the version of the srtp library. */
+#undef HAVE_SRTP_VERSION
 
 /* Define to 1 if you have the ISDN SS7 library. */
 #undef HAVE_SS7
@@ -835,6 +917,9 @@
 /* Define to 1 if `stat' has the bug that it succeeds when given the
    zero-length file name argument. */
 #undef HAVE_STAT_EMPTY_STRING_BUG
+
+/* Define to 1 if you have the <stdarg.h> header file. */
+#undef HAVE_STDARG_H
 
 /* Define to 1 if stdbool.h conforms to C99. */
 #undef HAVE_STDBOOL_H
@@ -844,6 +929,9 @@
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
+
+/* Define to 1 if you have the <stdio.h> header file. */
+#undef HAVE_STDIO_H
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
@@ -990,6 +1078,9 @@
 /* Define to 1 if you have the <syslog.h> header file. */
 #undef HAVE_SYSLOG_H
 
+/* Define if your system has the SYSTEMD libraries. */
+#undef HAVE_SYSTEMD
+
 /* Define to 1 if you have the <sys/dir.h> header file, and it defines `DIR'.
    */
 #undef HAVE_SYS_DIR_H
@@ -1010,9 +1101,6 @@
 /* Define to 1 if you have the <sys/ioctl.h> header file. */
 #undef HAVE_SYS_IOCTL_H
 
-/* Define to 1 if you have the <sys/io.h> header file. */
-#undef HAVE_SYS_IO_H
-
 /* Define to 1 if you have the <sys/ndir.h> header file, and it defines `DIR'.
    */
 #undef HAVE_SYS_NDIR_H
@@ -1022,6 +1110,9 @@
 
 /* Define to 1 if your system has working sys/poll.h */
 #undef HAVE_SYS_POLL_H
+
+/* Define to 1 if you have the <sys/resource.h> header file. */
+#undef HAVE_SYS_RESOURCE_H
 
 /* Define to 1 if you have the <sys/select.h> header file. */
 #undef HAVE_SYS_SELECT_H
@@ -1041,6 +1132,9 @@
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H
 
+/* Define to 1 if you have the <sys/un.h> header file. */
+#undef HAVE_SYS_UN_H
+
 /* Define to 1 if you have <sys/wait.h> that is POSIX.1 compatible. */
 #undef HAVE_SYS_WAIT_H
 
@@ -1049,9 +1143,6 @@
 
 /* Define to 1 if you have the `tanl' function. */
 #undef HAVE_TANL
-
-/* Define to 1 if you have the Termcap library. */
-#undef HAVE_TERMCAP
 
 /* Define to 1 if you have the <termios.h> header file. */
 #undef HAVE_TERMIOS_H
@@ -1062,8 +1153,8 @@
 /* Define to 1 if your system defines timersub. */
 #undef HAVE_TIMERSUB
 
-/* Define to 1 if you have the Term Info library. */
-#undef HAVE_TINFO
+/* Define to 1 if you have the <time.h> header file. */
+#undef HAVE_TIME_H
 
 /* Define to 1 if you have the tonezone library. */
 #undef HAVE_TONEZONE
@@ -1077,6 +1168,9 @@
 /* Define to 1 if you have the unbound library. */
 #undef HAVE_UNBOUND
 
+/* Define if your system has UNBOUND_VERSION_MAJOR declared. */
+#undef HAVE_UNBOUND_CONST_PARAMS
+
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
 
@@ -1088,6 +1182,9 @@
 
 /* Define to 1 if you have the uriparser library library. */
 #undef HAVE_URIPARSER
+
+/* Define to 1 if you have the `uselocale' function. */
+#undef HAVE_USELOCALE
 
 /* Define to 1 if you have the `utime' function. */
 #undef HAVE_UTIME
@@ -1198,8 +1295,20 @@
 /* Defined if libcurl supports HTTPS */
 #undef LIBCURL_PROTOCOL_HTTPS
 
+/* Defined if libcurl supports IMAP */
+#undef LIBCURL_PROTOCOL_IMAP
+
 /* Defined if libcurl supports LDAP */
 #undef LIBCURL_PROTOCOL_LDAP
+
+/* Defined if libcurl supports POP3 */
+#undef LIBCURL_PROTOCOL_POP3
+
+/* Defined if libcurl supports RTSP */
+#undef LIBCURL_PROTOCOL_RTSP
+
+/* Defined if libcurl supports SMTP */
+#undef LIBCURL_PROTOCOL_SMTP
 
 /* Defined if libcurl supports TELNET */
 #undef LIBCURL_PROTOCOL_TELNET
@@ -1239,8 +1348,8 @@
 /* Define if your system needs braces around PTHREAD_ONCE_INIT */
 #undef PTHREAD_ONCE_INIT_NEEDS_BRACES
 
-/* Define as the return type of signal handlers (`int' or `void'). */
-#undef RETSIGTYPE
+/* Name of RADIUS library include header */
+#undef RADIUS_HEADER_STR
 
 /* Define to the type of arg 1 for `select'. */
 #undef SELECT_TYPE_ARG1

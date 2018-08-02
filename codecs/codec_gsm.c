@@ -33,8 +33,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/translate.h"
 #include "asterisk/config.h"
 #include "asterisk/module.h"
@@ -66,7 +64,7 @@ struct gsm_translator_pvt {	/* both gsm2lin and lin2gsm */
 static int gsm_new(struct ast_trans_pvt *pvt)
 {
 	struct gsm_translator_pvt *tmp = pvt->pvt;
-	
+
 	return (tmp->gsm = gsm_create()) ? 0 : -1;
 }
 
@@ -97,7 +95,7 @@ static int gsmtolin_framein(struct ast_trans_pvt *pvt, struct ast_frame *f)
 			src = f->data.ptr + x;
 		}
 		/* XXX maybe we don't need to check */
-		if (pvt->samples + len > BUFFER_SAMPLES) {	
+		if (pvt->samples + len > BUFFER_SAMPLES) {
 			ast_log(LOG_WARNING, "Out of buffer space\n");
 			return -1;
 		}
@@ -241,7 +239,7 @@ static int load_module(void)
 
 	if (res) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;

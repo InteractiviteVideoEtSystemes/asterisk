@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/app.h"
 #include "asterisk/channel.h"
@@ -105,4 +103,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Generate an User-Defined
 	.support_level = AST_MODULE_SUPPORT_CORE,
 	.load = load_module,
 	.unload = unload_module,
+	.requires = "cel",
 );

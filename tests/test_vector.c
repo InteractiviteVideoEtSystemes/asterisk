@@ -34,8 +34,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/test.h"
 #include "asterisk/utils.h"
 #include "asterisk/strings.h"
@@ -212,7 +210,7 @@ AST_TEST_DEFINE(basic_ops)
 	ast_test_validate_cleanup(test, AST_VECTOR_ADD_SORTED(&sv1, ZZZ, strcmp) == 0, rc, cleanup);
 	ast_test_validate_cleanup(test, AST_VECTOR_ADD_SORTED(&sv1, CCC, strcmp) == 0, rc, cleanup);
 	ast_test_validate_cleanup(test, AST_VECTOR_ADD_SORTED(&sv1, AAA, strcmp) == 0, rc, cleanup);
-	ast_test_validate_cleanup(test, AST_VECTOR_ADD_SORTED(&sv1, CCC2, strcmp) == 0, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_ADD_SORTED(&sv1, (char*)CCC2, strcmp) == 0, rc, cleanup);
 
 	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 0) == AAA, rc, cleanup);
 	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 1) == BBB, rc, cleanup);
@@ -283,6 +281,25 @@ AST_TEST_DEFINE(basic_ops_integer)
 
 	ast_test_validate_cleanup(test, *(int *)AST_VECTOR_GET_CMP(&sv1, AAA,  AST_VECTOR_ELEM_DEFAULT_CMP) == AAA, rc, cleanup);
 	ast_test_validate_cleanup(test, *(int *)AST_VECTOR_GET_CMP(&sv1, ZZZ, AST_VECTOR_ELEM_DEFAULT_CMP) == ZZZ, rc, cleanup);
+
+	/* Default first value */
+	ast_test_validate_cleanup(test, AST_VECTOR_DEFAULT(&sv1, 1, CCC) == 0, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 0) == CCC, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 1) == ZZZ, rc, cleanup);
+	/* Default all values */
+	ast_test_validate_cleanup(test, AST_VECTOR_DEFAULT(&sv1, 0, AAA) == 0, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 0) == AAA, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 1) == AAA, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 2) == AAA, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 3) == AAA, rc, cleanup);
+	/* Default more values than are currently in the vector */
+	ast_test_validate_cleanup(test, AST_VECTOR_DEFAULT(&sv1, 5, BBB) == 0, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET(&sv1, 4) == BBB, rc, cleanup);
+
+	/* Check getting index(es) */
+	ast_test_validate_cleanup(test, AST_VECTOR_GET_INDEX(&sv1, BBB, AST_VECTOR_ELEM_DEFAULT_CMP) == 0, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET_INDEX_NTH(&sv1, 2, BBB, AST_VECTOR_ELEM_DEFAULT_CMP) == 1, rc, cleanup);
+	ast_test_validate_cleanup(test, AST_VECTOR_GET_INDEX_NTH(&sv1, 4, BBB, AST_VECTOR_ELEM_DEFAULT_CMP) == 3, rc, cleanup);
 
 	AST_VECTOR_FREE(&sv1);
 	ast_test_validate(test, sv1.elems == NULL);

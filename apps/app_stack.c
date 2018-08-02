@@ -21,7 +21,7 @@
  * \brief Stack applications Gosub, Return, etc.
  *
  * \author Tilghman Lesher <app_stack_v003@the-tilghman.com>
- * 
+ *
  * \ingroup applications
  */
 
@@ -31,8 +31,6 @@
  ***/
 
 #include "asterisk.h"
- 
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/pbx.h"
 #include "asterisk/module.h"
@@ -305,7 +303,7 @@ static void gosub_release_frame(struct ast_channel *chan, struct gosub_stack_fra
 	 */
 	while ((vardata = AST_LIST_REMOVE_HEAD(&frame->varshead, entries))) {
 		if (chan)
-			pbx_builtin_setvar_helper(chan, ast_var_name(vardata), NULL);	
+			pbx_builtin_setvar_helper(chan, ast_var_name(vardata), NULL);
 		ast_var_delete(vardata);
 	}
 
@@ -1280,7 +1278,7 @@ static int unload_module(void)
 {
 	ast_install_stack_functions(NULL);
 
-	ast_agi_unregister(ast_module_info->self, &gosub_agi_command);
+	ast_agi_unregister(&gosub_agi_command);
 
 	ast_unregister_application(app_return);
 	ast_unregister_application(app_pop);
@@ -1322,5 +1320,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT | AST_MODFLAG_LOAD_ORDER, 
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
-	.nonoptreq = "res_agi",
+	.optional_modules = "res_agi",
 );

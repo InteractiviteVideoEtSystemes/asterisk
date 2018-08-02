@@ -35,12 +35,15 @@
 #include "asterisk/module.h"
 #include "asterisk/logger.h"
 #include "asterisk/astobj2.h"
+#include "asterisk/taskprocessor.h"
 #include "asterisk/sorcery.h"
 #include "asterisk/stasis.h"
 #include "asterisk/app.h"
 
 struct mwi_subscription;
 static struct ao2_container *unsolicited_mwi;
+
+static char *default_voicemail_extension;
 
 #define STASIS_BUCKETS 13
 #define MWI_BUCKETS 53
@@ -49,6 +52,12 @@ static struct ao2_container *unsolicited_mwi;
 #define MWI_SUBTYPE "simple-message-summary"
 
 #define MWI_DATASTORE "MWI datastore"
+
+/*! Number of serializers in pool if one not supplied. */
+#define MWI_SERIALIZER_POOL_SIZE 8
+
+/*! Pool of serializers to use if not supplied. */
+static struct ast_taskprocessor *mwi_serializer_pool[MWI_SERIALIZER_POOL_SIZE];
 
 static void mwi_subscription_shutdown(struct ast_sip_subscription *sub);
 static void mwi_to_ami(struct ast_sip_subscription *sub, struct ast_str **buf);
@@ -116,6 +125,117 @@ struct mwi_subscription {
 	 */
 	char id[1];
 };
+
+/*!
+ * \internal
+ * \brief Shutdown the serializers in the mwi pool.
+ * \since 13.12.0
+ *
+ * \return Nothing
+ */
+static void mwi_serializer_pool_shutdown(void)
+{
+	int idx;
+
+	for (idx = 0; idx < MWI_SERIALIZER_POOL_SIZE; ++idx) {
+		ast_taskprocessor_unreference(mwi_serializer_pool[idx]);
+		mwi_serializer_pool[idx] = NULL;
+	}
+}
+
+/*!
+ * \internal
+ * \brief Setup the serializers in the mwi pool.
+ * \since 13.12.0
+ *
+ * \retval 0 on success.
+ * \retval -1 on error.
+ */
+static int mwi_serializer_pool_setup(void)
+{
+	char tps_name[AST_TASKPROCESSOR_MAX_NAME + 1];
+	int idx;
+
+	for (idx = 0; idx < MWI_SERIALIZER_POOL_SIZE; ++idx) {
+		/* Create name with seq number appended. */
+		ast_taskprocessor_build_name(tps_name, sizeof(tps_name), "pjsip/mwi");
+
+		mwi_serializer_pool[idx] = ast_sip_create_serializer(tps_name);
+		if (!mwi_serializer_pool[idx]) {
+			mwi_serializer_pool_shutdown();
+			return -1;
+		}
+	}
+	return 0;
+}
+
+/*!
+ * \internal
+ * \brief Pick a mwi serializer from the pool.
+ * \since 13.12.0
+ *
+ * \retval least queue size task processor.
+ */
+static struct ast_taskprocessor *get_mwi_serializer(void)
+{
+	int idx;
+	int pos;
+
+	if (!mwi_serializer_pool[0]) {
+		return NULL;
+	}
+
+	for (pos = idx = 0; idx < MWI_SERIALIZER_POOL_SIZE; ++idx) {
+		if (ast_taskprocessor_size(mwi_serializer_pool[idx]) < ast_taskprocessor_size(mwi_serializer_pool[pos])) {
+			pos = idx;
+		}
+	}
+
+	return mwi_serializer_pool[pos];
+}
+
+/*!
+ * \internal
+ * \brief Set taskprocessor alert levels for the serializers in the mwi pool.
+ * \since 13.12.0
+ *
+ * \retval 0 on success.
+ * \retval -1 on error.
+ */
+static int mwi_serializer_set_alert_levels(void)
+{
+	int idx;
+	long tps_queue_high;
+	long tps_queue_low;
+
+	if (!mwi_serializer_pool[0]) {
+		return -1;
+	}
+
+	tps_queue_high = ast_sip_get_mwi_tps_queue_high();
+	if (tps_queue_high <= 0) {
+		ast_log(AST_LOG_WARNING, "Invalid taskprocessor high water alert trigger level '%ld'\n",
+			tps_queue_high);
+		tps_queue_high = AST_TASKPROCESSOR_HIGH_WATER_LEVEL;
+	}
+
+	tps_queue_low = ast_sip_get_mwi_tps_queue_low();
+	if (tps_queue_low < -1 || tps_queue_high < tps_queue_low) {
+		ast_log(AST_LOG_WARNING, "Invalid taskprocessor low water clear alert level '%ld'\n",
+			tps_queue_low);
+		tps_queue_low = -1;
+	}
+
+	for (idx = 0; idx < MWI_SERIALIZER_POOL_SIZE; ++idx) {
+		if (ast_taskprocessor_alert_set_levels(mwi_serializer_pool[idx], tps_queue_low, tps_queue_high)) {
+			ast_log(AST_LOG_WARNING, "Failed to set alert levels for MWI serializer pool #%d.\n",
+				idx);
+		}
+	}
+
+	return 0;
+}
+
 
 static void mwi_stasis_cb(void *userdata, struct stasis_subscription *sub,
 		struct stasis_message *msg);
@@ -326,11 +446,30 @@ static int get_message_count(void *obj, void *arg, int flags)
 	return 0;
 }
 
+static void set_voicemail_extension(pj_pool_t *pool, pjsip_sip_uri *local_uri,
+	struct ast_sip_message_accumulator *counter, const char *voicemail_extension)
+{
+	pjsip_sip_uri *account_uri;
+	const char *vm_exten;
+
+	if (ast_strlen_zero(voicemail_extension)) {
+		vm_exten = default_voicemail_extension;
+	} else {
+		vm_exten = voicemail_extension;
+	}
+
+	if (!ast_strlen_zero(vm_exten)) {
+		account_uri = pjsip_uri_clone(pool, local_uri);
+		pj_strdup2(pool, &account_uri->user, vm_exten);
+		pjsip_uri_print(PJSIP_URI_IN_CONTACT_HDR, account_uri, counter->message_account, sizeof(counter->message_account));
+	}
+}
+
 struct unsolicited_mwi_data {
 	struct mwi_subscription *sub;
 	struct ast_sip_endpoint *endpoint;
 	pjsip_evsub_state state;
-	const struct ast_sip_body *body;
+	struct ast_sip_message_accumulator *counter;
 };
 
 static int send_unsolicited_mwi_notify_to_contact(void *obj, void *arg, int flags)
@@ -339,26 +478,51 @@ static int send_unsolicited_mwi_notify_to_contact(void *obj, void *arg, int flag
 	struct mwi_subscription *sub = mwi_data->sub;
 	struct ast_sip_endpoint *endpoint = mwi_data->endpoint;
 	pjsip_evsub_state state = mwi_data->state;
-	const struct ast_sip_body *body = mwi_data->body;
 	struct ast_sip_contact *contact = obj;
 	const char *state_name;
 	pjsip_tx_data *tdata;
 	pjsip_sub_state_hdr *sub_state;
 	pjsip_event_hdr *event;
+	pjsip_from_hdr *from;
+	pjsip_sip_uri *from_uri;
 	const pjsip_hdr *allow_events = pjsip_evsub_get_allow_events_hdr(NULL);
+	struct ast_sip_body body;
+	struct ast_str *body_text;
+	struct ast_sip_body_data body_data = {
+		.body_type = AST_SIP_MESSAGE_ACCUMULATOR,
+		.body_data = mwi_data->counter,
+	};
 
 	if (ast_sip_create_request("NOTIFY", NULL, endpoint, NULL, contact, &tdata)) {
 		ast_log(LOG_WARNING, "Unable to create unsolicited NOTIFY request to endpoint %s URI %s\n", sub->id, contact->uri);
 		return 0;
 	}
 
-	if (!ast_strlen_zero(endpoint->subscription.mwi.fromuser)) {
-		pjsip_fromto_hdr *from = pjsip_msg_find_hdr(tdata->msg, PJSIP_H_FROM, NULL);
-		pjsip_name_addr *from_name_addr = (pjsip_name_addr *) from->uri;
-		pjsip_sip_uri *from_uri = pjsip_uri_get_uri(from_name_addr->uri);
+	body.type = MWI_TYPE;
+	body.subtype = MWI_SUBTYPE;
+	body_text = ast_str_create(64);
+	if (!body_text) {
+		pjsip_tx_data_dec_ref(tdata);
+		return 0;
+	}
 
+	from = PJSIP_MSG_FROM_HDR(tdata->msg);
+	from_uri = pjsip_uri_get_uri(from->uri);
+
+	if (!ast_strlen_zero(endpoint->subscription.mwi.fromuser)) {
 		pj_strdup2(tdata->pool, &from_uri->user, endpoint->subscription.mwi.fromuser);
 	}
+
+	set_voicemail_extension(tdata->pool, from_uri, mwi_data->counter, endpoint->subscription.mwi.voicemail_extension);
+
+	if (ast_sip_pubsub_generate_body_content(body.type, body.subtype, &body_data, &body_text)) {
+		ast_log(LOG_WARNING, "Unable to generate SIP MWI NOTIFY body.\n");
+		ast_free(body_text);
+		pjsip_tx_data_dec_ref(tdata);
+		return 0;
+	}
+
+	body.body_text = ast_str_buffer(body_text);
 
 	switch (state) {
 	case PJSIP_EVSUB_STATE_ACTIVE:
@@ -379,10 +543,52 @@ static int send_unsolicited_mwi_notify_to_contact(void *obj, void *arg, int flag
 	pjsip_msg_add_hdr(tdata->msg, (pjsip_hdr *) event);
 
 	pjsip_msg_add_hdr(tdata->msg, pjsip_hdr_shallow_clone(tdata->pool, allow_events));
-	ast_sip_add_body(tdata, body);
+	ast_sip_add_body(tdata, &body);
 	ast_sip_send_request(tdata, NULL, endpoint, NULL, NULL);
 
+	ast_free(body_text);
+
 	return 0;
+}
+
+static struct ast_sip_aor *find_aor_for_resource(struct ast_sip_endpoint *endpoint, const char *resource)
+{
+	struct ast_sip_aor *aor;
+	char *aor_name;
+	char *aors_copy;
+
+	/* Direct match */
+	if ((aor = ast_sip_location_retrieve_aor(resource))) {
+		return aor;
+	}
+
+	if (!endpoint) {
+		return NULL;
+	}
+
+	/*
+	 * This may be a subscribe to the voicemail_extension.  If so,
+	 * look for an aor belonging to this endpoint that has a matching
+	 * voicemail_extension.
+	 */
+	aors_copy = ast_strdupa(endpoint->aors);
+	while ((aor_name = ast_strip(strsep(&aors_copy, ",")))) {
+		struct ast_sip_aor *check_aor = ast_sip_location_retrieve_aor(aor_name);
+
+		if (!check_aor) {
+			continue;
+		}
+
+		if (!ast_strlen_zero(check_aor->voicemail_extension)
+			&& !strcasecmp(check_aor->voicemail_extension, resource)) {
+			ast_debug(1, "Found an aor (%s) that matches voicemail_extension %s\n", aor_name, resource);
+			return check_aor;
+		}
+
+		ao2_ref(check_aor, -1);
+	}
+
+	return NULL;
 }
 
 static void send_unsolicited_mwi_notify(struct mwi_subscription *sub,
@@ -392,12 +598,6 @@ static void send_unsolicited_mwi_notify(struct mwi_subscription *sub,
 				"endpoint", sub->id), ao2_cleanup);
 	char *endpoint_aors;
 	char *aor_name;
-	struct ast_sip_body body;
-	struct ast_str *body_text;
-	struct ast_sip_body_data body_data = {
-		.body_type = AST_SIP_MESSAGE_ACCUMULATOR,
-		.body_data = counter,
-	};
 
 	if (!endpoint) {
 		ast_log(LOG_WARNING, "Unable to send unsolicited MWI to %s because endpoint does not exist\n",
@@ -410,35 +610,18 @@ static void send_unsolicited_mwi_notify(struct mwi_subscription *sub,
 		return;
 	}
 
-	body.type = MWI_TYPE;
-	body.subtype = MWI_SUBTYPE;
-
-	body_text = ast_str_create(64);
-
-	if (!body_text) {
-		return;
-	}
-
-	if (ast_sip_pubsub_generate_body_content(body.type, body.subtype, &body_data, &body_text)) {
-		ast_log(LOG_WARNING, "Unable to generate SIP MWI NOTIFY body.\n");
-		ast_free(body_text);
-		return;
-	}
-
-	body.body_text = ast_str_buffer(body_text);
-
 	endpoint_aors = ast_strdupa(endpoint->aors);
 
 	ast_debug(5, "Sending unsolicited MWI NOTIFY to endpoint %s, new messages: %d, old messages: %d\n",
 			sub->id, counter->new_msgs, counter->old_msgs);
 
-	while ((aor_name = strsep(&endpoint_aors, ","))) {
+	while ((aor_name = ast_strip(strsep(&endpoint_aors, ",")))) {
 		RAII_VAR(struct ast_sip_aor *, aor, ast_sip_location_retrieve_aor(aor_name), ao2_cleanup);
 		RAII_VAR(struct ao2_container *, contacts, NULL, ao2_cleanup);
 		struct unsolicited_mwi_data mwi_data = {
 			.sub = sub,
 			.endpoint = endpoint,
-			.body = &body,
+			.counter = counter,
 		};
 
 		if (!aor) {
@@ -448,14 +631,12 @@ static void send_unsolicited_mwi_notify(struct mwi_subscription *sub,
 
 		contacts = ast_sip_location_retrieve_aor_contacts(aor);
 		if (!contacts || (ao2_container_count(contacts) == 0)) {
-			ast_log(LOG_NOTICE, "No contacts bound to AOR %s. Cannot send unsolicited MWI until a contact registers.\n", aor_name);
+			ast_debug(1, "No contacts bound to AOR %s. Cannot send unsolicited MWI until a contact registers.\n", aor_name);
 			continue;
 		}
 
 		ao2_callback(contacts, OBJ_NODATA, send_unsolicited_mwi_notify_to_contact, &mwi_data);
 	}
-
-	ast_free(body_text);
 }
 
 static void send_mwi_notify(struct mwi_subscription *sub)
@@ -463,6 +644,7 @@ static void send_mwi_notify(struct mwi_subscription *sub)
 	struct ast_sip_message_accumulator counter = {
 		.old_msgs = 0,
 		.new_msgs = 0,
+		.message_account[0] = '\0',
 	};
 	struct ast_sip_body_data data = {
 		.body_type = AST_SIP_MESSAGE_ACCUMULATOR,
@@ -472,7 +654,20 @@ static void send_mwi_notify(struct mwi_subscription *sub)
 	ao2_callback(sub->stasis_subs, OBJ_NODATA, get_message_count, &counter);
 
 	if (sub->is_solicited) {
+		const char *resource = ast_sip_subscription_get_resource_name(sub->sip_sub);
+		struct ast_sip_endpoint *endpoint = ast_sip_subscription_get_endpoint(sub->sip_sub);
+		struct ast_sip_aor *aor = find_aor_for_resource(endpoint, resource);
+		pjsip_dialog *dlg = ast_sip_subscription_get_dialog(sub->sip_sub);
+		pjsip_sip_uri *sip_uri = ast_sip_subscription_get_sip_uri(sub->sip_sub);
+
+		if (aor && dlg && sip_uri) {
+			set_voicemail_extension(dlg->pool, sip_uri, &counter, aor->voicemail_extension);
+		}
+
+		ao2_cleanup(aor);
+		ao2_cleanup(endpoint);
 		ast_sip_subscription_notify(sub->sip_sub, &data, 0);
+
 		return;
 	}
 
@@ -555,7 +750,6 @@ static int endpoint_receives_unsolicited_mwi_for_mailbox(struct ast_sip_endpoint
 	int ret = 0;
 
 	mwi_subs = ao2_find(unsolicited_mwi, endpoint_id, OBJ_SEARCH_KEY | OBJ_MULTIPLE);
-
 	if (!mwi_subs) {
 		return 0;
 	}
@@ -565,7 +759,12 @@ static int endpoint_receives_unsolicited_mwi_for_mailbox(struct ast_sip_endpoint
 
 		mwi_stasis = ao2_find(mwi_sub->stasis_subs, mailbox, OBJ_SEARCH_KEY);
 		if (mwi_stasis) {
-			ret = 1;
+			if (endpoint->subscription.mwi.subscribe_replaces_unsolicited) {
+				unsubscribe_stasis(mwi_stasis, NULL, 0);
+				ao2_unlink(mwi_sub->stasis_subs, mwi_stasis);
+			} else {
+				ret = 1;
+			}
 			ao2_cleanup(mwi_stasis);
 		}
 	}
@@ -598,9 +797,13 @@ static int mwi_validate_for_aor(void *obj, void *arg, int flags)
 	}
 
 	mailboxes = ast_strdupa(aor->mailboxes);
-	while ((mailbox = strsep(&mailboxes, ","))) {
+	while ((mailbox = ast_strip(strsep(&mailboxes, ",")))) {
+		if (ast_strlen_zero(mailbox)) {
+			continue;
+		}
+
 		if (endpoint_receives_unsolicited_mwi_for_mailbox(endpoint, mailbox)) {
-			ast_log(LOG_NOTICE, "Endpoint '%s' already configured for unsolicited MWI for mailbox '%s'. "
+			ast_debug(1, "Endpoint '%s' already configured for unsolicited MWI for mailbox '%s'. "
 					"Denying MWI subscription to %s\n", ast_sorcery_object_get_id(endpoint), mailbox,
 					ast_sorcery_object_get_id(aor));
 			return -1;
@@ -622,8 +825,12 @@ static int mwi_on_aor(void *obj, void *arg, int flags)
 	}
 
 	mailboxes = ast_strdupa(aor->mailboxes);
-	while ((mailbox = strsep(&mailboxes, ","))) {
+	while ((mailbox = ast_strip(strsep(&mailboxes, ",")))) {
 		struct mwi_stasis_subscription *mwi_stasis_sub;
+
+		if (ast_strlen_zero(mailbox)) {
+			continue;
+		}
 
 		mwi_stasis_sub = mwi_stasis_subscription_alloc(mailbox, sub);
 		if (!mwi_stasis_sub) {
@@ -662,14 +869,9 @@ static struct mwi_subscription *mwi_subscribe_single(
 	struct ast_sip_aor *aor;
 	struct mwi_subscription *sub;
 
-	aor = ast_sip_location_retrieve_aor(name);
+	aor = find_aor_for_resource(endpoint, name);
 	if (!aor) {
-		/*! I suppose it's possible for the AOR to disappear on us
-		 * between accepting the subscription and sending the first
-		 * NOTIFY...
-		 */
-		ast_log(LOG_WARNING, "Unable to locate aor %s. MWI subscription failed.\n",
-			name);
+		ast_log(LOG_WARNING, "Unable to locate aor %s. MWI subscription failed.\n", name);
 		return NULL;
 	}
 
@@ -708,15 +910,14 @@ static int mwi_new_subscribe(struct ast_sip_endpoint *endpoint,
 		return 200;
 	}
 
-	aor = ast_sip_location_retrieve_aor(resource);
+	aor = find_aor_for_resource(endpoint, resource);
 	if (!aor) {
-		ast_log(LOG_WARNING, "Unable to locate aor %s. MWI subscription failed.\n",
-			resource);
+		ast_debug(1, "Unable to locate aor %s. MWI subscription failed.\n", resource);
 		return 404;
 	}
 
 	if (ast_strlen_zero(aor->mailboxes)) {
-		ast_log(LOG_NOTICE, "AOR %s has no configured mailboxes. MWI subscription failed.\n",
+		ast_debug(1, "AOR %s has no configured mailboxes. MWI subscription failed.\n",
 			resource);
 		return 404;
 	}
@@ -763,6 +964,8 @@ static void *mwi_get_notify_data(struct ast_sip_subscription *sub)
 	struct ast_sip_message_accumulator *counter;
 	struct mwi_subscription *mwi_sub;
 	struct ast_datastore *mwi_datastore;
+	struct ast_sip_aor *aor;
+	struct ast_sip_endpoint *endpoint = ast_sip_subscription_get_endpoint(sub);
 
 	mwi_datastore = ast_sip_subscription_get_datastore(sub, MWI_DATASTORE);
 	if (!mwi_datastore) {
@@ -775,6 +978,17 @@ static void *mwi_get_notify_data(struct ast_sip_subscription *sub)
 		ao2_cleanup(mwi_datastore);
 		return NULL;
 	}
+
+	if ((aor = find_aor_for_resource(endpoint, ast_sip_subscription_get_resource_name(sub)))) {
+		pjsip_dialog *dlg = ast_sip_subscription_get_dialog(sub);
+		pjsip_sip_uri *sip_uri = ast_sip_subscription_get_sip_uri(sub);
+
+		if (dlg && sip_uri) {
+			set_voicemail_extension(dlg->pool, sip_uri, counter, aor->voicemail_extension);
+		}
+		ao2_ref(aor, -1);
+	}
+	ao2_cleanup(endpoint);
 
 	ao2_callback(mwi_sub->stasis_subs, OBJ_NODATA, get_message_count, counter);
 	ao2_cleanup(mwi_datastore);
@@ -850,7 +1064,7 @@ static int send_notify(void *obj, void *arg, int flags)
 	struct mwi_subscription *mwi_sub = obj;
 	struct ast_taskprocessor *serializer = mwi_sub->is_solicited
 		? ast_sip_subscription_get_serializer(mwi_sub->sip_sub)
-		: NULL;
+		: get_mwi_serializer();
 
 	if (ast_sip_push_task(serializer, serialized_notify, ao2_bump(mwi_sub))) {
 		ao2_ref(mwi_sub, -1);
@@ -876,44 +1090,25 @@ static void mwi_stasis_cb(void *userdata, struct stasis_subscription *sub,
 	}
 }
 
-/*! \note Called with the unsolicited_mwi conainer lock held. */
+/*! \note Called with the unsolicited_mwi container lock held. */
 static int create_mwi_subscriptions_for_endpoint(void *obj, void *arg, int flags)
 {
 	RAII_VAR(struct mwi_subscription *, aggregate_sub, NULL, ao2_cleanup);
 	struct ast_sip_endpoint *endpoint = obj;
-	char *endpoint_aors, *aor_name, *mailboxes, *mailbox;
-	struct ao2_container *contacts = NULL;
+	char *mailboxes, *mailbox;
 
 	if (ast_strlen_zero(endpoint->subscription.mwi.mailboxes)) {
 		return 0;
 	}
 
-	endpoint_aors = ast_strdupa(endpoint->aors);
-
-	while ((aor_name = strsep(&endpoint_aors, ","))) {
-		RAII_VAR(struct ast_sip_aor *, aor, ast_sip_location_retrieve_aor(aor_name), ao2_cleanup);
-
-		if (!aor) {
-			continue;
-		}
-
-		contacts = ast_sip_location_retrieve_aor_contacts(aor);
-		if (!contacts || (ao2_container_count(contacts) == 0)) {
-			ao2_cleanup(contacts);
-			contacts = NULL;
-			continue;
-		}
-
-		break;
-	}
-
-	if (!contacts) {
-		return 0;
-	}
-
-	ao2_ref(contacts, -1);
-
 	if (endpoint->subscription.mwi.aggregate) {
+		const char *endpoint_id = ast_sorcery_object_get_id(endpoint);
+
+		/* Check if subscription exists */
+		aggregate_sub = ao2_find(unsolicited_mwi, endpoint_id, OBJ_SEARCH_KEY | OBJ_NOLOCK);
+		if (aggregate_sub) {
+			return 0;
+		}
 		aggregate_sub = mwi_subscription_alloc(endpoint, 0, NULL);
 		if (!aggregate_sub) {
 			return 0;
@@ -921,11 +1116,17 @@ static int create_mwi_subscriptions_for_endpoint(void *obj, void *arg, int flags
 	}
 
 	mailboxes = ast_strdupa(endpoint->subscription.mwi.mailboxes);
-	while ((mailbox = strsep(&mailboxes, ","))) {
-		struct mwi_subscription *sub = aggregate_sub ?:
-			mwi_subscription_alloc(endpoint, 0, NULL);
+	while ((mailbox = ast_strip(strsep(&mailboxes, ",")))) {
+		struct mwi_subscription *sub;
 		struct mwi_stasis_subscription *mwi_stasis_sub;
 
+		/* check if subscription exists */
+		if (ast_strlen_zero(mailbox) ||
+			(!aggregate_sub && endpoint_receives_unsolicited_mwi_for_mailbox(endpoint, mailbox))) {
+			continue;
+		}
+
+		sub = aggregate_sub ?: mwi_subscription_alloc(endpoint, 0, NULL);
 		mwi_stasis_sub = mwi_stasis_subscription_alloc(mailbox, sub);
 		if (mwi_stasis_sub) {
 			ao2_link(sub->stasis_subs, mwi_stasis_sub);
@@ -954,9 +1155,14 @@ static int unsubscribe(void *obj, void *arg, int flags)
 static void create_mwi_subscriptions(void)
 {
 	struct ao2_container *endpoints;
+	struct ast_variable *var;
+
+	var = ast_variable_new("mailboxes !=", "", "");
 
 	endpoints = ast_sorcery_retrieve_by_fields(ast_sip_get_sorcery(), "endpoint",
-		AST_RETRIEVE_FLAG_MULTIPLE | AST_RETRIEVE_FLAG_ALL, NULL);
+		AST_RETRIEVE_FLAG_MULTIPLE, var);
+
+	ast_variables_destroy(var);
 	if (!endpoints) {
 		return;
 	}
@@ -985,56 +1191,101 @@ static int send_contact_notify(void *obj, void *arg, int flags)
 		return 0;
 	}
 
-	if (ast_sip_push_task(NULL, serialized_notify, ao2_bump(mwi_sub))) {
+	if (ast_sip_push_task(get_mwi_serializer(), serialized_notify, ao2_bump(mwi_sub))) {
 		ao2_ref(mwi_sub, -1);
 	}
 
 	return 0;
 }
 
+/*! \brief Create mwi subscriptions and notify */
+static void mwi_contact_changed(const struct ast_sip_contact *contact)
+{
+	char *id = ast_strdupa(ast_sorcery_object_get_id(contact));
+	char *aor = NULL;
+	struct ast_sip_endpoint *endpoint = NULL;
+
+	if (contact->endpoint) {
+		endpoint = ao2_bump(contact->endpoint);
+	} else {
+		if (!ast_strlen_zero(contact->endpoint_name)) {
+			endpoint = ast_sorcery_retrieve_by_id(ast_sip_get_sorcery(), "endpoint", contact->endpoint_name);
+		}
+	}
+
+	if (!endpoint || ast_strlen_zero(endpoint->subscription.mwi.mailboxes)) {
+		ao2_cleanup(endpoint);
+		return;
+	}
+
+	ao2_lock(unsolicited_mwi);
+	create_mwi_subscriptions_for_endpoint(endpoint, NULL, 0);
+	ao2_unlock(unsolicited_mwi);
+	ao2_cleanup(endpoint);
+
+	aor = strsep(&id, ";@");
+	ao2_callback(unsolicited_mwi, OBJ_NODATA, send_contact_notify, aor);
+}
+
 /*! \brief Function called when a contact is updated */
 static void mwi_contact_updated(const void *object)
 {
-	char *id = ast_strdupa(ast_sorcery_object_get_id(object)), *aor = NULL;
-
-	aor = strsep(&id, ";@");
-
-	ao2_callback(unsolicited_mwi, OBJ_NODATA, send_contact_notify, aor);
+	mwi_contact_changed(object);
 }
 
 /*! \brief Function called when a contact is added */
 static void mwi_contact_added(const void *object)
 {
+	mwi_contact_changed(object);
+}
+
+/*! \brief Function called when a contact is deleted */
+static void mwi_contact_deleted(const void *object)
+{
 	const struct ast_sip_contact *contact = object;
 	struct ao2_iterator *mwi_subs;
 	struct mwi_subscription *mwi_sub;
-	const char *endpoint_id = ast_sorcery_object_get_id(contact->endpoint);
+	struct ast_sip_endpoint *endpoint = NULL;
+	struct ast_sip_contact *found_contact;
 
-	if (ast_strlen_zero(contact->endpoint->subscription.mwi.mailboxes)) {
+	if (contact->endpoint) {
+		endpoint = ao2_bump(contact->endpoint);
+	} else {
+		if (!ast_strlen_zero(contact->endpoint_name)) {
+			endpoint = ast_sorcery_retrieve_by_id(ast_sip_get_sorcery(), "endpoint", contact->endpoint_name);
+		}
+	}
+
+	if (!endpoint || ast_strlen_zero(endpoint->subscription.mwi.mailboxes)) {
+		ao2_cleanup(endpoint);
+		return;
+	}
+
+	/* Check if there is another contact */
+	found_contact = ast_sip_location_retrieve_contact_from_aor_list(endpoint->aors);
+	ao2_cleanup(endpoint);
+	if (found_contact) {
+		ao2_cleanup(found_contact);
 		return;
 	}
 
 	ao2_lock(unsolicited_mwi);
-
-	mwi_subs = ao2_find(unsolicited_mwi, endpoint_id, OBJ_SEARCH_KEY | OBJ_MULTIPLE | OBJ_NOLOCK | OBJ_UNLINK);
+	mwi_subs = ao2_find(unsolicited_mwi, contact->endpoint_name,
+		OBJ_SEARCH_KEY | OBJ_MULTIPLE | OBJ_NOLOCK | OBJ_UNLINK);
 	if (mwi_subs) {
 		for (; (mwi_sub = ao2_iterator_next(mwi_subs)); ao2_cleanup(mwi_sub)) {
 			unsubscribe(mwi_sub, NULL, 0);
 		}
 		ao2_iterator_destroy(mwi_subs);
 	}
-
-	create_mwi_subscriptions_for_endpoint(contact->endpoint, NULL, 0);
-
 	ao2_unlock(unsolicited_mwi);
-
-	mwi_contact_updated(object);
 }
 
 /*! \brief Observer for contacts so unsolicited MWI is sent when a contact changes */
 static const struct ast_sorcery_observer mwi_contact_observer = {
 	.created = mwi_contact_added,
 	.updated = mwi_contact_updated,
+	.deleted = mwi_contact_deleted,
 };
 
 /*! \brief Task invoked to send initial MWI NOTIFY for unsolicited */
@@ -1067,33 +1318,54 @@ static void mwi_startup_event_cb(void *data, struct stasis_subscription *sub, st
 	stasis_unsubscribe(sub);
 }
 
+static void global_loaded(const char *object_type)
+{
+	ast_free(default_voicemail_extension);
+	default_voicemail_extension = ast_sip_get_default_voicemail_extension();
+	mwi_serializer_set_alert_levels();
+}
+
+static struct ast_sorcery_observer global_observer = {
+	.loaded = global_loaded,
+};
+
 static int reload(void)
 {
-	create_mwi_subscriptions();
+	if (!ast_sip_get_mwi_disable_initial_unsolicited()) {
+		create_mwi_subscriptions();
+	}
 	return 0;
 }
 
 static int load_module(void)
 {
-	CHECK_PJSIP_MODULE_LOADED();
-
 	if (ast_sip_register_subscription_handler(&mwi_handler)) {
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
-	unsolicited_mwi = ao2_container_alloc(MWI_BUCKETS, mwi_sub_hash, mwi_sub_cmp);
+	if (mwi_serializer_pool_setup()) {
+		ast_log(AST_LOG_WARNING, "Failed to create MWI serializer pool. The default SIP pool will be used for MWI\n");
+	}
+
+	unsolicited_mwi = ao2_container_alloc_hash(AO2_ALLOC_OPT_LOCK_MUTEX, 0, MWI_BUCKETS,
+		mwi_sub_hash, NULL, mwi_sub_cmp);
 	if (!unsolicited_mwi) {
+		mwi_serializer_pool_shutdown();
 		ast_sip_unregister_subscription_handler(&mwi_handler);
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
-	create_mwi_subscriptions();
 	ast_sorcery_observer_add(ast_sip_get_sorcery(), "contact", &mwi_contact_observer);
+	ast_sorcery_observer_add(ast_sip_get_sorcery(), "global", &global_observer);
+	ast_sorcery_reload_object(ast_sip_get_sorcery(), "global");
 
-	if (ast_test_flag(&ast_options, AST_OPT_FLAG_FULLY_BOOTED)) {
-		ast_sip_push_task(NULL, send_initial_notify_all, NULL);
-	} else {
-		stasis_subscribe_pool(ast_manager_get_topic(), mwi_startup_event_cb, NULL);
+	if (!ast_sip_get_mwi_disable_initial_unsolicited()) {
+		create_mwi_subscriptions();
+		if (ast_test_flag(&ast_options, AST_OPT_FLAG_FULLY_BOOTED)) {
+			ast_sip_push_task(NULL, send_initial_notify_all, NULL);
+		} else {
+			stasis_subscribe_pool(ast_manager_get_topic(), mwi_startup_event_cb, NULL);
+		}
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;
@@ -1101,10 +1373,19 @@ static int load_module(void)
 
 static int unload_module(void)
 {
+	ast_sorcery_observer_remove(ast_sip_get_sorcery(), "global", &global_observer);
+	ast_sorcery_observer_remove(ast_sip_get_sorcery(), "contact", &mwi_contact_observer);
+
 	ao2_callback(unsolicited_mwi, OBJ_UNLINK | OBJ_NODATA | OBJ_MULTIPLE, unsubscribe, NULL);
 	ao2_ref(unsolicited_mwi, -1);
-	ast_sorcery_observer_remove(ast_sip_get_sorcery(), "contact", &mwi_contact_observer);
+	unsolicited_mwi = NULL;
+
+	mwi_serializer_pool_shutdown();
+
 	ast_sip_unregister_subscription_handler(&mwi_handler);
+
+	ast_free(default_voicemail_extension);
+	default_voicemail_extension = NULL;
 	return 0;
 }
 
@@ -1113,5 +1394,6 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP MWI resource",
 	.load = load_module,
 	.unload = unload_module,
 	.reload = reload,
-	.load_pri = AST_MODPRI_CHANNEL_DEPEND,
+	.load_pri = AST_MODPRI_CHANNEL_DEPEND + 5,
+	.requires = "res_pjsip,res_pjsip_pubsub",
 );

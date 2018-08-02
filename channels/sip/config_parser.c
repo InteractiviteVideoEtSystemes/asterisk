@@ -25,8 +25,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "include/sip.h"
 #include "include/config_parser.h"
 #include "include/sip_utils.h"
@@ -274,6 +272,7 @@ int sip_parse_register_line(struct sip_registry *reg, int default_expiry, const 
 	return 0;
 }
 
+#ifdef TEST_FRAMEWORK
 AST_TEST_DEFINE(sip_parse_register_line_test)
 {
 	int res = AST_TEST_PASS;
@@ -643,6 +642,7 @@ alloc_fail:
 	ast_test_status_update(test, "Out of memory. \n");
 	return res;
 }
+#endif
 
 int sip_parse_host(char *line, int lineno, char **hostname, int *portnum, enum ast_transport *transport)
 {
@@ -708,6 +708,7 @@ int sip_parse_host(char *line, int lineno, char **hostname, int *portnum, enum a
 	return 0;
 }
 
+#ifdef TEST_FRAMEWORK
 AST_TEST_DEFINE(sip_parse_host_line_test)
 {
 	int res = AST_TEST_PASS;
@@ -787,6 +788,7 @@ AST_TEST_DEFINE(sip_parse_host_line_test)
 	return res;
 
 }
+#endif
 
 /*! \brief Parse the comma-separated nat= option values */
 void sip_parse_nat_option(const char *value, struct ast_flags *mask, struct ast_flags *flags)
@@ -834,6 +836,7 @@ void sip_parse_nat_option(const char *value, struct ast_flags *mask, struct ast_
 	}
 }
 
+#ifdef TEST_FRAMEWORK
 #define TEST_FORCE_RPORT      1 << 0
 #define TEST_COMEDIA          1 << 1
 #define TEST_AUTO_FORCE_RPORT 1 << 2
@@ -904,6 +907,8 @@ AST_TEST_DEFINE(sip_parse_nat_test)
 
 	return res;
 }
+#endif
+
 /*! \brief SIP test registration */
 void sip_config_parser_register_tests(void)
 {
@@ -919,4 +924,3 @@ void sip_config_parser_unregister_tests(void)
 	AST_TEST_UNREGISTER(sip_parse_host_line_test);
 	AST_TEST_UNREGISTER(sip_parse_nat_test);
 }
-

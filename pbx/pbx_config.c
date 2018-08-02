@@ -20,7 +20,7 @@
  *
  * \brief Populate and remember extensions from static config file
  *
- * 
+ *
  */
 
 /*** MODULEINFO
@@ -81,8 +81,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <ctype.h>
 
@@ -189,29 +187,49 @@ static char *handle_cli_dialplan_remove_include(struct ast_cli_entry *e, int cmd
 /*! \brief return true if 'name' is included by context c */
 static int lookup_ci(struct ast_context *c, const char *name)
 {
-	struct ast_include *i = NULL;
+	int idx;
+	int ret = 0;
 
-	if (ast_rdlock_context(c))	/* error, skip */
+	if (ast_rdlock_context(c)) {
+		/* error, skip */
 		return 0;
-	while ( (i = ast_walk_context_includes(c, i)) )
-		if (!strcmp(name, ast_get_include_name(i)))
+	}
+
+	for (idx = 0; idx < ast_context_includes_count(c); idx++) {
+		const struct ast_include *i = ast_context_includes_get(c, idx);
+
+		if (!strcmp(name, ast_get_include_name(i))) {
+			ret = -1;
 			break;
+		}
+	}
 	ast_unlock_context(c);
-	return i ? -1 /* success */ : 0;
+
+	return ret;
 }
 
 /*! \brief return true if 'name' is in the ignorepats for context c */
 static int lookup_c_ip(struct ast_context *c, const char *name)
 {
-	struct ast_ignorepat *ip = NULL;
+	int idx;
+	int ret = 0;
 
-	if (ast_rdlock_context(c))	/* error, skip */
+	if (ast_rdlock_context(c)) {
+		/* error, skip */
 		return 0;
-	while ( (ip = ast_walk_context_ignorepats(c, ip)) )
-		if (!strcmp(name, ast_get_ignorepat_name(ip)))
+	}
+
+	for (idx = 0; idx < ast_context_ignorepats_count(c); idx++) {
+		const struct ast_ignorepat *ip = ast_context_ignorepats_get(c, idx);
+
+		if (!strcmp(name, ast_get_ignorepat_name(ip))) {
+			ret = -1;
 			break;
+		}
+	}
 	ast_unlock_context(c);
-	return ip ? -1 /* success */ : 0;
+
+	return ret;
 }
 
 /*! \brief moves to the n-th word in the string, or empty string if none */
@@ -282,12 +300,13 @@ static char *complete_dialplan_remove_include(struct ast_cli_args *a)
 		}
 		/* walk contexts and their includes, return the n-th match */
 		while (!res && (c = ast_walk_contexts(c))) {
-			struct ast_include *i = NULL;
+			int idx;
 
 			if (ast_rdlock_context(c))	/* error ? skip this one */
 				continue;
 
-			while ( !res && (i = ast_walk_context_includes(c, i)) ) {
+			for (idx = 0; idx < ast_context_includes_count(c); idx++) {
+				const struct ast_include *i = ast_context_includes_get(c, idx);
 				const char *i_name = ast_get_include_name(i);
 				struct ast_context *nc = NULL;
 				int already_served = 0;
@@ -303,8 +322,10 @@ static char *complete_dialplan_remove_include(struct ast_cli_args *a)
 				while ( (nc = ast_walk_contexts(nc)) && nc != c && !already_served)
 					already_served = lookup_ci(nc, i_name);
 
-				if (!already_served && ++which > a->n)
+				if (!already_served && ++which > a->n) {
 					res = ast_strdup(i_name);
+					break;
+				}
 			}
 			ast_unlock_context(c);
 		}
@@ -345,7 +366,7 @@ static char *complete_dialplan_remove_include(struct ast_cli_args *a)
 		return res;
 	} else if (a->pos == 5) { /* "dialplan remove include CTX from _X_" */
 		/*
-		 * Context from which we removing include ... 
+		 * Context from which we removing include ...
 		 */
 		char *context, *dupline, *from;
 		const char *s = skip_words(a->line, 3); /* skip 'dialplan' 'remove' 'include' */
@@ -376,7 +397,7 @@ static char *complete_dialplan_remove_include(struct ast_cli_args *a)
 			const char *c_name = ast_get_context_name(c);
 			if (!partial_match(c_name, a->word, len))	/* not a good target */
 				continue;
-			/* walk through all includes and check if it is our context */	
+			/* walk through all includes and check if it is our context */
 			if (lookup_ci(c, context) && ++which > a->n)
 				res = ast_strdup(c_name);
 		}
@@ -464,7 +485,7 @@ static char *handle_cli_dialplan_remove_extension(struct ast_cli_entry *e, int c
 		else
 			ast_cli(a->fd, "Extension %s@%s with priority %d removed\n",
 				exten, context, removing_priority);
-			
+
 		ret = CLI_SUCCESS;
 	} else {
 		if (cid) {
@@ -644,7 +665,7 @@ static char *complete_dialplan_remove_extension(struct ast_cli_args *a)
 	error3:
 		ast_free(exten);
 	}
-	return ret; 
+	return ret;
 }
 
 /*!
@@ -894,7 +915,7 @@ static char *handle_cli_dialplan_save(struct ast_cli_entry *e, int cmd, struct a
 	}
 
 	ast_config_destroy(cfg);
-	
+
 #define PUT_CTX_HDR	do { \
 	if (!context_header_written) {	\
 		fprintf(output, "[%s]\n", ast_get_context_name(c));	\
@@ -906,11 +927,9 @@ static char *handle_cli_dialplan_save(struct ast_cli_entry *e, int cmd, struct a
 	for (c = NULL; (c = ast_walk_contexts(c)); ) {
 		int context_header_written = 0;
 		struct ast_exten *ext, *last_written_e = NULL;
-		struct ast_include *i;
-		struct ast_ignorepat *ip;
-		struct ast_sw *sw;
+		int idx;
 
-		/* try to lock context and fireout all info */	
+		/* try to lock context and fireout all info */
 		if (ast_rdlock_context(c)) { /* lock failure */
 			incomplete = 1;
 			continue;
@@ -930,14 +949,14 @@ static char *handle_cli_dialplan_save(struct ast_cli_entry *e, int cmd, struct a
 			while ( (p = ast_walk_extension_priorities(ext, p)) ) {
 				if (strcmp(ast_get_extension_registrar(p), registrar) != 0) /* not this source */
 					continue;
-		
-				/* make empty line between different extensions */	
+
+				/* make empty line between different extensions */
 				if (last_written_e != NULL &&
 					    strcmp(ast_get_extension_name(last_written_e),
 						    ast_get_extension_name(p)))
 					fprintf(output, "\n");
 				last_written_e = p;
-			
+
 				PUT_CTX_HDR;
 
 				if (ast_get_extension_priority(p) == PRIORITY_HINT) { /* easy */
@@ -983,17 +1002,22 @@ static char *handle_cli_dialplan_save(struct ast_cli_entry *e, int cmd, struct a
 			fprintf(output, "\n");
 
 		/* walk through includes */
-		for (i = NULL; (i = ast_walk_context_includes(c, i)) ; ) {
+		for (idx = 0; idx < ast_context_includes_count(c); idx++) {
+			const struct ast_include *i = ast_context_includes_get(c, idx);
+
 			if (strcmp(ast_get_include_registrar(i), registrar) != 0)
 				continue; /* not mine */
 			PUT_CTX_HDR;
 			fprintf(output, "include => %s\n", ast_get_include_name(i));
 		}
-		if (ast_walk_context_includes(c, NULL))
+		if (ast_context_includes_count(c)) {
 			fprintf(output, "\n");
+		}
 
 		/* walk through switches */
-		for (sw = NULL; (sw = ast_walk_context_switches(c, sw)) ; ) {
+		for (idx = 0; idx < ast_context_switches_count(c); idx++) {
+			const struct ast_sw *sw = ast_context_switches_get(c, idx);
+
 			if (strcmp(ast_get_switch_registrar(sw), registrar) != 0)
 				continue; /* not mine */
 			PUT_CTX_HDR;
@@ -1001,11 +1025,14 @@ static char *handle_cli_dialplan_save(struct ast_cli_entry *e, int cmd, struct a
 				    ast_get_switch_name(sw), ast_get_switch_data(sw));
 		}
 
-		if (ast_walk_context_switches(c, NULL))
+		if (ast_context_switches_count(c)) {
 			fprintf(output, "\n");
+		}
 
 		/* fireout ignorepats ... */
-		for (ip = NULL; (ip = ast_walk_context_ignorepats(c, ip)); ) {
+		for (idx = 0; idx < ast_context_ignorepats_count(c); idx++) {
+			const struct ast_ignorepat *ip = ast_context_ignorepats_get(c, idx);
+
 			if (strcmp(ast_get_ignorepat_registrar(ip), registrar) != 0)
 				continue; /* not mine */
 			PUT_CTX_HDR;
@@ -1014,7 +1041,7 @@ static char *handle_cli_dialplan_save(struct ast_cli_entry *e, int cmd, struct a
 		}
 
 		ast_unlock_context(c);
-	}	
+	}
 
 	ast_unlock_contexts();
 	ast_mutex_unlock(&save_dialplan_lock);
@@ -1215,7 +1242,7 @@ static int manager_dialplan_extension_add(struct mansession *s, const struct mes
 	}
 
 	if (ast_add_extension2(add_context, replace, exten, ipriority, NULL, cidmatch,
-			application, ast_strdup(application_data), ast_free_ptr, registrar)) {
+			application, ast_strdup(application_data), ast_free_ptr, registrar, NULL, 0)) {
 		ast_unlock_contexts();
 		switch (errno) {
 		case ENOMEM:
@@ -1472,12 +1499,13 @@ static char *complete_dialplan_remove_ignorepat(struct ast_cli_args *a)
 		}
 
 		for (c = NULL; !ret && (c = ast_walk_contexts(c));) {
-			struct ast_ignorepat *ip;
+			int idx;
 
 			if (ast_rdlock_context(c))	/* error, skip it */
 				continue;
-			
-			for (ip = NULL; !ret && (ip = ast_walk_context_ignorepats(c, ip));) {
+			for (idx = 0; idx < ast_context_ignorepats_count(c); idx++) {
+				const struct ast_ignorepat *ip = ast_context_ignorepats_get(c, idx);
+
 				if (partial_match(ast_get_ignorepat_name(ip), a->word, len) && ++which > a->n) {
 					/* n-th match */
 					struct ast_context *cw = NULL;
@@ -1523,17 +1551,21 @@ static char *complete_dialplan_remove_ignorepat(struct ast_cli_args *a)
 		}
 
 		for (c = NULL; !ret && (c = ast_walk_contexts(c)); ) {
-			if (ast_rdlock_context(c))	/* fail, skip it */
+			if (ast_rdlock_context(c)) {
+				/* fail, skip it */
 				continue;
-			if (!partial_match(ast_get_context_name(c), a->word, len))
+			}
+			if (!partial_match(ast_get_context_name(c), a->word, len)) {
+				ast_unlock_context(c);
 				continue;
+			}
 			if (lookup_c_ip(c, ignorepat) && ++which > a->n)
 				ret = ast_strdup(ast_get_context_name(c));
 			ast_unlock_context(c);
 		}
 		ast_unlock_contexts();
 		ast_free(dupline);
-		return NULL;
+		return ret;
 	}
 
 	return NULL;
@@ -1682,7 +1714,7 @@ static int pbx_load_config(const char *config_file)
 	}
 
 	ast_copy_string(userscontext, ast_variable_retrieve(cfg, "general", "userscontext") ?: "default", sizeof(userscontext));
-								    
+
 	for (v = ast_variable_browse(cfg, "globals"); v; v = v->next) {
 		pbx_substitute_variables_helper(NULL, v->value, realvalue, sizeof(realvalue) - 1);
 		pbx_builtin_setvar_helper(NULL, v->name, realvalue);
@@ -1829,6 +1861,7 @@ process_extension:
 
 				appl = ast_skip_blanks(appl);
 				if (ipri) {
+					const char *registrar_file;
 					if (plus) {
 						ipri += atoi(plus);
 					}
@@ -1838,7 +1871,14 @@ process_extension:
 							"The use of '%s' for an extension is strongly discouraged and can have unexpected behavior.  Please use '_X%c' instead at line %d of %s\n",
 							realext, realext[1], v->lineno, vfile);
 					}
-					if (ast_add_extension2(con, 0, realext, ipri, label, cidmatch, appl, ast_strdup(data), ast_free_ptr, registrar)) {
+					/* Don't include full path if the configuration file includes slashes */
+					registrar_file = strrchr(vfile, '/');
+					if (!registrar_file) {
+						registrar_file = vfile;
+					} else {
+						registrar_file++; /* Skip past the end slash */
+					}
+					if (ast_add_extension2(con, 0, realext, ipri, label, cidmatch, appl, ast_strdup(data), ast_free_ptr, registrar, registrar_file, v->lineno)) {
 						ast_log(LOG_WARNING,
 							"Unable to register extension at line %d of %s\n",
 							v->lineno, vfile);
@@ -1887,7 +1927,7 @@ process_extension:
 			} else if (!strcasecmp(v->name, "switch") || !strcasecmp(v->name, "lswitch") || !strcasecmp(v->name, "eswitch")) {
 				char *appl, *data;
 				stringp = realvalue;
-				
+
 				if (!strcasecmp(v->name, "switch")) {
 					pbx_substitute_variables_helper(NULL, v->value, realvalue, sizeof(realvalue) - 1);
 				} else {
@@ -1900,6 +1940,8 @@ process_extension:
 						"Unable to include switch '%s' in context '%s' at line %d of %s\n",
 						v->value, cxt, v->lineno, vfile);
 				}
+			} else if (!strcasecmp(v->name, "autohints")) {
+				ast_context_set_autohints(con, ast_true(v->value));
 			} else {
 				ast_log(LOG_WARNING,
 					"==!!== Unknown directive: %s at line %d of %s -- IGNORING!!!\n",
@@ -1938,7 +1980,7 @@ static void pbx_load_users(void)
 	int start, finish, x;
 	struct ast_context *con = NULL;
 	struct ast_flags config_flags = { 0 };
-	
+
 	cfg = ast_config_load("users.conf", config_flags);
 	if (!cfg)
 		return;
@@ -2003,19 +2045,19 @@ static void pbx_load_users(void)
 			}
 
 			/* Add hint */
-			ast_add_extension2(con, 0, cat, -1, NULL, NULL, iface, NULL, NULL, registrar);
+			ast_add_extension2(con, 0, cat, -1, NULL, NULL, iface, NULL, NULL, registrar, NULL, 0);
 			/* If voicemail, use "stdexten" else use plain old dial */
 			if (hasvoicemail) {
 				if (ast_opt_stdexten_macro) {
 					/* Use legacy stdexten macro method. */
 					snprintf(tmp, sizeof(tmp), "stdexten,%s,${HINT}", cat);
-					ast_add_extension2(con, 0, cat, 1, NULL, NULL, "Macro", ast_strdup(tmp), ast_free_ptr, registrar);
+					ast_add_extension2(con, 0, cat, 1, NULL, NULL, "Macro", ast_strdup(tmp), ast_free_ptr, registrar, NULL, 0);
 				} else {
 					snprintf(tmp, sizeof(tmp), "%s,stdexten(${HINT})", cat);
-					ast_add_extension2(con, 0, cat, 1, NULL, NULL, "Gosub", ast_strdup(tmp), ast_free_ptr, registrar);
+					ast_add_extension2(con, 0, cat, 1, NULL, NULL, "Gosub", ast_strdup(tmp), ast_free_ptr, registrar, NULL, 0);
 				}
 			} else {
-				ast_add_extension2(con, 0, cat, 1, NULL, NULL, "Dial", ast_strdup("${HINT}"), ast_free_ptr, registrar);
+				ast_add_extension2(con, 0, cat, 1, NULL, NULL, "Dial", ast_strdup("${HINT}"), ast_free_ptr, registrar, NULL, 0);
 			}
 			altexts = ast_variable_retrieve(cfg, cat, "alternateexts");
 			if (!ast_strlen_zero(altexts)) {
@@ -2024,7 +2066,7 @@ static void pbx_load_users(void)
 				c = altcopy;
 				ext = strsep(&c, ",");
 				while (ext) {
-					ast_add_extension2(con, 0, ext, 1, NULL, NULL, "Goto", ast_strdup(tmp), ast_free_ptr, registrar);
+					ast_add_extension2(con, 0, ext, 1, NULL, NULL, "Goto", ast_strdup(tmp), ast_free_ptr, registrar, NULL, 0);
 					ext = strsep(&c, ",");
 				}
 			}
@@ -2046,7 +2088,7 @@ static int pbx_load_module(void)
 		ast_mutex_unlock(&reload_lock);
 		return AST_MODULE_LOAD_DECLINE;
 	}
-	
+
 	pbx_load_users();
 
 	ast_merge_contexts_and_delete(&local_contexts, local_table, registrar);

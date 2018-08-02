@@ -1,6 +1,6 @@
 #
 # Asterisk -- An open source telephony toolkit.
-# 
+#
 # Makefile rules
 #
 # Copyright (C) 2006-2010, Digium, Inc.
@@ -16,6 +16,10 @@
 # behaviour. ECHO_PREFIX prefixes the comment, CMD_PREFIX prefixes the command.
 
 -include $(ASTTOPDIR)/makeopts
+
+# Helpful functions
+# call with $(call function,...)
+tolower = $(shell echo $(1) | tr '[:upper:]' '[:lower:]')
 
 .PHONY: dist-clean
 
@@ -51,7 +55,7 @@ ifeq ($(NOISY_BUILD),)
     ECHO_PREFIX=@
     CMD_PREFIX=@
 else
-    ECHO_PREFIX=@\# 
+    ECHO_PREFIX=@\#
     CMD_PREFIX=
 endif
 
@@ -103,13 +107,15 @@ CC_LIBS=$(PTHREAD_LIBS) $(LIBS)
 CXX_LIBS=$(PTHREAD_LIBS) $(LIBS)
 
 # determine whether to double-compile so that the optimizer can report code path problems
-# this is only done when developer mode and DONT_OPTIMIZE are both enabled
-# in that case, we run the preprocessor to produce a .i or .ii file from the source
+# In this case, we run the preprocessor to produce a .i or .ii file from the source
 # code, then compile once with optimizer enabled (and the output to /dev/null),
 # and if that doesn't fail then compile again with optimizer disabled
-ifeq ($(findstring DONT_OPTIMIZE,$(MENUSELECT_CFLAGS))$(AST_DEVMODE),DONT_OPTIMIZEyes)
+
+ifeq ($(findstring COMPILE_DOUBLE,$(MENUSELECT_CFLAGS)),COMPILE_DOUBLE)
 COMPILE_DOUBLE=yes
-else
+endif
+
+ifeq ($(findstring DONT_OPTIMIZE,$(MENUSELECT_CFLAGS))$(AST_DEVMODE),)
 _ASTCFLAGS+=$(AST_FORTIFY_SOURCE)
 endif
 
@@ -170,29 +176,17 @@ ifeq ($(GNU_LD),1)
 	$(CMD_PREFIX) $(ASTTOPDIR)/build_tools/make_linker_version_script $* "$(LINKER_SYMBOL_PREFIX)" "$(ASTTOPDIR)"
 endif
 	$(ECHO_PREFIX) echo "   [LD] $^ -> $@"
-	$(CMD_PREFIX) $(CC) $(STATIC_BUILD) -o $@ $(CC_LDFLAGS_SO) $^ $(CC_LIBS)
+	$(CMD_PREFIX) $(CC) -o $@ $(CC_LDFLAGS_SO) $^ $(CC_LIBS)
 
 %.so: %.oo
 ifeq ($(GNU_LD),1)
 	$(CMD_PREFIX) $(ASTTOPDIR)/build_tools/make_linker_version_script $* "$(LINKER_SYMBOL_PREFIX)" "$(ASTTOPDIR)"
 endif
 	$(ECHO_PREFIX) echo "   [LDXX] $^ -> $@"
-	$(CMD_PREFIX) $(CXX) $(STATIC_BUILD) -o $@ $(CXX_LDFLAGS_SO) $^ $(CXX_LIBS)
-
-%.eo: %.o
-	$(ECHO_PREFIX) echo "   [EMBED] $< -> $@"
-	$(CMD_PREFIX) $(ASTTOPDIR)/build_tools/make_linker_eo_script $* > .$@.ld
-	$(CMD_PREFIX) $(LD) -r -T .$@.ld -o $@ $<
-	$(CMD_PREFIX) rm -f .$@.ld
-
-%.eo: %.oo
-	$(ECHO_PREFIX) echo "   [EMBED] $< -> $@"
-	$(CMD_PREFIX) $(ASTTOPDIR)/build_tools/make_linker_eo_script $* > .$@.ld
-	$(CMD_PREFIX) $(LD) -r -T .$@.ld -o $@ $<
-	$(CMD_PREFIX) rm -f .$@.ld
+	$(CMD_PREFIX) $(CXX) -o $@ $(CXX_LDFLAGS_SO) $^ $(CXX_LIBS)
 
 %: %.o
 	$(ECHO_PREFIX) echo "   [LD] $^ -> $@"
-	$(CMD_PREFIX) $(CXX) $(STATIC_BUILD) -o $@ $(PTHREAD_CFLAGS) $(_ASTLDFLAGS) $^ $(CXX_LIBS) $(ASTLDFLAGS)
+	$(CMD_PREFIX) $(CXX) -o $@ $(PTHREAD_CFLAGS) $(_ASTLDFLAGS) $^ $(CXX_LIBS) $(ASTLDFLAGS)
 
 dist-clean:: clean

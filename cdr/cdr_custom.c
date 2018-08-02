@@ -45,8 +45,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <time.h>
 
 #include "asterisk/paths.h"	/* use ast_config_AST_LOG_DIR */
@@ -81,8 +79,10 @@ static AST_RWLIST_HEAD_STATIC(sinks, cdr_custom_config);
 static void free_config(void)
 {
 	struct cdr_custom_config *sink;
+
 	while ((sink = AST_RWLIST_REMOVE_HEAD(&sinks, list))) {
 		ast_mutex_destroy(&sink->lock);
+		ast_string_field_free_memory(sink);
 		ast_free(sink);
 	}
 }
@@ -203,7 +203,7 @@ static enum ast_module_load_result load_module(void)
 {
 	if (AST_RWLIST_WRLOCK(&sinks)) {
 		ast_log(LOG_ERROR, "Unable to lock sink list.  Load failed.\n");
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	load_config();
@@ -216,7 +216,7 @@ static int reload(void)
 {
 	if (AST_RWLIST_WRLOCK(&sinks)) {
 		ast_log(LOG_ERROR, "Unable to lock sink list.  Load failed.\n");
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	free_config();
@@ -231,5 +231,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Customizable Comma Se
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CDR_DRIVER,
+	.requires = "cdr",
 );
-

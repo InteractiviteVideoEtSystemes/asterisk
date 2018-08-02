@@ -282,8 +282,6 @@ static void *acl_alloc(const char *name)
 
 static int load_module(void)
 {
-	CHECK_PJSIP_MODULE_LOADED();
-
 	ast_sorcery_apply_config(ast_sip_get_sorcery(), SIP_SORCERY_ACL_TYPE);
 	ast_sorcery_apply_default(ast_sip_get_sorcery(), SIP_SORCERY_ACL_TYPE,
 				  "config", "pjsip.conf,criteria=type=acl");
@@ -321,4 +319,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP ACL Resource",
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip",
 );

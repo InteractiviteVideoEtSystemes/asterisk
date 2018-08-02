@@ -21,7 +21,7 @@
  * \brief Doubly-Linked List Tests
  *
  * \author\verbatim Steve Murphy <murf@digium.com> \endverbatim
- * 
+ *
  * This module will run some DLL tests at load time
  * \ingroup tests
  */
@@ -32,8 +32,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/file.h"
 #include "asterisk/channel.h"
@@ -69,8 +67,8 @@ static void print_list(struct test_container *x, char *expect)
 		if (t1 != AST_DLLIST_LAST(&x->entries))
 			strcat(buff," <=> ");
 	}
-	
-	ast_log(LOG_NOTICE,"Got: %s  [expect %s]\n", buff, expect);
+
+	ast_debug(1,"Got: %s  [expect %s]\n", buff, expect);
 }
 
 static void print_list_backwards(struct test_container *x, char *expect)
@@ -83,8 +81,8 @@ static void print_list_backwards(struct test_container *x, char *expect)
 		if (t1 != AST_DLLIST_FIRST(&x->entries))
 			strcat(buff," <=> ");
 	}
-	
-	ast_log(LOG_NOTICE,"Got: %s  [expect %s]\n", buff, expect);
+
+	ast_debug(1,"Got: %s  [expect %s]\n", buff, expect);
 }
 
 static struct test_container *make_cont(void)
@@ -115,7 +113,7 @@ static void destroy_test_container(struct test_container *x)
 /* Macros to test:
 AST_DLLIST_LOCK(head)
 AST_RWDLLIST_WRLOCK(head)
-AST_RWDLLIST_WRLOCK(head) 
+AST_RWDLLIST_WRLOCK(head)
 AST_RWDLLIST_RDLOCK(head)
 AST_DLLIST_TRYLOCK(head)
 AST_RWDLLIST_TRYWRLOCK(head)
@@ -160,7 +158,7 @@ AST_DLLIST_TRAVERSE_SAFE_BEGIN(head, var, field)
 AST_DLLIST_TRAVERSE_SAFE_END
 AST_DLLIST_REMOVE_CURRENT(field)
 AST_DLLIST_MOVE_CURRENT(newhead, field)
-AST_DLLIST_INSERT_BEFORE_CURRENT(elm, field) 
+AST_DLLIST_INSERT_BEFORE_CURRENT(elm, field)
 
 
 AST_DLLIST_MOVE_CURRENT_BACKWARDS(newhead, field)
@@ -179,8 +177,8 @@ static void dll_tests(void)
 	struct test1 *c;
 	struct test1 *d;
 	struct test1 *e;
-	
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_INSERT_HEAD, AST_DLLIST_TRAVERSE, AST_DLLIST_TRAVERSE_BACKWARDS_SAFE_BEGIN, AST_DLLIST_TRAVERSE_BACKWARDS_SAFE_END\n");
+
+	ast_debug(1,"Test AST_DLLIST_INSERT_HEAD, AST_DLLIST_TRAVERSE, AST_DLLIST_TRAVERSE_BACKWARDS_SAFE_BEGIN, AST_DLLIST_TRAVERSE_BACKWARDS_SAFE_END\n");
 	tc = make_cont();
 	a = make_test1("A");
 	b = make_test1("B");
@@ -193,21 +191,21 @@ static void dll_tests(void)
 	print_list(tc, "A <=> B <=> C <=> D");
 
 	destroy_test_container(tc);
-	
+
 	tc = make_cont();
 
 	if (AST_DLLIST_EMPTY(&tc->entries))
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_EMPTY....OK\n");
+		ast_debug(1,"Test AST_DLLIST_EMPTY....OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_EMPTY....PROBLEM!!\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_EMPTY....PROBLEM!!\n");
 
 
 	a = make_test1("A");
 	b = make_test1("B");
 	c = make_test1("C");
 	d = make_test1("D");
-	
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_INSERT_TAIL\n");
+
+	ast_debug(1,"Test AST_DLLIST_INSERT_TAIL\n");
 	AST_DLLIST_INSERT_TAIL(&tc->entries, a, list);
 	AST_DLLIST_INSERT_TAIL(&tc->entries, b, list);
 	AST_DLLIST_INSERT_TAIL(&tc->entries, c, list);
@@ -215,24 +213,24 @@ static void dll_tests(void)
 	print_list(tc, "A <=> B <=> C <=> D");
 
 	if (AST_DLLIST_FIRST(&tc->entries) == a)
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_FIRST....OK\n");
+		ast_debug(1,"Test AST_DLLIST_FIRST....OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_FIRST....PROBLEM\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_FIRST....PROBLEM\n");
 
 	if (AST_DLLIST_LAST(&tc->entries) == d)
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_LAST....OK\n");
+		ast_debug(1,"Test AST_DLLIST_LAST....OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_LAST....PROBLEM\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_LAST....PROBLEM\n");
 
 	if (AST_DLLIST_NEXT(a,list) == b)
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_NEXT....OK\n");
+		ast_debug(1,"Test AST_DLLIST_NEXT....OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_NEXT....PROBLEM\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_NEXT....PROBLEM\n");
 
 	if (AST_DLLIST_PREV(d,list) == c)
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_PREV....OK\n");
+		ast_debug(1,"Test AST_DLLIST_PREV....OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_PREV....PROBLEM\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_PREV....PROBLEM\n");
 
 	destroy_test_container(tc);
 
@@ -243,35 +241,35 @@ static void dll_tests(void)
 	c = make_test1("C");
 	d = make_test1("D");
 
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_INSERT_AFTER, AST_DLLIST_TRAVERSE_BACKWARDS\n");
+	ast_debug(1,"Test AST_DLLIST_INSERT_AFTER, AST_DLLIST_TRAVERSE_BACKWARDS\n");
 	AST_DLLIST_INSERT_HEAD(&tc->entries, a, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, a, b, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, b, c, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, c, d, list);
 	print_list_backwards(tc, "D <=> C <=> B <=> A");
 
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE_HEAD\n");
+	ast_debug(1,"Test AST_DLLIST_REMOVE_HEAD\n");
 	AST_DLLIST_REMOVE_HEAD(&tc->entries, list);
 	print_list_backwards(tc, "D <=> C <=> B");
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE_HEAD\n");
+	ast_debug(1,"Test AST_DLLIST_REMOVE_HEAD\n");
 	AST_DLLIST_REMOVE_HEAD(&tc->entries, list);
 	print_list_backwards(tc, "D <=> C");
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE_HEAD\n");
+	ast_debug(1,"Test AST_DLLIST_REMOVE_HEAD\n");
 	AST_DLLIST_REMOVE_HEAD(&tc->entries, list);
 	print_list_backwards(tc, "D");
 	AST_DLLIST_REMOVE_HEAD(&tc->entries, list);
 
 	if (AST_DLLIST_EMPTY(&tc->entries))
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE_HEAD....OK\n");
+		ast_debug(1,"Test AST_DLLIST_REMOVE_HEAD....OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE_HEAD....PROBLEM!!\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_REMOVE_HEAD....PROBLEM!!\n");
 
 	AST_DLLIST_INSERT_HEAD(&tc->entries, a, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, a, b, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, b, c, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, c, d, list);
 
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE\n");
+	ast_debug(1,"Test AST_DLLIST_REMOVE\n");
 	AST_DLLIST_REMOVE(&tc->entries, c, list);
 	print_list(tc, "A <=> B <=> D");
 	AST_DLLIST_REMOVE(&tc->entries, a, list);
@@ -279,11 +277,11 @@ static void dll_tests(void)
 	AST_DLLIST_REMOVE(&tc->entries, d, list);
 	print_list(tc, "B");
 	AST_DLLIST_REMOVE(&tc->entries, b, list);
-	
+
 	if (AST_DLLIST_EMPTY(&tc->entries))
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE....OK\n");
+		ast_debug(1,"Test AST_DLLIST_REMOVE....OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE....PROBLEM!!\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_REMOVE....PROBLEM!!\n");
 
 	AST_DLLIST_INSERT_HEAD(&tc->entries, a, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, a, b, list);
@@ -295,11 +293,11 @@ static void dll_tests(void)
 	}
 	AST_DLLIST_TRAVERSE_SAFE_END;
 	if (AST_DLLIST_EMPTY(&tc->entries))
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE_CURRENT... OK\n");
+		ast_debug(1,"Test AST_DLLIST_REMOVE_CURRENT... OK\n");
 	else
-		ast_log(LOG_NOTICE,"Test AST_DLLIST_REMOVE_CURRENT... PROBLEM\n");
-	
-	ast_log(LOG_NOTICE,"Test AST_DLLIST_MOVE_CURRENT, AST_DLLIST_INSERT_BEFORE_CURRENT\n");
+		ast_log(LOG_ERROR,"Test AST_DLLIST_REMOVE_CURRENT... PROBLEM\n");
+
+	ast_debug(1,"Test AST_DLLIST_MOVE_CURRENT, AST_DLLIST_INSERT_BEFORE_CURRENT\n");
 	AST_DLLIST_INSERT_HEAD(&tc->entries, a, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, a, b, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, b, c, list);
@@ -307,15 +305,15 @@ static void dll_tests(void)
 		if (e == a) {
 			AST_DLLIST_INSERT_BEFORE_CURRENT(d, list);  /* D A B C */
 		}
-		
+
 		if (e == b) {
 			AST_DLLIST_MOVE_CURRENT(&tc->entries, list); /* D A C B */
 		}
-		
+
 	}
 	AST_DLLIST_TRAVERSE_SAFE_END;
 	print_list(tc, "D <=> A <=> C <=> B");
-	
+
 	destroy_test_container(tc);
 
 	tc = make_cont();
@@ -325,7 +323,7 @@ static void dll_tests(void)
 	c = make_test1("C");
 	d = make_test1("D");
 
-	ast_log(LOG_NOTICE,"Test: AST_DLLIST_MOVE_CURRENT_BACKWARDS and AST_DLLIST_INSERT_BEFORE_CURRENT_BACKWARDS\n");
+	ast_debug(1,"Test: AST_DLLIST_MOVE_CURRENT_BACKWARDS and AST_DLLIST_INSERT_BEFORE_CURRENT_BACKWARDS\n");
 	AST_DLLIST_INSERT_HEAD(&tc->entries, a, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, a, b, list);
 	AST_DLLIST_INSERT_AFTER(&tc->entries, b, c, list);
@@ -344,7 +342,7 @@ static void dll_tests(void)
 			AST_DLLIST_INSERT_BEFORE_CURRENT_BACKWARDS(d, list); /* C A D */
 			print_list(tc, "C <=> A <=> D");
 		}
-		
+
 	}
 	AST_DLLIST_TRAVERSE_SAFE_END;
 	print_list(tc, "C <=> A <=> D");

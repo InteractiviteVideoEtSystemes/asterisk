@@ -33,8 +33,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/json.h"
 #include "asterisk/localtime.h"
 #include "asterisk/module.h"
@@ -46,148 +44,14 @@ ASTERISK_REGISTER_FILE()
 #include <jansson.h>
 #include <time.h>
 
-/*! \brief Magic number, for safety checks. */
-#define JSON_MAGIC 0x1541992
-
-/*! \brief Internal structure for allocated memory blocks */
-struct json_mem {
-	/*! Magic number, for safety checks */
-	uint32_t magic;
-	/*! Mutext for locking this memory block */
-	ast_mutex_t mutex;
-	/*! Linked list pointer for the free list */
-	AST_LIST_ENTRY(json_mem) list;
-	/*! Data section of the allocation; void pointer for proper alignment */
-	void *data[];
-};
-
-/*! \brief Free a \ref json_mem block. */
-static void json_mem_free(struct json_mem *mem)
-{
-	mem->magic = 0;
-	ast_mutex_destroy(&mem->mutex);
-	ast_free(mem);
-}
-
-/*!
- * \brief Get the \ref json_mem block for a pointer allocated via
- * ast_json_malloc().
- *
- * This function properly handles Jansson singletons (null, true, false), and
- * \c NULL.
- *
- * \param p Pointer, usually to a \c json_t or \ref ast_json.
- * \return \ref json_mem object with extra allocation info.
- */
-static inline struct json_mem *to_json_mem(void *p)
-{
-	struct json_mem *mem;
-	/* Avoid ref'ing the singleton values */
-	if (p == NULL || p == json_null() || p == json_true() ||
-		p == json_false()) {
-		return NULL;
-	}
-	mem = (struct json_mem *)((char *) (p) - sizeof(*mem));
-	ast_assert(mem->magic == JSON_MAGIC);
-	return mem;
-}
-
-/*!
- * \brief Lock an \ref ast_json instance.
- *
- * If \a json is an immutable singleton (null, true, false), this function
- * safely ignores it and returns \c NULL. Otherwise, \a json must have been
- * allocates using ast_json_malloc().
- *
- * \param json JSON instance to lock.
- * \return \ref Corresponding \ref json_mem block.
- * \return \c NULL if \a json was not allocated.
- */
-static struct json_mem *json_mem_lock(struct ast_json *json)
-{
-	struct json_mem *mem = to_json_mem(json);
-	if (!mem) {
-		return NULL;
-	}
-	ast_mutex_lock(&mem->mutex);
-	return mem;
-}
-
-/*!
- * \brief Unlock a \ref json_mem instance.
- *
- * \param mem \ref json_mem, usually returned from json_mem_lock().
- */
-static void json_mem_unlock(struct json_mem *mem)
-{
-	if (!mem) {
-		return;
-	}
-	ast_mutex_unlock(&mem->mutex);
-}
-
-/*!
- * \brief Scoped lock for a \ref ast_json instance.
- *
- * \param json JSON instance to lock.
- */
-#define SCOPED_JSON_LOCK(json)				\
-	RAII_VAR(struct json_mem *, __mem_ ## __LINE__, \
-		json_mem_lock(json), json_mem_unlock)
-
 void *ast_json_malloc(size_t size)
 {
-	struct json_mem *mem = ast_malloc(size + sizeof(*mem));
-	if (!mem) {
-		return NULL;
-	}
-	mem->magic = JSON_MAGIC;
-	ast_mutex_init(&mem->mutex);
-	return mem->data;
-}
-
-AST_THREADSTORAGE(json_free_list_ts);
-
-/*!
- * \brief Struct for a linked list of \ref json_mem.
- */
-AST_LIST_HEAD_NOLOCK(json_mem_list, json_mem);
-
-/*!
- * \brief Thread local list of \ref json_mem blocks to free at the end of an
- * unref.
- */
-static struct json_mem_list *json_free_list(void)
-{
-	return ast_threadstorage_get(&json_free_list_ts,
-		sizeof(struct json_mem_list));
+	return ast_malloc(size);
 }
 
 void ast_json_free(void *p)
 {
-	struct json_mem *mem;
-	struct json_mem_list *free_list;
-	mem = to_json_mem(p);
-
-	if (!mem) {
-		return;
-	}
-
-	/* Since the unref is holding a lock in mem, we can't free it
-	 * immediately. Store it off on a thread local list to be freed by
-	 * ast_json_unref().
-	 */
-	free_list = json_free_list();
-	if (!free_list) {
-		ast_log(LOG_ERROR, "Error allocating free list\n");
-		ast_assert(0);
-		/* It's not ideal to free the memory immediately, but that's the
-		 * best we can do if the threadlocal allocation fails */
-		json_mem_free(mem);
-		return;
-	}
-
-	AST_LIST_INSERT_HEAD(free_list, mem, list);
+	ast_free(p);
 }
 
 void ast_json_set_alloc_funcs(void *(*malloc_fn)(size_t), void (*free_fn)(void*))
@@ -202,38 +66,13 @@ void ast_json_reset_alloc_funcs(void)
 
 struct ast_json *ast_json_ref(struct ast_json *json)
 {
-	/* Jansson refcounting is non-atomic; lock it. */
-	SCOPED_JSON_LOCK(json);
 	json_incref((json_t *)json);
 	return json;
 }
 
 void ast_json_unref(struct ast_json *json)
 {
-	struct json_mem_list *free_list;
-	struct json_mem *mem;
-
-	if (!json) {
-		return;
-	}
-
-	/* Jansson refcounting is non-atomic; lock it. */
-	{
-		SCOPED_JSON_LOCK(json);
-
-		json_decref((json_t *) json);
-	}
-
-	/* Now free any objects that were ast_json_free()'s while the lock was
-	 * held */
-	free_list = json_free_list();
-	if (!free_list) {
-		return;
-	}
-
-	while ((mem = AST_LIST_REMOVE_HEAD(free_list, list))) {
-		json_mem_free(mem);
-	}
+	json_decref((json_t *) json);
 }
 
 enum ast_json_type ast_json_typeof(const struct ast_json *json)
@@ -269,6 +108,127 @@ const char *ast_json_typename(enum ast_json_type type)
 	return "?";
 }
 
+/* Ported from libjansson utf.c:utf8_check_first() */
+static size_t json_utf8_check_first(char byte)
+{
+	unsigned char ch = (unsigned char) byte;
+
+	if (ch < 0x80) {
+		return 1;
+	}
+
+	if (0x80 <= ch && ch <= 0xBF) {
+		/* second, third or fourth byte of a multi-byte
+		   sequence, i.e. a "continuation byte" */
+		return 0;
+	} else if (ch == 0xC0 || ch == 0xC1) {
+		/* overlong encoding of an ASCII byte */
+		return 0;
+	} else if (0xC2 <= ch && ch <= 0xDF) {
+		/* 2-byte sequence */
+		return 2;
+	} else if (0xE0 <= ch && ch <= 0xEF) {
+		/* 3-byte sequence */
+		return 3;
+	} else if (0xF0 <= ch && ch <= 0xF4) {
+		/* 4-byte sequence */
+		return 4;
+	} else { /* ch >= 0xF5 */
+		/* Restricted (start of 4-, 5- or 6-byte sequence) or invalid
+		   UTF-8 */
+		return 0;
+	}
+}
+
+/* Ported from libjansson utf.c:utf8_check_full() */
+static size_t json_utf8_check_full(const char *str, size_t len)
+{
+	size_t pos;
+	int32_t value;
+	unsigned char ch = (unsigned char) str[0];
+
+	if (len == 2) {
+		value = ch & 0x1F;
+	} else if (len == 3) {
+		value = ch & 0xF;
+	} else if (len == 4) {
+		value = ch & 0x7;
+	} else {
+		return 0;
+	}
+
+	for (pos = 1; pos < len; ++pos) {
+		ch = (unsigned char) str[pos];
+		if (ch < 0x80 || ch > 0xBF) {
+			/* not a continuation byte */
+			return 0;
+		}
+
+		value = (value << 6) + (ch & 0x3F);
+	}
+
+	if (value > 0x10FFFF) {
+		/* not in Unicode range */
+		return 0;
+	} else if (0xD800 <= value && value <= 0xDFFF) {
+		/* invalid code point (UTF-16 surrogate halves) */
+		return 0;
+	} else if ((len == 2 && value < 0x80)
+		|| (len == 3 && value < 0x800)
+		|| (len == 4 && value < 0x10000)) {
+		/* overlong encoding */
+		return 0;
+	}
+
+	return 1;
+}
+
+int ast_json_utf8_check_len(const char *str, size_t len)
+{
+	size_t pos;
+	size_t count;
+	int res = 1;
+
+	if (!str) {
+		return 0;
+	}
+
+	/*
+	 * Since the json library does not make the check function
+	 * public we recreate/copy the function in our interface
+	 * module.
+	 *
+	 * Loop ported from libjansson utf.c:utf8_check_string()
+	 */
+	for (pos = 0; pos < len; pos += count) {
+		count = json_utf8_check_first(str[pos]);
+		if (count == 0) {
+			res = 0;
+			break;
+		} else if (count > 1) {
+			if (count > len - pos) {
+				/* UTF-8 needs more than we have left in the string. */
+				res = 0;
+				break;
+			}
+
+			if (!json_utf8_check_full(&str[pos], count)) {
+				res = 0;
+				break;
+			}
+		}
+	}
+
+	if (!res) {
+		ast_debug(1, "String '%.*s' is not UTF-8 for json conversion\n", (int) len, str);
+	}
+	return res;
+}
+
+int ast_json_utf8_check(const char *str)
+{
+	return str ? ast_json_utf8_check_len(str, strlen(str)) : 0;
+}
 
 struct ast_json *ast_json_true(void)
 {
@@ -282,11 +242,7 @@ struct ast_json *ast_json_false(void)
 
 struct ast_json *ast_json_boolean(int value)
 {
-#if JANSSON_VERSION_HEX >= 0x020400
 	return (struct ast_json *)json_boolean(value);
-#else
-	return value ? ast_json_true() : ast_json_false();
-#endif
 }
 
 struct ast_json *ast_json_null(void)
@@ -341,7 +297,7 @@ struct ast_json *ast_json_vstringf(const char *format, va_list args)
 
 	if (format) {
 		int err = ast_vasprintf(&str, format, args);
-		if (err > 0) {
+		if (err >= 0) {
 			ret = json_string(str);
 			ast_free(str);
 		}
@@ -454,57 +410,11 @@ int ast_json_object_update(struct ast_json *object, struct ast_json *other)
 }
 int ast_json_object_update_existing(struct ast_json *object, struct ast_json *other)
 {
-#if JANSSON_VERSION_HEX >= 0x020300
 	return json_object_update_existing((json_t *)object, (json_t *)other);
-#else
-	struct ast_json_iter *iter = ast_json_object_iter(other);
-	int ret = 0;
-
-	if (object == NULL || other == NULL) {
-		return -1;
-	}
-
-	while (iter != NULL && ret == 0) {
-		const char *key = ast_json_object_iter_key(iter);
-
-		if (ast_json_object_get(object, key) != NULL) {
-			struct ast_json *value = ast_json_object_iter_value(iter);
-
-			if (!value || ast_json_object_set(object, key, ast_json_ref(value))) {
-				ret = -1;
-			}
-		}
-		iter = ast_json_object_iter_next(other, iter);
-	}
-	return ret;
-#endif
 }
 int ast_json_object_update_missing(struct ast_json *object, struct ast_json *other)
 {
-#if JANSSON_VERSION_HEX >= 0x020300
 	return json_object_update_missing((json_t *)object, (json_t *)other);
-#else
-	struct ast_json_iter *iter = ast_json_object_iter(other);
-	int ret = 0;
-
-	if (object == NULL || other == NULL) {
-		return -1;
-	}
-
-	while (iter != NULL && ret == 0) {
-		const char *key = ast_json_object_iter_key(iter);
-
-		if (ast_json_object_get(object, key) == NULL) {
-			struct ast_json *value = ast_json_object_iter_value(iter);
-
-			if (!value || ast_json_object_set(object, key, ast_json_ref(value))) {
-				ret = -1;
-			}
-		}
-		iter = ast_json_object_iter_next(other, iter);
-	}
-	return ret;
-#endif
 }
 
 struct ast_json_iter *ast_json_object_iter(struct ast_json *object)
@@ -543,10 +453,6 @@ static size_t dump_flags(enum ast_json_encoding_format format)
 
 char *ast_json_dump_string_format(struct ast_json *root, enum ast_json_encoding_format format)
 {
-	/* Jansson's json_dump*, even though it's a read operation, isn't
-	 * thread safe for concurrent reads. Locking is necessary.
-	 * See http://www.digip.org/jansson/doc/2.4/portability.html#thread-safety. */
-	SCOPED_JSON_LOCK(root);
 	return json_dumps((json_t *)root, dump_flags(format));
 }
 
@@ -583,20 +489,12 @@ static int write_to_ast_str(const char *buffer, size_t size, void *data)
 
 int ast_json_dump_str_format(struct ast_json *root, struct ast_str **dst, enum ast_json_encoding_format format)
 {
-	/* Jansson's json_dump*, even though it's a read operation, isn't
-	 * thread safe for concurrent reads. Locking is necessary.
-	 * See http://www.digip.org/jansson/doc/2.4/portability.html#thread-safety. */
-	SCOPED_JSON_LOCK(root);
 	return json_dump_callback((json_t *)root, write_to_ast_str, dst, dump_flags(format));
 }
 
 
 int ast_json_dump_file_format(struct ast_json *root, FILE *output, enum ast_json_encoding_format format)
 {
-	/* Jansson's json_dump*, even though it's a read operation, isn't
-	 * thread safe for concurrent reads. Locking is necessary.
-	 * See http://www.digip.org/jansson/doc/2.4/portability.html#thread-safety. */
-	SCOPED_JSON_LOCK(root);
 	if (!root || !output) {
 		return -1;
 	}
@@ -604,10 +502,6 @@ int ast_json_dump_file_format(struct ast_json *root, FILE *output, enum ast_json
 }
 int ast_json_dump_new_file_format(struct ast_json *root, const char *path, enum ast_json_encoding_format format)
 {
-	/* Jansson's json_dump*, even though it's a read operation, isn't
-	 * thread safe for concurrent reads. Locking is necessary.
-	 * See http://www.digip.org/jansson/doc/2.4/portability.html#thread-safety. */
-	SCOPED_JSON_LOCK(root);
 	if (!root || !path) {
 		return -1;
 	}
@@ -704,6 +598,7 @@ struct ast_json *ast_json_vpack(char const *format, va_list ap)
 			ast_log(LOG_ERROR,
 				"Error building JSON from '%s': %s.\n",
 				format, error.text);
+			ast_log_backtrace();
 		}
 	}
 	return r;
@@ -721,16 +616,16 @@ struct ast_json *ast_json_deep_copy(const struct ast_json *value)
 struct ast_json *ast_json_name_number(const char *name, const char *number)
 {
 	return ast_json_pack("{s: s, s: s}",
-			     "name", name,
-			     "number", number);
+		"name", AST_JSON_UTF8_VALIDATE(name),
+		"number", AST_JSON_UTF8_VALIDATE(number));
 }
 
 struct ast_json *ast_json_dialplan_cep(const char *context, const char *exten, int priority)
 {
 	return ast_json_pack("{s: o, s: o, s: o}",
-			     "context", context ? ast_json_string_create(context) : ast_json_null(),
-			     "exten", exten ? ast_json_string_create(exten) : ast_json_null(),
-			     "priority", priority != -1 ? ast_json_integer_create(priority) : ast_json_null());
+		"context", context ? ast_json_string_create(context) : ast_json_null(),
+		"exten", exten ? ast_json_string_create(exten) : ast_json_null(),
+		"priority", priority != -1 ? ast_json_integer_create(priority) : ast_json_null());
 }
 
 struct ast_json *ast_json_timeval(const struct timeval tv, const char *zone)
@@ -821,7 +716,7 @@ static struct ast_json *json_party_number(struct ast_party_number *number)
 		return NULL;
 	}
 	return ast_json_pack("{s: s, s: i, s: i, s: s}",
-		"number", number->str,
+		"number", AST_JSON_UTF8_VALIDATE(number->str),
 		"plan", number->plan,
 		"presentation", number->presentation,
 		"presentation_txt", ast_describe_caller_presentation(number->presentation));
@@ -833,7 +728,7 @@ static struct ast_json *json_party_name(struct ast_party_name *name)
 		return NULL;
 	}
 	return ast_json_pack("{s: s, s: s, s: i, s: s}",
-		"name", name->str,
+		"name", AST_JSON_UTF8_VALIDATE(name->str),
 		"character_set", ast_party_name_charset_describe(name->char_set),
 		"presentation", name->presentation,
 		"presentation_txt", ast_describe_caller_presentation(name->presentation));
@@ -845,7 +740,7 @@ static struct ast_json *json_party_subaddress(struct ast_party_subaddress *subad
 		return NULL;
 	}
 	return ast_json_pack("{s: s, s: i, s: b}",
-		"subaddress", subaddress->str,
+		"subaddress", AST_JSON_UTF8_VALIDATE(subaddress->str),
 		"type", subaddress->type,
 		"odd", subaddress->odd_even_indicator);
 }
@@ -865,17 +760,20 @@ struct ast_json *ast_json_party_id(struct ast_party_id *party)
 	}
 
 	/* Party number */
-	if (party->number.valid && ast_json_object_set(json_party_id, "number", json_party_number(&party->number))) {
+	if (party->number.valid
+		&& ast_json_object_set(json_party_id, "number", json_party_number(&party->number))) {
 		return NULL;
 	}
 
 	/* Party name */
-	if (party->name.valid && ast_json_object_set(json_party_id, "name", json_party_name(&party->name))) {
+	if (party->name.valid
+		&& ast_json_object_set(json_party_id, "name", json_party_name(&party->name))) {
 		return NULL;
 	}
 
 	/* Party subaddress */
-	if (party->subaddress.valid && ast_json_object_set(json_party_id, "subaddress", json_party_subaddress(&party->subaddress))) {
+	if (party->subaddress.valid
+		&& ast_json_object_set(json_party_id, "subaddress", json_party_subaddress(&party->subaddress))) {
 		return NULL;
 	}
 
@@ -885,6 +783,7 @@ struct ast_json *ast_json_party_id(struct ast_party_id *party)
 enum ast_json_to_ast_vars_code ast_json_to_ast_variables(struct ast_json *json_variables, struct ast_variable **variables)
 {
 	struct ast_json_iter *it_json_var;
+	struct ast_variable *tail = NULL;
 
 	*variables = NULL;
 
@@ -921,8 +820,21 @@ enum ast_json_to_ast_vars_code ast_json_to_ast_variables(struct ast_json *json_v
 			return AST_JSON_TO_AST_VARS_CODE_OOM;
 		}
 
-		ast_variable_list_append(variables, new_var);
+		tail = ast_variable_list_append_hint(variables, tail, new_var);
 	}
 
 	return AST_JSON_TO_AST_VARS_CODE_SUCCESS;
+}
+
+struct ast_json *ast_json_channel_vars(struct varshead *channelvars)
+{
+	struct ast_json *ret;
+	struct ast_var_t *var;
+
+	ret = ast_json_object_create();
+	AST_LIST_TRAVERSE(channelvars, var, entries) {
+		ast_json_object_set(ret, var->name, ast_json_string_create(var->value));
+	}
+
+	return ret;
 }

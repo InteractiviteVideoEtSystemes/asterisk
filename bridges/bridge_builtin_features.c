@@ -26,12 +26,11 @@
  */
 
 /*** MODULEINFO
+	<use type="module">res_monitor</use>
 	<support_level>core</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -201,6 +200,8 @@ static void start_automonitor(struct ast_bridge_channel *bridge_channel, struct 
 			ast_channel_name(bridge_channel->chan));
 		return;
 	}
+
+	ast_monitor_setjoinfiles(peer_chan, 1);
 
 	if (features_cfg && !ast_strlen_zero(features_cfg->courtesytone)) {
 		ast_bridge_channel_queue_playfile(bridge_channel, NULL, features_cfg->courtesytone, NULL);
@@ -518,4 +519,9 @@ static int load_module(void)
 	return AST_MODULE_LOAD_SUCCESS;
 }
 
-AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Built in bridging features");
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Built in bridging features",
+	.support_level = AST_MODULE_SUPPORT_CORE,
+	.load = load_module,
+	.unload = unload_module,
+	.optional_modules = "res_monitor",
+);

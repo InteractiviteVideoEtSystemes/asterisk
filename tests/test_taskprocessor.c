@@ -652,7 +652,7 @@ AST_TEST_DEFINE(taskprocessor_shutdown)
 	/* Wait for shutdown to complete */
 	pthread_join(shutdown_thread, NULL);
 
-	/* Should have also also completed task2 */
+	/* Should have also completed task2 */
 	wait_res = shutdown_has_completed(task2);
 	if (!wait_res) {
 		ast_test_status_update(test, "Task2 didn't finish\n");
@@ -677,7 +677,7 @@ AST_TEST_DEFINE(taskprocessor_push_local)
 {
 	RAII_VAR(struct ast_taskprocessor *, tps, NULL,
 		ast_taskprocessor_unreference);
-	struct task_data *task_data;
+	RAII_VAR(struct task_data *, task_data, NULL, ao2_cleanup);
 	int local_data;
 	int res;
 

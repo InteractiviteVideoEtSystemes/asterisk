@@ -26,8 +26,8 @@
 	<support_level>extended</support_level>
  ***/
 
+#define ASTMM_LIBC ASTMM_IGNORE
 #include "asterisk.h"
-ASTERISK_REGISTER_FILE()
 
 #include <newt.h>
 #include <stdio.h>
@@ -88,17 +88,6 @@ struct ast_chan {
 static AST_LIST_HEAD_NOLOCK_STATIC(chans, ast_chan);
 
 /* dummy functions to be compatible with the Asterisk core for md5.c */
-void __ast_register_file(const char *file);
-void __ast_register_file(const char *file)
-{
-}
-
-void __ast_unregister_file(const char *file);
-void __ast_unregister_file(const char *file)
-{
-}
-
-#if !defined(LOW_MEMORY)
 int ast_add_profile(const char *, uint64_t scale);
 int ast_add_profile(const char *s, uint64_t scale)
 {
@@ -115,7 +104,6 @@ int64_t ast_mark(int key, int start1_stop0)
 {
 	return 0;
 }
-#endif /* LOW_MEMORY */
 
 /* end of dummy functions */
 
@@ -288,7 +276,7 @@ static void rebuild_channels(newtComponent c)
 {
 	void *prev = NULL;
 	struct ast_chan *chan;
-	char tmpn[42];
+	char tmpn[sizeof(chan->name) + sizeof(chan->callerid) + 3 - 1];
 	char tmp[256];
 	int x=0;
 	prev = newtListboxGetCurrent(c);
@@ -542,14 +530,15 @@ static void try_redirect(newtComponent c)
 	struct ast_chan *chan;
 	char dest[256];
 	struct message *m;
+	static const char tmp_prefix[] = "Enter new extension for ";
 	char channame[256];
-	char tmp[80];
+	char tmp[sizeof(tmp_prefix) + sizeof(channame)];
 	char *context;
 
 	chan = newtListboxGetCurrent(c);
 	if (chan) {
 		strncpy(channame, chan->name, sizeof(channame) - 1);
-		snprintf(tmp, sizeof(tmp), "Enter new extension for %s", channame);
+		snprintf(tmp, sizeof(tmp), "%s%s", tmp_prefix, channame);
 		if (get_user_input(tmp, dest, sizeof(dest)))
 			return;
 		if ((context = strchr(dest, '@'))) {

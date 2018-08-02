@@ -76,12 +76,11 @@
 	<depend>isdnnet</depend>
 	<depend>misdn</depend>
 	<depend>suppserv</depend>
-	<support_level>extended</support_level>
+	<support_level>deprecated</support_level>
+	<replacement>chan_dahdi</replacement>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <pthread.h>
 #include <sys/socket.h>
@@ -369,8 +368,8 @@ struct hold_info {
 	int channel;
 };
 
-#define chan_list_ref(obj, debug) (ao2_t_ref((obj), +1, (debug)), (obj))
-#define chan_list_unref(obj, debug) (ao2_t_ref((obj), -1, (debug)), NULL)
+#define chan_list_ref(obj, debug) ao2_t_ref((obj), +1, (debug))
+#define chan_list_unref(obj, debug) ao2_t_ref((obj), -1, (debug))
 
 /*!
  * \brief Channel call record structure
@@ -12831,7 +12830,7 @@ static void chan_misdn_log(int level, int port, char *tmpl, ...)
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Channel driver for mISDN Support (BRI/PRI)",
-	.support_level = AST_MODULE_SUPPORT_EXTENDED,
+	.support_level = AST_MODULE_SUPPORT_DEPRECATED,
 	.load = load_module,
 	.unload = unload_module,
 	.reload = reload,

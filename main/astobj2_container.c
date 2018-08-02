@@ -22,8 +22,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/astobj2.h"
 #include "astobj2_private.h"
@@ -101,10 +99,13 @@ int __ao2_link(struct ao2_container *self, void *obj_new, int flags,
 	struct ao2_container_node *node;
 
 	if (!__is_ao2_object(obj_new, file, line, func)
-		|| !__is_ao2_object(self, file, line, func)
-		|| !self->v_table || !self->v_table->new_node || !self->v_table->insert) {
+		|| !__is_ao2_object(self, file, line, func)) {
+		return 0;
+	}
+
+	if (!self->v_table || !self->v_table->new_node || !self->v_table->insert) {
 		/* Sanity checks. */
-		ast_assert(0);
+		__ast_assert_failed(0, "invalid container v_table", file, line, func);
 		return 0;
 	}
 
@@ -176,7 +177,6 @@ void *__ao2_unlink(struct ao2_container *c, void *user_data, int flags,
 {
 	if (!__is_ao2_object(user_data, file, line, func)) {
 		/* Sanity checks. */
-		ast_assert(0);
 		return NULL;
 	}
 
@@ -241,10 +241,14 @@ static void *internal_ao2_traverse(struct ao2_container *self, enum search_flags
 	struct ao2_container *multi_container = NULL;
 	struct ao2_iterator *multi_iterator = NULL;
 
-	if (!__is_ao2_object(self, file, line, func) || !self->v_table
+	if (!__is_ao2_object(self, file, line, func)) {
+		return NULL;
+	}
+
+	if (!self->v_table
 		|| !self->v_table->traverse_first || !self->v_table->traverse_next) {
 		/* Sanity checks. */
-		ast_assert(0);
+		__ast_assert_failed(0, "invalid container v_table", file, line, func);
 		return NULL;
 	}
 
@@ -433,6 +437,48 @@ void *__ao2_find(struct ao2_container *c, const void *arg, enum search_flags fla
 	return __ao2_callback(c, flags, c->cmp_fn, arged, tag, file, line, func);
 }
 
+void *__ao2_weakproxy_find(struct ao2_container *c, const void *arg, enum search_flags flags,
+	const char *tag, const char *file, int line, const char *func)
+{
+	void *proxy;
+	void *obj = NULL;
+	enum ao2_lock_req orig_lock;
+
+	ast_assert(!!c);
+	ast_assert(flags & OBJ_SEARCH_MASK);
+	ast_assert(!(flags & ~(OBJ_SEARCH_MASK | OBJ_NOLOCK)));
+
+	if (flags & OBJ_NOLOCK) {
+		orig_lock = __adjust_lock(c, AO2_LOCK_REQ_RDLOCK, 1);
+	} else {
+		orig_lock = AO2_LOCK_REQ_RDLOCK;
+		ao2_rdlock(c);
+	}
+
+	while ((proxy = ao2_find(c, arg, flags | OBJ_NOLOCK))) {
+		obj = __ao2_weakproxy_get_object(proxy, 0, tag ?: __PRETTY_FUNCTION__, file, line, func);
+
+		if (obj) {
+			ao2_ref(proxy, -1);
+			break;
+		}
+
+		/* Upgrade to a write lock */
+		__adjust_lock(c, AO2_LOCK_REQ_WRLOCK, 1);
+		ao2_unlink_flags(c, proxy, OBJ_NOLOCK);
+		ao2_ref(proxy, -1);
+	}
+
+	if (flags & OBJ_NOLOCK) {
+		/* We'll keep any upgraded lock */
+		__adjust_lock(c, orig_lock, 1);
+	} else {
+		ao2_unlock(c);
+	}
+
+	return obj;
+}
+
 /*!
  * initialize an iterator so we start from the first object
  */
@@ -451,20 +497,13 @@ struct ao2_iterator ao2_iterator_init(struct ao2_container *c, int flags)
 void ao2_iterator_restart(struct ao2_iterator *iter)
 {
 	if (!is_ao2_object(iter->c)) {
-		ast_log(LOG_ERROR, "Iterator container is not valid.\n");
-		ast_assert(0);
+		/* Sanity check. */
 		return;
 	}
 
 	/* Release the last container node reference if we have one. */
 	if (iter->last_node) {
 		enum ao2_lock_req orig_lock;
-
-		if (!is_ao2_object(iter->c)) {
-			/* Sanity check. */
-			ast_assert(0);
-			return;
-		}
 
 		/*
 		 * Do a read lock in case the container node unref does not
@@ -521,10 +560,13 @@ void *__ao2_iterator_next(struct ao2_iterator *iter,
 	struct ao2_container_node *node;
 	void *ret;
 
-	if (!__is_ao2_object(iter->c, file, line, func)
-		|| !iter->c->v_table || !iter->c->v_table->iterator_next) {
+	if (!__is_ao2_object(iter->c, file, line, func)) {
+		return NULL;
+	}
+
+	if (!iter->c->v_table || !iter->c->v_table->iterator_next) {
 		/* Sanity checks. */
-		ast_assert(0);
+		__ast_assert_failed(0, "invalid iterator container v_table", file, line, func);
 		return NULL;
 	}
 
@@ -661,12 +703,16 @@ struct ao2_container *__ao2_container_clone(struct ao2_container *orig, enum sea
 	int failed;
 
 	/* Create the clone container with the same properties as the original. */
-	if (!__is_ao2_object(orig, file, line, func)
-		|| !orig->v_table || !orig->v_table->alloc_empty_clone) {
-		/* Sanity checks. */
-		ast_assert(0);
+	if (!__is_ao2_object(orig, file, line, func)) {
 		return NULL;
 	}
+
+	if (!orig->v_table || !orig->v_table->alloc_empty_clone) {
+		/* Sanity checks. */
+		__ast_assert_failed(0, "invalid container v_table", file, line, func);
+		return NULL;
+	}
+
 	clone = orig->v_table->alloc_empty_clone(orig, tag, file, line, func);
 	if (!clone) {
 		return NULL;
@@ -889,12 +935,15 @@ void ao2_container_unregister(const char *name)
 }
 
 #if defined(AO2_DEBUG)
-static int ao2_complete_reg_cb(void *obj, void *arg, void *data, int flags)
+static int ao2_complete_reg_cb(void *obj, void *arg, int flags)
 {
-	struct ao2_reg_match *which = data;
+	struct ao2_reg_container *reg = obj;
 
-	/* ao2_reg_sort_cb() has already filtered the search to matching keys */
-	return (which->find_nth < ++which->count) ? (CMP_MATCH | CMP_STOP) : 0;
+	if (ast_cli_completion_add(ast_strdup(reg->name))) {
+		return CMP_STOP;
+	}
+
+	return 0;
 }
 #endif	/* defined(AO2_DEBUG) */
 
@@ -902,9 +951,6 @@ static int ao2_complete_reg_cb(void *obj, void *arg, void *data, int flags)
 static char *complete_container_names(struct ast_cli_args *a)
 {
 	struct ao2_reg_partial_key partial_key;
-	struct ao2_reg_match which;
-	struct ao2_reg_container *reg;
-	char *name;
 
 	if (a->pos != 3) {
 		return NULL;
@@ -912,17 +958,10 @@ static char *complete_container_names(struct ast_cli_args *a)
 
 	partial_key.len = strlen(a->word);
 	partial_key.name = a->word;
-	which.find_nth = a->n;
-	which.count = 0;
-	reg = ao2_t_callback_data(reg_containers, partial_key.len ? OBJ_SEARCH_PARTIAL_KEY : 0,
-		ao2_complete_reg_cb, &partial_key, &which, "Find partial registered container");
-	if (reg) {
-		name = ast_strdup(reg->name);
-		ao2_t_ref(reg, -1, "Done with registered container object.");
-	} else {
-		name = NULL;
-	}
-	return name;
+	ao2_callback(reg_containers, partial_key.len ? OBJ_SEARCH_PARTIAL_KEY : 0,
+		ao2_complete_reg_cb, &partial_key);
+
+	return NULL;
 }
 #endif	/* defined(AO2_DEBUG) */
 
@@ -1101,4 +1140,3 @@ int container_init(void)
 
 	return 0;
 }
-

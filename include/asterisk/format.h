@@ -32,7 +32,7 @@ struct ast_format;
 
 /*! \brief Format comparison results */
 enum ast_format_cmp_res {
-	/*! Both formats are equivalent to eachother */
+	/*! Both formats are equivalent to each other */
 	AST_FORMAT_CMP_EQUAL = 0,
 	/*! Both formats are completely different and not the same in any way */
 	AST_FORMAT_CMP_NOT_EQUAL,
@@ -71,7 +71,7 @@ struct ast_format_interface {
 	enum ast_format_cmp_res (* const format_cmp)(const struct ast_format *format1,
 		const struct ast_format *format2);
 
-	/*! 
+	/*!
 	 * \brief Get a format with the joint compatible attributes of both provided formats.
 	 *
 	 * \param format1 The first format
@@ -110,7 +110,7 @@ struct ast_format_interface {
 	struct ast_format *(* const format_parse_sdp_fmtp)(const struct ast_format *format, const char *attributes);
 
 	/*!
-	 * \brief Generate SDP attribute information from an ast_format_attr structure.
+	 * \brief Generate SDP attribute information from an ast_format structure.
 	 *
 	 * \param format The format containing attributes
 	 * \param payload The payload number to place into the fmtp line
@@ -299,6 +299,24 @@ void ast_format_set_attribute_data(struct ast_format *format, void *attribute_da
 const char *ast_format_get_name(const struct ast_format *format);
 
 /*!
+ * \brief Get the channel count on a format
+ *
+ * \param The media format
+ *
+ * \return Currently set channel count
+ */
+unsigned int ast_format_get_channel_count(const struct ast_format *format);
+
+/*!
+ * \brief Set the channel count on a format
+ *
+ * \param format The media format
+ * \param channel_count The number of audio channels used
+ *
+ */
+void ast_format_set_channel_count(struct ast_format *format, unsigned int channel_count);
+
+/*!
  * \brief Get the codec associated with a format
  *
  * \param format The media format
@@ -336,6 +354,17 @@ const char *ast_format_get_codec_name(const struct ast_format *format);
  * \retval 1 the format can be smoothed
  */
 int ast_format_can_be_smoothed(const struct ast_format *format);
+
+/*!
+ * \since 13.17.0
+ *
+ * \brief Get smoother flags for this format
+ *
+ * \param format The media format
+ *
+ * \return smoother flags for the provided format
+ */
+int ast_format_get_smoother_flags(const struct ast_format *format);
 
 /*!
  * \brief Get the media type of a format

@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <ctype.h>
 #include <iconv.h>
 
@@ -45,7 +43,7 @@ ASTERISK_REGISTER_FILE()
 /*** DOCUMENTATION
 	<function name="ICONV" language="en_US">
 		<synopsis>
-			Converts charsets of strings.	
+			Converts charsets of strings.
 		</synopsis>
 		<syntax>
 			<parameter name="in-charset" required="true">
@@ -68,10 +66,10 @@ ASTERISK_REGISTER_FILE()
  ***/
 
 
-/*! 
+/*!
  * Some systems define the second arg to iconv() as (const char *),
- * while others define it as (char *).  Cast it to a (void *) to 
- * suppress compiler warnings about it. 
+ * while others define it as (char *).  Cast it to a (void *) to
+ * suppress compiler warnings about it.
  */
 #define AST_ICONV_CAST void *
 
@@ -83,7 +81,7 @@ static int iconv_read(struct ast_channel *chan, const char *cmd, char *arguments
 		AST_APP_ARG(text);
 	);
 	iconv_t cd;
-	size_t incount, outcount = len;
+	size_t incount, outcount = len - 1;
 	char *parse;
 
 	if (ast_strlen_zero(arguments)) {
@@ -120,6 +118,7 @@ static int iconv_read(struct ast_channel *chan, const char *cmd, char *arguments
 		else
 			ast_log(LOG_WARNING,  "Iconv: error %d: %s.\n", errno, strerror(errno));
 	}
+	*buf = '\0';
 	iconv_close(cd);
 
 	return 0;
@@ -142,4 +141,3 @@ static int load_module(void)
 }
 
 AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Charset conversions");
-

@@ -135,7 +135,7 @@ struct parking_lot_cfg *parking_lot_cfg_create(const char *cat);
  * \param dynamic non-zero if creating a dynamic parking lot with this. Don't replace existing parking lots. Ever.
  *
  * \retval A reference to the new parking lot
- * \retval NULL if it was not found and could not be be allocated
+ * \retval NULL if it was not found and could not be allocated
  *
  * \note The parking lot will need to be unreffed if it ever falls out of scope
  * \note The parking lot will automatically be added to the parking lot container if needed as part of this process
@@ -194,6 +194,19 @@ struct ast_bridge *parking_lot_get_bridge(struct parking_lot *lot);
  *       returned has been added to the parking lot.
  */
 int parking_lot_get_space(struct parking_lot *lot, int target_override);
+
+/*!
+ * \brief Determine if there is a parked user in a parking space and return it if there is.
+ *
+ * \param lot Parking lot being pulled from
+ * \param target If < 0   search for the first occupied space in the parking lot
+ *               If >= 0  Only pull from the indicated target
+ *
+ * \retval NULL if no parked user could be pulled from the requested parking lot at the requested parking space
+ * \retval reference to the requested parked user
+ *
+ */
+struct parked_user *parking_lot_inspect_parked_user(struct parking_lot *lot, int target);
 
 /*!
  * \since 12.0.0
@@ -308,8 +321,9 @@ struct parking_lot *parking_create_dynamic_lot_forced(const char *name, struct a
  *
  * \param chan The channel we want the parking lot name for
  *
- * \retval name of the channel's assigned parking lot if it is defined by the channel in some way
- * \retval name of the default parking lot if it is not
+ * \return name of the parking lot to use for the channel.
+ *
+ * \note Always returns a parking lot name.
  *
  * \note Channel needs to be locked while the returned string is in use.
  */

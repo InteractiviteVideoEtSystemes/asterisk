@@ -30,8 +30,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE();
-
 #include "asterisk/channel.h"
 #include "asterisk/pbx.h"
 #include "asterisk/module.h"
@@ -74,7 +72,9 @@ static char *orig_app(int fd, const char *chan, const char *app, const char *app
 		return CLI_FAILURE;
 	}
 	ast_format_cap_append(cap, ast_format_slin, 0);
-	ast_pbx_outgoing_app(chantech, cap, chandata, TIMEOUT * 1000, app, appdata, &reason, 0, NULL, NULL, NULL, NULL, NULL, NULL);
+	ast_pbx_outgoing_app(chantech, cap, chandata, TIMEOUT * 1000, app, appdata,
+			&reason, AST_OUTGOING_NO_WAIT, NULL, NULL, NULL, NULL,
+			NULL, NULL);
 	ao2_ref(cap, -1);
 
 	return CLI_SUCCESS;
@@ -118,7 +118,9 @@ static char *orig_exten(int fd, const char *chan, const char *data)
 		return CLI_FAILURE;
 	}
 	ast_format_cap_append(cap, ast_format_slin, 0);
-	ast_pbx_outgoing_exten(chantech, cap, chandata, TIMEOUT * 1000, context, exten, 1, &reason, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL);
+	ast_pbx_outgoing_exten(chantech, cap, chandata, TIMEOUT * 1000, context,
+			exten, 1, &reason, AST_OUTGOING_NO_WAIT, NULL, NULL,
+			NULL, NULL, NULL, 0, NULL);
 	ao2_ref(cap, -1);
 
 	return CLI_SUCCESS;

@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/test.h"
 #include "asterisk/module.h"
 #include "asterisk/sorcery.h"
@@ -220,7 +218,11 @@ static struct sorcery_memory_cache_thrash *sorcery_memory_cache_thrash_create(co
 		/* This purposely holds no ref as the main thrash structure does */
 		thread->sorcery = thrash->sorcery;
 
-		AST_VECTOR_APPEND(&thrash->threads, thread);
+		if (AST_VECTOR_APPEND(&thrash->threads, thread)) {
+			ast_free(thread);
+			ao2_ref(thrash, -1);
+			return NULL;
+		}
 	}
 
 	return thrash;
@@ -304,6 +306,15 @@ static void sorcery_memory_cache_thrash_stop(struct sorcery_memory_cache_thrash 
 		}
 
 		thread->stop = 1;
+	}
+
+	for (idx = 0; idx < AST_VECTOR_SIZE(&thrash->threads); ++idx) {
+		struct sorcery_memory_cache_thrash_thread *thread;
+
+		thread = AST_VECTOR_GET(&thrash->threads, idx);
+		if (thread->thread == AST_PTHREADT_NULL) {
+			continue;
+		}
 
 		pthread_join(thread->thread, NULL);
 

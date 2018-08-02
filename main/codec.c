@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/logger.h"
 #include "asterisk/codec.h"
 #include "asterisk/format.h"
@@ -49,24 +47,33 @@ static int codec_id = 1;
 /*! \brief Registered codecs */
 static struct ao2_container *codecs;
 
-static int codec_hash(const void *obj, int flags)
-{
-	const struct ast_codec *codec;
-	const char *key;
+/*!
+ * \internal
+ * \brief Internal codec structure
+ *
+ * External codecs won't know about the format_name field so the public
+ * ast_codec structure has to leave it out.  This structure will be used
+ * for the internal codecs.
+ *
+ */
+struct internal_ast_codec {
+	/*! \brief Public codec structure.  Must remain first. */
+	struct ast_codec external;
+	/*! \brief A format name for a default sane format using this codec */
+	const char *format_name;
+};
 
-	switch (flags & OBJ_SEARCH_MASK) {
-	case OBJ_SEARCH_KEY:
-		key = obj;
-		return ast_str_hash(key);
-	case OBJ_SEARCH_OBJECT:
-		codec = obj;
-		return ast_str_hash(codec->name);
-	default:
-		/* Hash can only work on something with a full key. */
-		ast_assert(0);
-		return 0;
-	}
-}
+/*!
+ * \internal
+ * \brief Internal function for registration with format name
+ *
+ * This function is only used by codec.c and codec_builtin.c and
+ * will be removed in Asterisk 14
+ */
+int __ast_codec_register_with_format(struct ast_codec *codec, const char *format_name,
+	struct ast_module *mod);
+
+AO2_STRING_FIELD_HASH_FN(ast_codec, name)
 
 static int codec_cmp(void *obj, void *arg, int flags)
 {
@@ -113,7 +120,7 @@ static int codec_cmp(void *obj, void *arg, int flags)
 static char *show_codecs(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	struct ao2_iterator i;
-	struct ast_codec *codec;
+	struct internal_ast_codec *codec;
 
 	switch (cmd) {
 	case CLI_INIT:
@@ -135,8 +142,8 @@ static char *show_codecs(struct ast_cli_entry *e, int cmd, struct ast_cli_args *
 				"\tIt does not indicate anything about your configuration.\n");
 	}
 
-	ast_cli(a->fd, "%8s %5s %8s %s\n","ID","TYPE","NAME","DESCRIPTION");
-	ast_cli(a->fd, "-----------------------------------------------------------------------------------\n");
+	ast_cli(a->fd, "%8s %-5s %-12s %-16s %s\n","ID","TYPE","NAME","FORMAT","DESCRIPTION");
+	ast_cli(a->fd, "------------------------------------------------------------------------------------------------\n");
 
 	ao2_rdlock(codecs);
 	i = ao2_iterator_init(codecs, AO2_ITERATOR_DONTLOCK);
@@ -144,19 +151,19 @@ static char *show_codecs(struct ast_cli_entry *e, int cmd, struct ast_cli_args *
 	for (; (codec = ao2_iterator_next(&i)); ao2_ref(codec, -1)) {
 		if (a->argc == 4) {
 			if (!strcasecmp(a->argv[3], "audio")) {
-				if (codec->type != AST_MEDIA_TYPE_AUDIO) {
+				if (codec->external.type != AST_MEDIA_TYPE_AUDIO) {
 					continue;
 				}
 			} else if (!strcasecmp(a->argv[3], "video")) {
-				if (codec->type != AST_MEDIA_TYPE_VIDEO) {
+				if (codec->external.type != AST_MEDIA_TYPE_VIDEO) {
 					continue;
 				}
 			} else if (!strcasecmp(a->argv[3], "image")) {
-				if (codec->type != AST_MEDIA_TYPE_IMAGE) {
+				if (codec->external.type != AST_MEDIA_TYPE_IMAGE) {
 					continue;
 				}
 			} else if (!strcasecmp(a->argv[3], "text")) {
-				if (codec->type != AST_MEDIA_TYPE_TEXT) {
+				if (codec->external.type != AST_MEDIA_TYPE_TEXT) {
 					continue;
 				}
 			} else {
@@ -164,11 +171,12 @@ static char *show_codecs(struct ast_cli_entry *e, int cmd, struct ast_cli_args *
 			}
 		}
 
-		ast_cli(a->fd, "%8u %5s %8s (%s)\n",
-			codec->id,
-			ast_codec_media_type2str(codec->type),
-			codec->name,
-			codec->description);
+		ast_cli(a->fd, "%8u %-5s %-12s %-16s (%s)\n",
+			codec->external.id,
+			ast_codec_media_type2str(codec->external.type),
+			codec->external.name,
+			S_OR(codec->format_name, "no cached format"),
+			codec->external.description);
 	}
 
 	ao2_iterator_destroy(&i);
@@ -189,7 +197,7 @@ static int codec_id_cmp(void *obj, void *arg, int flags)
 static char *show_codec(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	int type_punned_codec;
-	struct ast_codec *codec;
+	struct internal_ast_codec *codec;
 
 	switch (cmd) {
 	case CLI_INIT:
@@ -216,7 +224,8 @@ static char *show_codec(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a
 		return CLI_SUCCESS;
 	}
 
-	ast_cli(a->fd, "%11u %s\n", (unsigned int) codec->id, codec->description);
+	ast_cli(a->fd, "%11u %s (%s)\n", (unsigned int) codec->external.id, codec->external.description,
+		S_OR(codec->format_name, "no format"));
 
 	ao2_ref(codec, -1);
 
@@ -239,7 +248,8 @@ static void codec_shutdown(void)
 
 int ast_codec_init(void)
 {
-	codecs = ao2_container_alloc_options(AO2_ALLOC_OPT_LOCK_RWLOCK, CODEC_BUCKETS, codec_hash, codec_cmp);
+	codecs = ao2_container_alloc_options(AO2_ALLOC_OPT_LOCK_RWLOCK, CODEC_BUCKETS,
+		ast_codec_hash_fn, codec_cmp);
 	if (!codecs) {
 		return -1;
 	}
@@ -261,8 +271,13 @@ static void codec_dtor(void *obj)
 
 int __ast_codec_register(struct ast_codec *codec, struct ast_module *mod)
 {
+	return __ast_codec_register_with_format(codec, NULL, mod);
+}
+
+int __ast_codec_register_with_format(struct ast_codec *codec, const char *format_name, struct ast_module *mod)
+{
 	SCOPED_AO2WRLOCK(lock, codecs);
-	struct ast_codec *codec_new;
+	struct internal_ast_codec *codec_new;
 
 	/* Some types have specific requirements */
 	if (codec->type == AST_MEDIA_TYPE_UNKNOWN) {
@@ -291,8 +306,9 @@ int __ast_codec_register(struct ast_codec *codec, struct ast_module *mod)
 			codec->name, ast_codec_media_type2str(codec->type), codec->sample_rate);
 		return -1;
 	}
-	*codec_new = *codec;
-	codec_new->id = codec_id++;
+	codec_new->external = *codec;
+	codec_new->format_name = format_name;
+	codec_new->external.id = codec_id++;
 
 	ao2_link_flags(codecs, codec_new, OBJ_NOLOCK);
 
@@ -300,7 +316,7 @@ int __ast_codec_register(struct ast_codec *codec, struct ast_module *mod)
 	ast_module_shutdown_ref(mod);
 
 	ast_verb(2, "Registered '%s' codec '%s' at sample rate '%u' with id '%u'\n",
-		ast_codec_media_type2str(codec->type), codec->name, codec->sample_rate, codec_new->id);
+		ast_codec_media_type2str(codec->type), codec->name, codec->sample_rate, codec_new->external.id);
 
 	ao2_ref(codec_new, -1);
 
@@ -344,6 +360,21 @@ const char *ast_codec_media_type2str(enum ast_media_type type)
 	}
 }
 
+enum ast_media_type ast_media_type_from_str(const char *media_type_str)
+{
+	if (!strcasecmp(media_type_str, "audio")) {
+		return AST_MEDIA_TYPE_AUDIO;
+	} else if (!strcasecmp(media_type_str, "video")) {
+		return AST_MEDIA_TYPE_VIDEO;
+	} else if (!strcasecmp(media_type_str, "image")) {
+		return AST_MEDIA_TYPE_IMAGE;
+	} else if (!strcasecmp(media_type_str, "text")) {
+		return AST_MEDIA_TYPE_TEXT;
+	} else {
+		return AST_MEDIA_TYPE_UNKNOWN;
+	}
+}
+
 unsigned int ast_codec_samples_count(struct ast_frame *frame)
 {
 	struct ast_codec *codec;
@@ -359,6 +390,11 @@ unsigned int ast_codec_samples_count(struct ast_frame *frame)
 
 	if (codec->samples_count) {
 		samples = codec->samples_count(frame);
+		if ((int) samples < 0) {
+			ast_log(LOG_WARNING, "Codec %s returned invalid number of samples.\n",
+				ast_format_get_name(frame->subclass.format));
+			samples = 0;
+		}
 	} else {
 		ast_log(LOG_WARNING, "Unable to calculate samples for codec %s\n",
 			ast_format_get_name(frame->subclass.format));

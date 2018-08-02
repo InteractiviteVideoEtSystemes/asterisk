@@ -14,9 +14,9 @@
  * at the top of the source tree.
  */
 
-/*! 
+/*!
  * \file
- * \brief Call Event Logging API 
+ * \brief Call Event Logging API
  *
  * \todo TODO: There some event types that have been defined here, but are not
  *       yet used anywhere in the code. It would be really awesome if someone
@@ -86,29 +86,6 @@ enum ast_cel_event_type {
  * \retval non-zero enabled
  */
 unsigned int ast_cel_check_enabled(void);
-
-/*! 
- * \brief Allocate a CEL record 
- *
- * \since 1.8
- *
- * \note The CEL record must be destroyed with ast_cel_destroy().
- *
- * \retval non-NULL an allocated ast_cel structure
- * \retval NULL error
- */
-struct ast_cel *ast_cel_alloc(void);
-
-/*! 
- * \brief Destroy a CEL record.
- *
- * \param cel the record to destroy
- *
- * \since 1.8
- *
- * \return nothing.
- */
-void ast_cel_destroy(struct ast_cel *cel);
 
 /*!
  * \brief Get the name of a CEL event type

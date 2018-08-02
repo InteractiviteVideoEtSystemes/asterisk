@@ -46,12 +46,11 @@
  * functions.
  *
  * Since module unload order is based on reference counting, any module that
- * uses the API defined in this file must call stasis_app_ref() when loaded,
- * and stasis_app_unref() when unloaded.
+ * uses the API defined in this file must list "res_stasis" in the requires
+ * field.
  */
 
 #include "asterisk/channel.h"
-#include "asterisk/json.h"
 
 /*! @{ */
 
@@ -75,6 +74,16 @@ typedef void (*stasis_app_cb)(void *data, const char *app_name,
  * \return \c NULL on error.
  */
 struct ao2_container *stasis_app_get_all(void);
+
+/*!
+ * \brief Retrieve a handle to a Stasis application by its name
+ *
+ * \param name The name of the registered Stasis application
+ *
+ * \return \c stasis_app on success.
+ * \return \c NULL on error.
+ */
+struct stasis_app *stasis_app_get_by_name(const char *name);
 
 /*!
  * \brief Register a new Stasis application.
@@ -218,18 +227,6 @@ void stasis_app_register_event_source(struct stasis_app_event_source *obj);
  * \brief Register core event sources.
  */
 void stasis_app_register_event_sources(void);
-
-/*!
- * \brief Checks to see if the given object is a core event source
- *
- * \note core event sources are currently only endpoint, bridge, and channel.
- *
- * \param obj event source object to check
- *
- * \return non-zero if core event source, otherwise 0 (false)
-
- */
-int stasis_app_is_core_event_source(struct stasis_app_event_source *obj);
 
 /*!
  * \brief Unregister an application event source.
@@ -440,6 +437,16 @@ int stasis_app_control_is_done(
 	struct stasis_app_control *control);
 
 /*!
+ * \brief Flush the control command queue.
+ * \since 13.9.0
+ *
+ * \param control Control object to flush command queue.
+ *
+ * \return Nothing
+ */
+void stasis_app_control_flush_queue(struct stasis_app_control *control);
+
+/*!
  * \brief Returns the uniqueid of the channel associated with this control
  *
  * \param control Control object.
@@ -449,23 +456,6 @@ int stasis_app_control_is_done(
  */
 const char *stasis_app_control_get_channel_id(
 	const struct stasis_app_control *control);
-
-/*!
- * \brief Dial an endpoint and bridge it to a channel in \c res_stasis
- *
- * If the channel is no longer in \c res_stasis, this function does nothing.
- *
- * \param control Control for \c res_stasis
- * \param endpoint The endpoint to dial.
- * \param exten Extension to dial if no endpoint specified.
- * \param context Context to use with extension.
- * \param timeout The amount of time to wait for answer, before giving up.
- *
- * \return 0 for success
- * \return -1 for error.
- */
-int stasis_app_control_dial(struct stasis_app_control *control, const char *endpoint, const char *exten,
-                            const char *context, int timeout);
 
 /*!
  * \brief Apply a bridge role to a channel controlled by a stasis app control
@@ -680,6 +670,18 @@ int stasis_app_control_queue_control(struct stasis_app_control *control,
 struct ast_bridge *stasis_app_bridge_create(const char *type, const char *name, const char *id);
 
 /*!
+ * \brief Create an invisible bridge of the specified type.
+ *
+ * \param type The type of bridge to be created
+ * \param name Optional name to give to the bridge
+ * \param id Optional Unique ID to give to the bridge
+ *
+ * \return New bridge.
+ * \return \c NULL on error.
+ */
+struct ast_bridge *stasis_app_bridge_create_invisible(const char *type, const char *name, const char *id);
+
+/*!
  * \brief Returns the bridge with the given id.
  * \param bridge_id Uniqueid of the bridge.
  *
@@ -736,6 +738,15 @@ int stasis_app_bridge_playback_channel_add(struct ast_bridge *bridge,
 	struct stasis_app_control *control);
 
 /*!
+ * \brief remove channel from list of ARI playback channels for bridges.
+ *
+ * \param bridge_id The unique ID of the bridge the playback channel is in.
+ * \param control The app control structure for the playback channel
+ */
+void stasis_app_bridge_playback_channel_remove(char *bridge_id,
+	struct stasis_app_control *control);
+
+/*!
  * \brief Result codes used when adding/removing channels to/from bridges.
  */
 enum stasis_app_control_channel_result {
@@ -770,6 +781,38 @@ int stasis_app_control_remove_channel_from_bridge(
 	struct stasis_app_control *control, struct ast_bridge *bridge);
 
 /*!
+ * \brief Initialize bridge features into a channel control
+ *
+ * \note Bridge features on a control are destroyed after each bridge session,
+ *       so new features need to be initialized before each bridge add.
+ *
+ * \param control Control in which to store the features
+ *
+ * \return non-zero on failure
+ * \return zero on success
+ */
+int stasis_app_control_bridge_features_init(
+	struct stasis_app_control *control);
+
+/*!
+ * \brief Set whether DTMF from the channel is absorbed instead of passing through to the bridge
+ *
+ * \param control Control whose channel should have its DTMF absorbed when bridged
+ * \param absorb Whether DTMF should be absorbed (1) instead of passed through (0).
+ */
+void stasis_app_control_absorb_dtmf_in_bridge(
+	struct stasis_app_control *control, int absorb);
+
+/*!
+ * \brief Set whether audio from the channel is muted instead of passing through to the bridge
+ *
+ * \param control Control whose channel should have its audio muted when bridged
+ * \param mute Whether audio should be muted (1) instead of passed through (0).
+ */
+void stasis_app_control_mute_in_bridge(
+	struct stasis_app_control *control, int mute);
+
+/*!
  * \since 12
  * \brief Gets the bridge currently associated with a control object.
  *
@@ -793,20 +836,6 @@ struct ast_bridge *stasis_app_get_bridge(struct stasis_app_control *control);
  * \retval zero on success
  */
 void stasis_app_bridge_destroy(const char *bridge_id);
-
-/*!
- * \brief Increment the res_stasis reference count.
- *
- * This ensures graceful shutdown happens in the proper order.
- */
-void stasis_app_ref(void);
-
-/*!
- * \brief Decrement the res_stasis reference count.
- *
- * This ensures graceful shutdown happens in the proper order.
- */
-void stasis_app_unref(void);
 
 /*!
  * \brief Get the Stasis message sanitizer for app_stasis applications
@@ -861,6 +890,73 @@ int stasis_app_channel_unreal_set_internal(struct ast_channel *chan);
  * \retval non-zero Failure
  */
 int stasis_app_channel_set_internal(struct ast_channel *chan);
+
+/*!
+ * \brief Dial a channel
+ * \param control Control for \c res_stasis.
+ * \param dialstring The dialstring to pass to the channel driver
+ * \param timeout Optional timeout in milliseconds
+ */
+int stasis_app_control_dial(struct stasis_app_control *control,
+		const char *dialstring, unsigned int timeout);
+
+/*!
+ * \brief Let Stasis app internals shut down
+ *
+ * This is called when res_stasis is unloaded. It ensures that
+ * the Stasis app internals can free any resources they may have
+ * allocated during the time that res_stasis was loaded.
+ */
+void stasis_app_control_shutdown(void);
+
+/*!
+ * \brief Enable/disable request/response and event logging on an application
+ *
+ * \param app The app to debug
+ * \param debug If non-zero, enable debugging. If zero, disable.
+ */
+void stasis_app_set_debug(struct stasis_app *app, int debug);
+
+/*!
+ * \brief Enable/disable request/response and event logging on an application
+ *
+ * \param app_name The app name to debug
+ * \param debug If non-zero, enable debugging. If zero, disable.
+ */
+void stasis_app_set_debug_by_name(const char *app_name, int debug);
+
+/*!
+ * \brief Get debug status of an application
+ *
+ * \param app The app to check
+ * \return The debug flag for the app || the global debug flag
+ */
+int stasis_app_get_debug(struct stasis_app *app);
+
+/*!
+ * \brief Get debug status of an application
+ *
+ * \param app_name The app_name to check
+ * \return The debug flag for the app || the global debug flag
+ */
+int stasis_app_get_debug_by_name(const char *app_name);
+
+/*!
+ * \brief Enable/disable request/response and event logging on all applications
+ *
+ * \param debug If non-zero, enable debugging. If zero, disable.
+ */
+void stasis_app_set_global_debug(int debug);
+
+struct ast_cli_args;
+
+/*!
+ * \brief Dump properties of a \c stasis_app to the CLI
+ *
+ * \param app The application
+ * \param a The CLI arguments
+ */
+void stasis_app_to_cli(const struct stasis_app *app, struct ast_cli_args *a);
 
 /*! @} */
 

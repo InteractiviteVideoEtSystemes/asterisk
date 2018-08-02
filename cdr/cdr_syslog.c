@@ -37,13 +37,12 @@
  */
 
 /*** MODULEINFO
+	<defaultenabled>no</defaultenabled>
 	<depend>syslog</depend>
-	<support_level>core</support_level>
+	<support_level>deprecated</support_level>
 ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/lock.h"
@@ -76,8 +75,10 @@ static AST_RWLIST_HEAD_STATIC(sinks, cdr_syslog_config);
 static void free_config(void)
 {
 	struct cdr_syslog_config *sink;
+
 	while ((sink = AST_RWLIST_REMOVE_HEAD(&sinks, list))) {
 		ast_mutex_destroy(&sink->lock);
+		ast_string_field_free_memory(sink);
 		ast_free(sink);
 	}
 }
@@ -291,4 +292,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Customizable syslog C
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CDR_DRIVER,
+	.requires = "cdr",
 );

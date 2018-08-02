@@ -20,6 +20,7 @@
 #include "asterisk/compat.h"
 #include "asterisk/lock.h"
 #include "asterisk/linkedlists.h"
+#include "asterisk/inline_api.h"
 
 /*! \file
  * \ref AstObj2
@@ -144,7 +145,7 @@ An interface to help debug refcounting is provided
 in this package. It is dependent on the refdebug being enabled in
 asterisk.conf.
 
-Each of the reference manipulations will generate one line of output in in the refs
+Each of the reference manipulations will generate one line of output in the refs
 log file. These lines look like this:
 ...
 0x8756f00,+1,1234,chan_sip.c,22240,load_module,**constructor**,allocate users
@@ -367,6 +368,13 @@ enum ao2_alloc_opts {
 	AO2_ALLOC_OPT_LOCK_NOLOCK = (2 << 0),
 	/*! The ao2 object locking option field mask. */
 	AO2_ALLOC_OPT_LOCK_MASK = (3 << 0),
+	/*!
+	 * \internal The ao2 object uses a separate object for locking.
+	 *
+	 * \note This option is used internally by ao2_alloc_with_lockobj and
+	 * should never be passed directly to ao2_alloc.
+	 */
+	AO2_ALLOC_OPT_LOCK_OBJ = AO2_ALLOC_OPT_LOCK_MASK,
 };
 
 /*!
@@ -406,6 +414,26 @@ void *__ao2_alloc(size_t data_size, ao2_destructor_fn destructor_fn, unsigned in
 	const char *tag, const char *file, int line, const char *func) attribute_warn_unused_result;
 
 /*! @} */
+
+/*!
+ * \since 14.1.0
+ * \brief Allocate and initialize an object with separate locking.
+ *
+ * \param data_size The sizeof() of the user-defined structure.
+ * \param destructor_fn The destructor function (can be NULL)
+ * \param lockobj A separate ao2 object that will provide locking.
+ * \param debug_msg An ao2 object debug tracing message.
+ * \return A pointer to user-data.
+ *
+ * \see \ref ao2_alloc for additional details.
+ *
+ * \note lockobj must be a valid AO2 object.
+ */
+#define ao2_alloc_with_lockobj(data_size, destructor_fn, lockobj, tag) \
+	__ao2_alloc_with_lockobj((data_size), (destructor_fn), (lockobj), (tag), __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+void *__ao2_alloc_with_lockobj(size_t data_size, ao2_destructor_fn destructor_fn, void *lockobj,
+	const char *tag, const char *file, int line, const char *func) attribute_warn_unused_result;
 
 /*! \brief
  * Reference/unreference an object and return the old refcount.
@@ -643,6 +671,10 @@ int ao2_weakproxy_subscribe(void *weakproxy, ao2_weakproxy_notification_cb cb, v
  *       of the cb / data pair.  If it was subscribed multiple times it must be
  *       unsubscribed as many times.  The OBJ_MULTIPLE flag can be used to remove
  *       matching subscriptions.
+ *
+ * \note When it's time to run callbacks they are copied to a temporary list so the
+ *       weakproxy can be unlocked before running.  That means it's possible for
+ *       this function to find nothing before the callback is run in another thread.
  */
 int ao2_weakproxy_unsubscribe(void *weakproxy, ao2_weakproxy_notification_cb cb, void *data, int flags);
 
@@ -650,7 +682,7 @@ int ao2_weakproxy_unsubscribe(void *weakproxy, ao2_weakproxy_notification_cb cb,
  * \since 14.0.0
  * \brief Get the weakproxy attached to obj
  *
- * \param obj The object to retreive a weakproxy from
+ * \param obj The object to retrieve a weakproxy from
  *
  * \return The weakproxy object
  */
@@ -725,6 +757,46 @@ int __ao2_trylock(void *a, enum ao2_lock_req lock_how, const char *file, const c
 void *ao2_object_get_lockaddr(void *obj);
 
 
+/*!
+ * \brief Increment reference count on an object and lock it
+ * \since 13.9.0
+ *
+ * \param[in] obj A pointer to the ao2 object
+ * \retval 0 The object is not an ao2 object or wasn't locked successfully
+ * \retval 1 The object's reference count was incremented and was locked
+ */
+AST_INLINE_API(
+int ao2_ref_and_lock(void *obj),
+{
+	ao2_ref(obj, +1);
+	if (ao2_lock(obj)) {
+		ao2_ref(obj, -1);
+		return 0;
+	}
+	return 1;
+}
+)
+
+/*!
+ * \brief Unlock an object and decrement its reference count
+ * \since 13.9.0
+ *
+ * \param[in] obj A pointer to the ao2 object
+ * \retval 0 The object is not an ao2 object or wasn't unlocked successfully
+ * \retval 1 The object was unlocked and it's reference count was decremented
+ */
+AST_INLINE_API(
+int ao2_unlock_and_unref(void *obj),
+{
+	if (ao2_unlock(obj)) {
+		return 0;
+	}
+	ao2_ref(obj, -1);
+
+	return 1;
+}
+)
+
 /*! Global ao2 object holder structure. */
 struct ao2_global_obj {
 	/*! Access lock to the held ao2 object. */
@@ -786,11 +858,9 @@ struct ao2_global_obj {
  * \return Nothing
  */
 #define ao2_t_global_obj_release(holder, tag)	\
-	__ao2_global_obj_release(&holder, (tag), __FILE__, __LINE__, __PRETTY_FUNCTION__, #holder)
+	__ao2_global_obj_replace_unref(&holder, NULL, (tag), __FILE__, __LINE__, __PRETTY_FUNCTION__, #holder)
 #define ao2_global_obj_release(holder)	\
-	__ao2_global_obj_release(&holder, "", __FILE__, __LINE__, __PRETTY_FUNCTION__, #holder)
-
-void __ao2_global_obj_release(struct ao2_global_obj *holder, const char *tag, const char *file, int line, const char *func, const char *name);
+	__ao2_global_obj_replace_unref(&holder, NULL, "", __FILE__, __LINE__, __PRETTY_FUNCTION__, #holder)
 
 /*!
  * \brief Replace an ao2 object in the global holder.
@@ -987,7 +1057,7 @@ enum search_flags {
 	OBJ_NODATA = (1 << 1),
 	/*!
 	 * Don't stop at the first match in ao2_callback() unless the
-	 * result of of the callback function has the CMP_STOP bit set.
+	 * result of the callback function has the CMP_STOP bit set.
 	 */
 	OBJ_MULTIPLE = (1 << 2),
 	/*!
@@ -1705,6 +1775,17 @@ void *__ao2_callback_data(struct ao2_container *c, enum search_flags flags,
 void *__ao2_find(struct ao2_container *c, const void *arg, enum search_flags flags,
 	const char *tag, const char *file, int line, const char *func);
 
+/*!
+ * \brief Perform an ao2_find on a container with ao2_weakproxy objects, returning the real object.
+ *
+ * \note Only OBJ_SEARCH_* and OBJ_NOLOCK flags are supported by this function.
+ * \see ao2_callback for description of arguments.
+ */
+#define ao2_weakproxy_find(c, arg, flags, tag) \
+	__ao2_weakproxy_find(c, arg, flags, tag, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+void *__ao2_weakproxy_find(struct ao2_container *c, const void *arg, enum search_flags flags,
+	const char *tag, const char *file, int line, const char *func);
+
 /*! \brief
  *
  *
@@ -1902,5 +1983,126 @@ void ao2_iterator_cleanup(struct ao2_iterator *iter);
  * \retval The number of objects in the iterated container
  */
 int ao2_iterator_count(struct ao2_iterator *iter);
+
+/*!
+ * \brief Creates a hash function for a structure field.
+ * \param stype The structure type
+ * \param field The string field in the structure to hash
+ * \param hash_fn Function which hashes the field
+ *
+ * AO2_FIELD_HASH_FN(mystruct, myfield, ast_str_hash) will
+ * produce a function named mystruct_hash_fn which hashes
+ * mystruct->myfield with ast_str_hash.
+ */
+#define AO2_FIELD_HASH_FN(stype, field, hash_fn) \
+static int stype ## _hash_fn(const void *obj, const int flags) \
+{ \
+	const struct stype *object = obj; \
+	const char *key; \
+	switch (flags & OBJ_SEARCH_MASK) { \
+	case OBJ_SEARCH_KEY: \
+		key = obj; \
+		break; \
+	case OBJ_SEARCH_OBJECT: \
+		key = object->field; \
+		break; \
+	default: \
+		ast_assert(0); \
+		return 0; \
+	} \
+	return hash_fn(key); \
+}
+
+
+#define AO2_FIELD_TRANSFORM_CMP_FN(cmp) ((cmp) ? 0 : CMP_MATCH)
+#define AO2_FIELD_TRANSFORM_SORT_FN(cmp) (cmp)
+
+/*!
+ * \internal
+ *
+ * \brief Creates a compare function for a structure string field.
+ * \param stype The structure type
+ * \param fn_suffix Function name suffix
+ * \param field The string field in the structure to compare
+ * \param key_cmp Key comparison function like strcmp
+ * \param partial_key_cmp Partial key comparison function like strncmp
+ * \param transform A macro that takes the cmp result as an argument
+ *                  and transforms it to a return value.
+ *
+ * Do not use this macro directly, instead use macro's starting with
+ * AST_STRING_FIELD.
+ *
+ * \warning The macro is an internal implementation detail, the API
+ *          may change at any time.
+ */
+#define AO2_FIELD_CMP_FN(stype, fn_suffix, field, key_cmp, partial_key_cmp, transform, argconst) \
+static int stype ## fn_suffix(argconst void *obj, argconst void *arg, int flags) \
+{ \
+	const struct stype *object_left = obj, *object_right = arg; \
+	const char *right_key = arg; \
+	int cmp; \
+	switch (flags & OBJ_SEARCH_MASK) { \
+	case OBJ_SEARCH_OBJECT: \
+		right_key = object_right->field; \
+	case OBJ_SEARCH_KEY: \
+		cmp = key_cmp(object_left->field, right_key); \
+		break; \
+	case OBJ_SEARCH_PARTIAL_KEY: \
+		cmp = partial_key_cmp(object_left->field, right_key, strlen(right_key)); \
+		break; \
+	default: \
+		cmp = 0; \
+		break; \
+	} \
+	return transform(cmp); \
+}
+
+/*!
+ * \brief Creates a hash function for a structure string field.
+ * \param stype The structure type
+ * \param field The string field in the structure to hash
+ *
+ * AO2_STRING_FIELD_HASH_FN(mystruct, myfield) will produce a function
+ * named mystruct_hash_fn which hashes mystruct->myfield.
+ *
+ * AO2_STRING_FIELD_HASH_FN(mystruct, myfield) would do the same except
+ * it uses the hash function which ignores case.
+ */
+#define AO2_STRING_FIELD_HASH_FN(stype, field) \
+	AO2_FIELD_HASH_FN(stype, field, ast_str_hash)
+#define AO2_STRING_FIELD_CASE_HASH_FN(stype, field) \
+	AO2_FIELD_HASH_FN(stype, field, ast_str_case_hash)
+
+/*!
+ * \brief Creates a compare function for a structure string field.
+ * \param stype The structure type
+ * \param field The string field in the structure to compare
+ *
+ * AO2_STRING_FIELD_CMP_FN(mystruct, myfield) will produce a function
+ * named mystruct_cmp_fn which compares mystruct->myfield.
+ *
+ * AO2_STRING_FIELD_CASE_CMP_FN(mystruct, myfield) would do the same
+ * except it performs case insensitive comparisons.
+ */
+#define AO2_STRING_FIELD_CMP_FN(stype, field) \
+	AO2_FIELD_CMP_FN(stype, _cmp_fn, field, strcmp, strncmp, AO2_FIELD_TRANSFORM_CMP_FN,)
+#define AO2_STRING_FIELD_CASE_CMP_FN(stype, field) \
+	AO2_FIELD_CMP_FN(stype, _cmp_fn, field, strcasecmp, strncasecmp, AO2_FIELD_TRANSFORM_CMP_FN,)
+
+/*!
+ * \brief Creates a sort function for a structure string field.
+ * \param stype The structure type
+ * \param field The string field in the structure to compare
+ *
+ * AO2_STRING_FIELD_SORT_FN(mystruct, myfield) will produce a function
+ * named mystruct_sort_fn which compares mystruct->myfield.
+ *
+ * AO2_STRING_FIELD_CASE_SORT_FN(mystruct, myfield) would do the same
+ * except it performs case insensitive comparisons.
+ */
+#define AO2_STRING_FIELD_SORT_FN(stype, field) \
+	AO2_FIELD_CMP_FN(stype, _sort_fn, field, strcmp, strncmp, AO2_FIELD_TRANSFORM_SORT_FN, const)
+#define AO2_STRING_FIELD_CASE_SORT_FN(stype, field) \
+	AO2_FIELD_CMP_FN(stype, _sort_fn, field, strcasecmp, strncasecmp, AO2_FIELD_TRANSFORM_SORT_FN, const)
 
 #endif /* _ASTERISK_ASTOBJ2_H */

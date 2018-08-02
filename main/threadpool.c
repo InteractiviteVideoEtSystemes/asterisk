@@ -702,7 +702,7 @@ static int kill_threads(void *obj, void *arg, int flags)
 /*!
  * \brief ao2 callback to zombify a set number of threads.
  *
- * Threads will be zombified as long as as the counter has not reached
+ * Threads will be zombified as long as the counter has not reached
  * zero. The counter is decremented with each thread that is zombified.
  *
  * Zombifying a thread involves removing it from its current container,
@@ -1012,6 +1012,7 @@ static void worker_thread_destroy(void *obj)
 static void *worker_start(void *arg)
 {
 	struct worker_thread *worker = arg;
+	enum worker_state saved_state;
 
 	if (worker->options.thread_start) {
 		worker->options.thread_start();
@@ -1027,6 +1028,7 @@ static void *worker_start(void *arg)
 		}
 		threadpool_active_thread_idle(worker->pool, worker);
 	}
+	saved_state = worker->state;
 	ast_mutex_unlock(&worker->lock);
 
 	/* Reaching this portion means the thread is
@@ -1037,7 +1039,7 @@ static void *worker_start(void *arg)
 	 * that the thread can be removed from the
 	 * list of zombie threads.
 	 */
-	if (worker->state == ZOMBIE) {
+	if (saved_state == ZOMBIE) {
 		threadpool_zombie_thread_dead(worker->pool, worker);
 	}
 
@@ -1091,7 +1093,7 @@ static void worker_active(struct worker_thread *worker)
 {
 	int alive;
 
-	/* The following is equivalent to 
+	/* The following is equivalent to
 	 *
 	 * while (threadpool_execute(worker->pool));
 	 *
@@ -1382,10 +1384,12 @@ struct ast_taskprocessor *ast_threadpool_serializer_group(const char *name,
 		ao2_ref(ser, -1);
 		return NULL;
 	}
-	/* ser ref transferred to listener */
 
 	tps = ast_taskprocessor_create_with_listener(name, listener);
-	if (tps && shutdown_group) {
+	if (!tps) {
+		/* ser ref transferred to listener but not cleaned without tps */
+		ao2_ref(ser, -1);
+	} else if (shutdown_group) {
 		serializer_shutdown_group_inc(shutdown_group);
 	}
 

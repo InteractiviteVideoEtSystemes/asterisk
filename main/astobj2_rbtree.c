@@ -23,8 +23,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/astobj2.h"
 #include "asterisk/utils.h"
@@ -858,7 +856,9 @@ static void rb_ao2_node_destructor(void *v_doomed)
 		 * same node.
 		 */
 		my_container = (struct ao2_container_rbtree *) doomed->common.my_container;
-		ast_assert(is_ao2_object(my_container));
+#ifdef AST_DEVMODE
+		is_ao2_object(my_container);
+#endif
 
 		__adjust_lock(my_container, AO2_LOCK_REQ_WRLOCK, 1);
 
@@ -1243,7 +1243,7 @@ static enum ao2_container_insert rb_ao2_insert_node(struct ao2_container_rbtree 
 		break;
 	case AO2_CONTAINER_ALLOC_OPT_DUPS_REPLACE:
 		SWAP(cur->common.obj, node->common.obj);
-		ao2_t_ref(node, -1, "Don't need the new node.");
+		ao2_t_ref(node, -1, NULL);
 		return AO2_CONTAINER_INSERT_NODE_OBJ_REPLACED;
 	}
 
@@ -2052,4 +2052,3 @@ struct ao2_container *__ao2_container_alloc_rbtree(unsigned int ao2_options, uns
 		tag ?: __PRETTY_FUNCTION__, file, line, func);
 	return rb_ao2_container_init(self, container_options, sort_fn, cmp_fn);
 }
-

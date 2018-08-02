@@ -21,7 +21,7 @@
  * \brief Shareable AEL code -- mainly between internal and external modules
  *
  * \author Steve Murphy <murf@digium.com>
- * 
+ *
  * \ingroup applications
  */
 
@@ -30,8 +30,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/file.h"
 #include "asterisk/channel.h"

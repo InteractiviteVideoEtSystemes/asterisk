@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/channel.h"
 #include "asterisk/framehook.h"
@@ -181,4 +179,3 @@ static int load_module(void)
 }
 
 AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Jitter buffer for read side of channel.");
-

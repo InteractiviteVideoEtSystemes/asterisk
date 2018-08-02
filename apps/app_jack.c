@@ -42,8 +42,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <limits.h>
 
 #include <jack/jack.h>
@@ -1052,4 +1050,3 @@ static int load_module(void)
 }
 
 AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "JACK Interface");
-

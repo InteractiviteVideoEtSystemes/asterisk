@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <signal.h>
 
 #include "asterisk/file.h"
@@ -143,16 +141,23 @@ static void *cleanup(void *unused)
 	return NULL;
 }
 
+static int extension_length_comparator(struct ast_category *p, struct ast_category *q)
+{
+	const char *extenp = S_OR(ast_variable_find(p, "exten"), "");
+	const char *extenq = S_OR(ast_variable_find(q, "exten"), "");
+
+	return strlen(extenp) - strlen(extenq);
+}
 
 /* Realtime switch looks up extensions in the supplied realtime table.
 
 	[context@][realtimetable][/options]
 
-	If the realtimetable is omitted it is assumed to be "extensions".  If no context is 
+	If the realtimetable is omitted it is assumed to be "extensions".  If no context is
 	specified the context is assumed to be whatever is the container.
 
 	The realtime table should have entries for context,exten,priority,app,args
-	
+
 	The realtime table currently does not support callerid fields.
 
 */
@@ -189,27 +194,31 @@ static struct ast_variable *realtime_switch_common(const char *table, const char
 	}
 	var = ast_load_realtime(table, ematch, rexten, "context", context, "priority", pri, SENTINEL);
 	if (!var && !ast_test_flag(&flags, OPTION_PATTERNS_DISABLED)) {
-		cfg = ast_load_realtime_multientry(table, "exten LIKE", "\\_%", "context", context, "priority", pri, SENTINEL);	
+		cfg = ast_load_realtime_multientry(table, "exten LIKE", "\\_%", "context", context, "priority", pri, SENTINEL);
 		if (cfg) {
-			char *cat = ast_category_browse(cfg, NULL);
+			char *cat = NULL;
 
-			while(cat) {
+			/* Sort so that longer patterns are checked first */
+			ast_config_sort_categories(cfg, 1, extension_length_comparator);
+
+			while ((cat = ast_category_browse(cfg, cat))) {
+				const char *realtime_exten = ast_variable_retrieve(cfg, cat, "exten");
+
 				switch(mode) {
 				case MODE_MATCHMORE:
-					match = ast_extension_close(cat, exten, 1);
+					match = ast_extension_close(realtime_exten, exten, 1);
 					break;
 				case MODE_CANMATCH:
-					match = ast_extension_close(cat, exten, 0);
+					match = ast_extension_close(realtime_exten, exten, 0);
 					break;
 				case MODE_MATCH:
 				default:
-					match = ast_extension_match(cat, exten);
+					match = ast_extension_match(realtime_exten, exten);
 				}
 				if (match) {
 					var = ast_category_detach_variables(ast_category_get(cfg, cat, NULL));
 					break;
 				}
-				cat = ast_category_browse(cfg, cat);
 			}
 			ast_config_destroy(cfg);
 		}
@@ -406,4 +415,3 @@ static int load_module(void)
 }
 
 AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "Realtime Switch");
-

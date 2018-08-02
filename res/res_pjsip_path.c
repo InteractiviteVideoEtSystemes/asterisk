@@ -40,7 +40,8 @@ static struct ast_sip_aor *find_aor(struct ast_sip_endpoint *endpoint, pjsip_uri
 	char *configured_aors, *aor_name;
 	pjsip_sip_uri *sip_uri;
 	char *domain_name;
-	RAII_VAR(struct ast_str *, id, NULL, ast_free);
+	char *username;
+	struct ast_str *id = NULL;
 
 	if (ast_strlen_zero(endpoint->aors)) {
 		return NULL;
@@ -49,22 +50,35 @@ static struct ast_sip_aor *find_aor(struct ast_sip_endpoint *endpoint, pjsip_uri
 	sip_uri = pjsip_uri_get_uri(uri);
 	domain_name = ast_alloca(sip_uri->host.slen + 1);
 	ast_copy_pj_str(domain_name, &sip_uri->host, sip_uri->host.slen + 1);
+	username = ast_alloca(sip_uri->user.slen + 1);
+	ast_copy_pj_str(username, &sip_uri->user, sip_uri->user.slen + 1);
+
+	/*
+	 * We may want to match without any user options getting
+	 * in the way.
+	 */
+	AST_SIP_USER_OPTIONS_TRUNCATE_CHECK(username);
 
 	configured_aors = ast_strdupa(endpoint->aors);
 
 	/* Iterate the configured AORs to see if the user or the user+domain match */
-	while ((aor_name = strsep(&configured_aors, ","))) {
+	while ((aor_name = ast_strip(strsep(&configured_aors, ",")))) {
 		struct ast_sip_domain_alias *alias = NULL;
 
-		if (!pj_strcmp2(&sip_uri->user, aor_name)) {
+		if (ast_strlen_zero(aor_name)) {
+			continue;
+		}
+
+		if (!strcmp(username, aor_name)) {
 			break;
 		}
 
-		if (!id && !(id = ast_str_create(sip_uri->user.slen + sip_uri->host.slen + 2))) {
-			return NULL;
+		if (!id && !(id = ast_str_create(strlen(username) + sip_uri->host.slen + 2))) {
+			aor_name = NULL;
+			break;
 		}
 
-		ast_str_set(&id, 0, "%.*s@", (int)sip_uri->user.slen, sip_uri->user.ptr);
+		ast_str_set(&id, 0, "%s@", username);
 		if ((alias = ast_sorcery_retrieve_by_id(ast_sip_get_sorcery(), "domain_alias", domain_name))) {
 			ast_str_append(&id, 0, "%s", alias->domain);
 			ao2_cleanup(alias);
@@ -73,10 +87,10 @@ static struct ast_sip_aor *find_aor(struct ast_sip_endpoint *endpoint, pjsip_uri
 		}
 
 		if (!strcmp(aor_name, ast_str_buffer(id))) {
-			ast_free(id);
 			break;
 		}
 	}
+	ast_free(id);
 
 	if (ast_strlen_zero(aor_name)) {
 		return NULL;
@@ -224,16 +238,8 @@ static struct ast_sip_session_supplement path_session_supplement = {
 
 static int load_module(void)
 {
-	CHECK_PJSIP_SESSION_MODULE_LOADED();
-
-	if (ast_sip_register_supplement(&path_supplement)) {
-		return AST_MODULE_LOAD_DECLINE;
-	}
-
-	if (ast_sip_session_register_supplement(&path_session_supplement)) {
-		ast_sip_unregister_supplement(&path_supplement);
-		return AST_MODULE_LOAD_DECLINE;
-	}
+	ast_sip_register_supplement(&path_supplement);
+	ast_sip_session_register_supplement(&path_session_supplement);
 
 	return AST_MODULE_LOAD_SUCCESS;
 }
@@ -250,4 +256,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP Path Header Sup
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip,res_pjsip_session",
 );

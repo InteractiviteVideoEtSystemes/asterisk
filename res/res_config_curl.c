@@ -23,7 +23,7 @@
  * \author Tilghman Lesher <res_config_curl_v1@the-tilghman.com>
  *
  * Depends on the CURL library - http://curl.haxx.se/
- * 
+ *
  */
 
 /*** MODULEINFO
@@ -32,8 +32,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <curl/curl.h>
 
@@ -184,7 +182,8 @@ static struct ast_config *realtime_multi_curl(const char *url, const char *unuse
 			continue;
 		}
 
-		if (!(cat = ast_category_new("", "", 99999))) {
+		cat = ast_category_new_anonymous();
+		if (!cat) {
 			continue;
 		}
 
@@ -571,8 +570,10 @@ static struct ast_config *config_curl(const char *url, const char *unused, const
 		}
 
 		if (!cat || strcmp(category, cur_cat) || last_cat_metric != cat_metric) {
-			if (!(cat = ast_category_new(category, "", 99999)))
+			cat = ast_category_new_dynamic(category);
+			if (!cat) {
 				break;
+			}
 			cur_cat = category;
 			last_cat_metric = cat_metric;
 			ast_category_append(cfg, cat);
@@ -636,20 +637,6 @@ static int unload_module(void)
 
 static int load_module(void)
 {
-	if (!ast_module_check("res_curl.so")) {
-		if (ast_load_resource("res_curl.so") != AST_MODULE_LOAD_SUCCESS) {
-			ast_log(LOG_ERROR, "Cannot load res_curl, so res_config_curl cannot be loaded\n");
-			return AST_MODULE_LOAD_DECLINE;
-		}
-	}
-
-	if (!ast_module_check("func_curl.so")) {
-		if (ast_load_resource("func_curl.so") != AST_MODULE_LOAD_SUCCESS) {
-			ast_log(LOG_ERROR, "Cannot load func_curl, so res_config_curl cannot be loaded\n");
-			return AST_MODULE_LOAD_DECLINE;
-		}
-	}
-
 	reload_module();
 
 	ast_config_engine_register(&curl_engine);
@@ -663,4 +650,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Realtime Curl configu
 	.unload = unload_module,
 	.reload = reload_module,
 	.load_pri = AST_MODPRI_REALTIME_DRIVER,
+	.requires = "extconfig,res_curl,func_curl",
 );

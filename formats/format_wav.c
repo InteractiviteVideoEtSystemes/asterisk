@@ -23,14 +23,12 @@
  * \arg File name extension: wav (lower case)
  * \ingroup formats
  */
- 
+
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -82,9 +80,8 @@ struct wav_desc {	/* format-specific parameters */
 
 static int check_header_fmt(FILE *f, int hsize, int hz)
 {
-	short format, chans, bysam, bisam;
-	int bysec;
-	int freq;
+	unsigned short format, chans, bysam, bisam;
+	unsigned int freq, bysec;
 	if (hsize < 16) {
 		ast_log(LOG_WARNING, "Unexpected header size %d\n", hsize);
 		return -1;
@@ -94,7 +91,7 @@ static int check_header_fmt(FILE *f, int hsize, int hz)
 		return -1;
 	}
 	if (ltohs(format) != 1) {
-		ast_log(LOG_WARNING, "Not a supported wav file format (%d). Only PCM encoded, 16 bit, mono, 8kHz files are supported with a lowercase '.wav' extension.\n", ltohs(format));
+		ast_log(LOG_WARNING, "Not a supported wav file format (%d). Only PCM encoded, 16 bit, mono, 8kHz/16kHz files are supported with a lowercase '.wav' extension.\n", ltohs(format));
 		return -1;
 	}
 	if (fread(&chans, 1, 2, f) != 2) {
@@ -109,10 +106,9 @@ static int check_header_fmt(FILE *f, int hsize, int hz)
 		ast_log(LOG_WARNING, "Read failed (freq)\n");
 		return -1;
 	}
-	if (((ltohl(freq) != 8000) && (ltohl(freq) != 16000)) ||
-		((ltohl(freq) == 8000) && (hz != 8000)) ||
-		((ltohl(freq) == 16000) && (hz != 16000))) {
-		ast_log(LOG_WARNING, "Unexpected frequency mismatch %d (expecting %d)\n", ltohl(freq),hz);
+	freq = ltohl(freq);
+	if ((freq != 8000 && freq != 16000) || freq != hz) {
+		ast_log(LOG_WARNING, "Unexpected frequency mismatch %d (expecting %d)\n", freq, hz);
 		return -1;
 	}
 	/* Ignore the byte frequency */
@@ -170,9 +166,9 @@ static int check_header(FILE *f, int hz)
 	}
 	/* Skip any facts and get the first data block */
 	for(;;)
-	{ 
+	{
 		char buf[4];
-		
+
 		/* Begin data chunk */
 		if (fread(&buf, 1, 4, f) != 4) {
 			ast_log(LOG_WARNING, "Read failed (block header format)\n");
@@ -191,7 +187,7 @@ static int check_header(FILE *f, int hz)
 				return -1;
 			continue;
 		}
-		if(memcmp(buf, "data", 4) == 0 ) 
+		if(memcmp(buf, "data", 4) == 0 )
 			break;
 		ast_log(LOG_DEBUG, "Skipping unknown block '%.4s'\n", buf);
 		if (fseek(f,data,SEEK_CUR) == -1 ) {
@@ -204,7 +200,7 @@ static int check_header(FILE *f, int hz)
 	truelength = lseek(fd, 0, SEEK_END);
 	lseek(fd, curpos, SEEK_SET);
 	truelength -= curpos;
-#endif	
+#endif
 	return data;
 }
 
@@ -212,7 +208,7 @@ static int update_header(FILE *f)
 {
 	off_t cur,end;
 	int datalen,filelen,bytes;
-	
+
 	cur = ftello(f);
 	fseek(f, 0, SEEK_END);
 	end = ftello(f);
@@ -221,7 +217,7 @@ static int update_header(FILE *f)
 	datalen = htoll(bytes);
 	/* chunk size is bytes of data plus 36 bytes of header */
 	filelen = htoll(36 + bytes);
-	
+
 	if (cur < 0) {
 		ast_log(LOG_WARNING, "Unable to find our position\n");
 		return -1;
@@ -325,9 +321,15 @@ static int wav_open(struct ast_filestream *s)
 	/* We don't have any header to read or anything really, but
 	   if we did, it would go here.  We also might want to check
 	   and be sure it's a valid file.  */
-	struct wav_desc *tmp = (struct wav_desc *)s->_private;
-	if ((tmp->maxlen = check_header(s->f, ast_format_get_sample_rate(s->fmt->format))) < 0)
+	struct wav_desc *tmp = s->_private;
+	unsigned int sample_rate = ast_format_get_sample_rate(s->fmt->format);
+
+	tmp->maxlen = check_header(s->f, sample_rate);
+	if (tmp->maxlen < 0) {
 		return -1;
+	}
+
+	tmp->hz = sample_rate;
 	return 0;
 }
 
@@ -359,7 +361,7 @@ static void wav_close(struct ast_filestream *s)
 
 	/* Pad to even length */
 	if (fs->bytes & 0x1) {
-		if (!fwrite(&zero, 1, 1, s->f)) {
+		if (fwrite(&zero, 1, 1, s->f) != 1) {
 			ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
 		}
 	}
@@ -367,7 +369,7 @@ static void wav_close(struct ast_filestream *s)
 
 static struct ast_frame *wav_read(struct ast_filestream *s, int *whennext)
 {
-	int res;
+	size_t res;
 	int samples;	/* actual samples read */
 #if __BYTE_ORDER == __BIG_ENDIAN
 	int x;
@@ -383,14 +385,18 @@ static struct ast_frame *wav_read(struct ast_filestream *s, int *whennext)
 	here = ftello(s->f);
 	if (fs->maxlen - here < bytes)		/* truncate if necessary */
 		bytes = fs->maxlen - here;
-	if (bytes < 0)
-		bytes = 0;
+	if (bytes <= 0) {
+		return NULL;
+	}
 /* 	ast_debug(1, "here: %d, maxlen: %d, bytes: %d\n", here, s->maxlen, bytes); */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, bytes);
-	
-	if ( (res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) <= 0 ) {
-		if (res)
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+
+	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) == 0) {
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	s->fr.datalen = res;
@@ -426,7 +432,7 @@ static int wav_write(struct ast_filestream *fs, struct ast_frame *f)
 		return -1;
 	}
 	tmpi = f->data.ptr;
-	for (x=0; x < f->datalen/2; x++) 
+	for (x=0; x < f->datalen/2; x++)
 		tmp[x] = (tmpi[x] << 8) | ((tmpi[x] & 0xff00) >> 8);
 
 	if ((res = fwrite(tmp, 1, f->datalen, fs->f)) != f->datalen ) {
@@ -439,7 +445,7 @@ static int wav_write(struct ast_filestream *fs, struct ast_frame *f)
 	}
 
 	s->bytes += f->datalen;
-		
+
 	return 0;
 
 }
@@ -526,6 +532,7 @@ static struct ast_format_def wav16_f = {
 static struct ast_format_def wav_f = {
 	.name = "wav",
 	.exts = "wav",
+	.mime_types = "audio/wav|audio/x-wav",
 	.open =	wav_open,
 	.rewrite = wav_rewrite,
 	.write = wav_write,
@@ -538,20 +545,22 @@ static struct ast_format_def wav_f = {
 	.desc_size = sizeof(struct wav_desc),
 };
 
+static int unload_module(void)
+{
+	return ast_format_def_unregister(wav_f.name)
+		|| ast_format_def_unregister(wav16_f.name);
+}
+
 static int load_module(void)
 {
 	wav_f.format = ast_format_slin;
 	wav16_f.format = ast_format_slin16;
 	if (ast_format_def_register(&wav_f)
-		|| ast_format_def_register(&wav16_f))
-		return AST_MODULE_LOAD_FAILURE;
+		|| ast_format_def_register(&wav16_f)) {
+		unload_module();
+		return AST_MODULE_LOAD_DECLINE;
+	}
 	return AST_MODULE_LOAD_SUCCESS;
-}
-
-static int unload_module(void)
-{
-	return ast_format_def_unregister(wav_f.name)
-		|| ast_format_def_unregister(wav16_f.name);
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Microsoft WAV/WAV16 format (8kHz/16kHz Signed Linear)",

@@ -1,7 +1,7 @@
 /*
  * Asterisk -- An open source telephony toolkit.
  *
- * Copyright (C) 2009-2012, Digium, Inc.
+ * Copyright (C) 2009-2018, Digium, Inc.
  *
  * Russell Bryant <russell@digium.com>
  *
@@ -23,27 +23,28 @@
  * \author Russell Bryant <russell@digium.com>
  */
 
-/*** MODULEINFO
-	<support_level>core</support_level>
- ***/
-
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk/_private.h"   /* ast_ssl_init() */
 
 #ifdef HAVE_OPENSSL
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include <openssl/opensslv.h>    /* for OPENSSL_VERSION_NUMBER */
 #endif
 
-#include <dlfcn.h>
+#if defined(HAVE_OPENSSL) && \
+	(defined(LIBRESSL_VERSION_NUMBER) || OPENSSL_VERSION_NUMBER < 0x10100000L)
 
-#include "asterisk/_private.h" /* ast_ssl_init() */
+#include <dlfcn.h>               /* for dlerror, dlsym, RTLD_NEXT */
+#include <openssl/crypto.h>      /* for CRYPTO_num_locks, CRYPTO_set_id_call... */
+#include <openssl/err.h>         /* for ERR_free_strings */
+#include <openssl/ssl.h>         /* for SSL_library_init, SSL_load_error_str... */
+#if OPENSSL_VERSION_NUMBER < 0x10000000L
+#include <pthread.h>             /* for pthread_self */
+#endif
 
-#include "asterisk/utils.h"
-#include "asterisk/lock.h"
-
-#ifdef HAVE_OPENSSL
+#include "asterisk/lock.h"       /* for ast_mutex_t, ast_mutex_init, ast_mut... */
+#include "asterisk/logger.h"     /* for ast_debug, ast_log, LOG_ERROR */
+#include "asterisk/utils.h"      /* for ast_calloc */
 
 #define get_OpenSSL_function(func) do { real_##func = dlsym(RTLD_NEXT, __stringify(func)); } while(0)
 
@@ -53,10 +54,12 @@ static ast_mutex_t *ssl_locks;
 
 static int ssl_num_locks;
 
+#if OPENSSL_VERSION_NUMBER < 0x10000000L
 static unsigned long ssl_threadid(void)
 {
 	return (unsigned long) pthread_self();
 }
+#endif
 
 static void ssl_lock(int mode, int n, const char *file, int line)
 {
@@ -67,7 +70,7 @@ static void ssl_lock(int mode, int n, const char *file, int line)
 		return;
 	}
 
-	if (mode & CRYPTO_LOCK) {
+	if (mode & 0x1) {
 		ast_mutex_lock(&ssl_locks[n]);
 	} else {
 		ast_mutex_unlock(&ssl_locks[n]);
@@ -93,6 +96,7 @@ void SSL_load_error_strings(void)
 #endif
 }
 
+#if OPENSSL_VERSION_NUMBER < 0x10000000L
 void CRYPTO_set_id_callback(unsigned long (*func)(void))
 {
 #if defined(AST_DEVMODE)
@@ -101,6 +105,7 @@ void CRYPTO_set_id_callback(unsigned long (*func)(void))
 	}
 #endif
 }
+#endif
 
 void CRYPTO_set_locking_callback(void (*func)(int mode,int type, const char *file, int line))
 {
@@ -116,18 +121,19 @@ void ERR_free_strings(void)
 	/* we can't allow this to be called, ever */
 }
 
-#endif /* HAVE_OPENSSL */
-
 /*!
  * \internal
  * \brief Common OpenSSL initialization for all of Asterisk.
+ *
+ * Not needed for OpenSSL versions >= 1.1.0
  */
 int ast_ssl_init(void)
 {
-#ifdef HAVE_OPENSSL
 	unsigned int i;
 	int (*real_SSL_library_init)(void);
+#if OPENSSL_VERSION_NUMBER < 0x10000000L
 	void (*real_CRYPTO_set_id_callback)(unsigned long (*)(void));
+#endif
 	void (*real_CRYPTO_set_locking_callback)(void (*)(int, int, const char *, int));
 	void (*real_SSL_load_error_strings)(void);
 	const char *errstr;
@@ -147,6 +153,7 @@ int ast_ssl_init(void)
 
 	/* Make OpenSSL usage thread-safe. */
 
+#if OPENSSL_VERSION_NUMBER < 0x10000000L
 	dlerror();
 	get_OpenSSL_function(CRYPTO_set_id_callback);
 	if ((errstr = dlerror()) != NULL) {
@@ -158,6 +165,7 @@ int ast_ssl_init(void)
 	} else {
 		real_CRYPTO_set_id_callback(ssl_threadid);
 	}
+#endif
 
 	dlerror();
 	get_OpenSSL_function(CRYPTO_set_locking_callback);
@@ -189,7 +197,14 @@ int ast_ssl_init(void)
 
 	startup_complete = 1;
 
-#endif /* HAVE_OPENSSL */
 	return 0;
 }
 
+#else
+
+int ast_ssl_init(void)
+{
+	return 0;
+}
+
+#endif

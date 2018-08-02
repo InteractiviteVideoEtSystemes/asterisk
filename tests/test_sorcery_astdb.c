@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/test.h"
 #include "asterisk/module.h"
 #include "asterisk/sorcery.h"
@@ -298,7 +296,7 @@ AST_TEST_DEFINE(object_retrieve_multiple_field)
 	RAII_VAR(struct ast_sorcery *, sorcery, NULL, deinitialize_sorcery);
 	RAII_VAR(struct test_sorcery_object *, obj, NULL, ao2_cleanup);
 	RAII_VAR(struct ao2_container *, objects, NULL, ao2_cleanup);
-	RAII_VAR(struct ast_variable *, fields, ast_variable_new("joe", "6", ""), ast_variables_destroy);
+	RAII_VAR(struct ast_variable *, fields, ast_variable_new("joe >=", "6", ""), ast_variables_destroy);
 
 	switch (cmd) {
 	case TEST_INIT:
@@ -345,7 +343,7 @@ AST_TEST_DEFINE(object_retrieve_multiple_field)
 	ao2_cleanup(objects);
 	ast_variables_destroy(fields);
 
-	if (!(fields = ast_variable_new("joe", "7", ""))) {
+	if (!(fields = ast_variable_new("joe <", "6", ""))) {
 		ast_test_status_update(test, "Failed to create fields for multiple retrieval\n");
 		return AST_TEST_FAIL;
 	} else if (!(objects = ast_sorcery_retrieve_by_fields(sorcery, "test", AST_RETRIEVE_FLAG_MULTIPLE, fields))) {

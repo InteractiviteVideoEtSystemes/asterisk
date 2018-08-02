@@ -40,14 +40,11 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <fcntl.h>
 #include <netdb.h>
-#include <sys/signal.h>
 #include <signal.h>
 #include <netinet/in.h>
 #include <netinet/in_systm.h>
@@ -392,7 +389,7 @@ struct mgcp_endpoint {
 	/* struct ast_channel *owner; */
 	/* struct ast_rtp *rtp; */
 	/* struct sockaddr_in tmpdest; */
-	/* message go the the endpoint and not the channel so they stay here */
+	/* message go the endpoint and not the channel so they stay here */
 	struct ast_variable *chanvars;		/*!< Variables to set for channel created by user */
 	struct mgcp_endpoint *next;
 	struct mgcp_gateway *parent;
@@ -4863,11 +4860,11 @@ static int reload_config(int reload)
 static int load_module(void)
 {
 	if (!(global_capability = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	if (!(mgcp_tech.capabilities = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
 		ao2_ref(global_capability, -1);
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_format_cap_append(global_capability, ast_format_ulaw, 0);
 	ast_format_cap_append(mgcp_tech.capabilities, ast_format_ulaw, 0);
@@ -4876,7 +4873,7 @@ static int load_module(void)
 		ast_log(LOG_WARNING, "Unable to create schedule context\n");
 		ao2_ref(global_capability, -1);
 		ao2_ref(mgcp_tech.capabilities, -1);
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(io = io_context_create())) {
@@ -4884,7 +4881,7 @@ static int load_module(void)
 		ast_sched_context_destroy(sched);
 		ao2_ref(global_capability, -1);
 		ao2_ref(mgcp_tech.capabilities, -1);
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (reload_config(0)) {
@@ -4900,7 +4897,7 @@ static int load_module(void)
 		ast_sched_context_destroy(sched);
 		ao2_ref(global_capability, -1);
 		ao2_ref(mgcp_tech.capabilities, -1);
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	ast_rtp_glue_register(&mgcp_rtp_glue);
@@ -5028,5 +5025,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Media Gateway Control
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CHANNEL_DRIVER,
-	.nonoptreq = "res_pktccops",
+	.optional_modules = "res_pktccops",
 );

@@ -16,11 +16,11 @@
  * at the top of the source tree.
  */
 
-/*! 
+/*!
  * \file
  *
  * \brief Old-style G.723.1 frame/timestamp format.
- * 
+ *
  * \arg Extensions: g723, g723sf
  * \ingroup formats
  */
@@ -28,10 +28,8 @@
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -42,11 +40,11 @@ ASTERISK_REGISTER_FILE()
 static struct ast_frame *g723_read(struct ast_filestream *s, int *whennext)
 {
 	unsigned short size;
-	int res;
+	size_t res;
 	int delay;
 	/* Read the delay for the next packet, and schedule again if necessary */
 	/* XXX is this ignored ? */
-	if (fread(&delay, 1, 4, s->f) == 4) 
+	if (fread(&delay, 1, 4, s->f) == 4)
 		delay = ntohl(delay);
 	else
 		delay = -1;
@@ -60,14 +58,18 @@ static struct ast_frame *g723_read(struct ast_filestream *s, int *whennext)
 	if (size > G723_MAX_SIZE) {
 		ast_log(LOG_WARNING, "Size %d is invalid\n", size);
 		/* The file is apparently no longer any good, as we
-		   shouldn't ever get frames even close to this 
+		   shouldn't ever get frames even close to this
 		   size.  */
 		return NULL;
 	}
 	/* Read the data into the buffer */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, size);
-	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) != size) {
-		ast_log(LOG_WARNING, "Short read (%d of %d bytes) (%s)!\n", res, size, strerror(errno));
+	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) != s->fr.datalen) {
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples = 240;
@@ -97,7 +99,7 @@ static int g723_write(struct ast_filestream *s, struct ast_frame *f)
 	if ((res = fwrite(f->data.ptr, 1, f->datalen, s->f)) != f->datalen) {
 		ast_log(LOG_WARNING, "Unable to write frame: res=%d (%s)\n", res, strerror(errno));
 		return -1;
-	}	
+	}
 	return 0;
 }
 
@@ -144,7 +146,7 @@ static int load_module(void)
 	g723_1_f.format = ast_format_g723;
 
 	if (ast_format_def_register(&g723_1_f))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

@@ -20,8 +20,8 @@
 	<support_level>extended</support_level>
  ***/
 
+#define ASTMM_LIBC ASTMM_IGNORE
 #include "asterisk.h"
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/ast_expr.h"
 
@@ -42,9 +42,9 @@ enum ast_lock_type {
 #define MALLOC_FAILURE_MSG \
 	ast_log(LOG_ERROR, "Memory Allocation Failure in function %s at line %d of %s\n", func, lineno, file);
 
-void * attribute_malloc _ast_calloc(size_t num, size_t len, const char *file, int lineno, const char *func);
+void * attribute_malloc __ast_calloc(size_t num, size_t len, const char *file, int lineno, const char *func);
 
-void * attribute_malloc _ast_calloc(size_t num, size_t len, const char *file, int lineno, const char *func)
+void * attribute_malloc __ast_calloc(size_t num, size_t len, const char *file, int lineno, const char *func)
 {
 	void *p;
 
@@ -56,8 +56,6 @@ void * attribute_malloc _ast_calloc(size_t num, size_t len, const char *file, in
 #endif
 
 #ifdef DEBUG_THREADS
-#if !defined(LOW_MEMORY)
-#ifdef HAVE_BKTR
 void ast_store_lock_info(enum ast_lock_type type, const char *filename,
 		        int line_num, const char *func, const char *lock_name, void *lock_addr, struct ast_bt *bt);
 void ast_store_lock_info(enum ast_lock_type type, const char *filename,
@@ -72,6 +70,7 @@ void ast_remove_lock_info(void *lock_addr, struct ast_bt *bt)
     /* not a lot to do in a standalone w/o threading! */
 }
 
+#ifdef HAVE_BKTR
 int __ast_bt_get_addresses(struct ast_bt *bt);
 int __ast_bt_get_addresses(struct ast_bt *bt)
 {
@@ -90,20 +89,6 @@ char **__ast_bt_get_symbols(void **addresses, size_t num_frames)
 	}
 	return foo;
 }
-#else
-void ast_store_lock_info(enum ast_lock_type type, const char *filename,
-		        int line_num, const char *func, const char *lock_name, void *lock_addr);
-void ast_store_lock_info(enum ast_lock_type type, const char *filename,
-		        int line_num, const char *func, const char *lock_name, void *lock_addr)
-{
-    /* not a lot to do in a standalone w/o threading! */
-}
-
-void ast_remove_lock_info(void *lock_addr);
-void ast_remove_lock_info(void *lock_addr)
-{
-    /* not a lot to do in a standalone w/o threading! */
-}
 #endif /* HAVE_BKTR */
 
 void ast_suspend_lock_info(void *lock_addr)
@@ -117,7 +102,6 @@ void ast_mark_lock_acquired(void *foo)
 {
     /* not a lot to do in a standalone w/o threading! */
 }
-#endif
 #endif /* DEBUG_THREADS */
 
 
@@ -159,23 +143,7 @@ unsigned int check_expr(char* buffer, char* error_report);
 int check_eval(char *buffer, char *error_report);
 void parse_file(const char *fname);
 
-void __ast_register_file(const char *file);
-void __ast_register_file(const char *file) { }
-#if !defined(LOW_MEMORY)
 int ast_add_profile(const char *x, uint64_t scale) { return 0;}
-#endif
-int ast_atomic_fetchadd_int_slow(volatile int *p, int v)
-{
-        int ret;
-        ret = *p;
-        *p += v;
-        return ret;
-}
-
-void __ast_unregister_file(const char *file);
-void __ast_unregister_file(const char *file)
-{
-}
 
 char *find_var(const char *varname) /* the list should be pretty short, if there's any list at all */
 {

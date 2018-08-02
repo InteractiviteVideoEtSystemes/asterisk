@@ -82,31 +82,22 @@ int ast_sip_cli_print_sorcery_objectset(void *obj, void *arg, int flags)
 	return 0;
 }
 
-static char *complete_show_sorcery_object(struct ao2_container *container,
+static void complete_show_sorcery_object(struct ao2_container *container,
 	struct ast_sip_cli_formatter_entry *formatter_entry,
-	const char *word, int state)
+	const char *word)
 {
-	char *result = NULL;
-	int wordlen = strlen(word);
-	int which = 0;
-
-	struct ao2_iterator i = ao2_iterator_init(container, 0);
+	size_t wordlen = strlen(word);
 	void *object;
+	struct ao2_iterator i = ao2_iterator_init(container, 0);
 
 	while ((object = ao2_t_iterator_next(&i, "iterate thru endpoints table"))) {
 		const char *id = formatter_entry->get_id(object);
-		if (!strncasecmp(word, id, wordlen)
-			&& ++which > state) {
-			result = ast_strdup(id);
+		if (!strncasecmp(word, id, wordlen)) {
+			ast_cli_completion_add(ast_strdup(id));
 		}
 		ao2_t_ref(object, -1, "toss iterator endpoint ptr before break");
-		if (result) {
-			break;
-		}
 	}
 	ao2_iterator_destroy(&i);
-
-	return result;
 }
 
 static void dump_str_and_free(int fd, struct ast_str *buf)
@@ -197,7 +188,7 @@ char *ast_sip_cli_traverse_objects(struct ast_cli_entry *e, int cmd, struct ast_
 	ast_str_append(&context.output_buffer, 0, "\n");
 	formatter_entry->print_header(NULL, &context, 0);
 	ast_str_append(&context.output_buffer, 0,
-		" =========================================================================================\n\n");
+		"==========================================================================================\n\n");
 
 	if (is_container || cmd == CLI_GENERATE) {
 		container = formatter_entry->get_container(regex);
@@ -211,7 +202,8 @@ char *ast_sip_cli_traverse_objects(struct ast_cli_entry *e, int cmd, struct ast_
 
 	if (cmd == CLI_GENERATE) {
 		ast_free(context.output_buffer);
-		return complete_show_sorcery_object(container, formatter_entry, a->word, a->n);
+		complete_show_sorcery_object(container, formatter_entry, a->word);
+		return NULL;
 	}
 
 	if (is_container) {
@@ -221,6 +213,8 @@ char *ast_sip_cli_traverse_objects(struct ast_cli_entry *e, int cmd, struct ast_
 			return CLI_SUCCESS;
 		}
 		ao2_callback(container, OBJ_NODATA, formatter_entry->print_body, &context);
+		ast_str_append(&context.output_buffer, 0, "\nObjects found: %d\n", ao2_container_count(container));
+
 	} else {
 		if (ast_strlen_zero(object_id)) {
 			ast_free(context.output_buffer);

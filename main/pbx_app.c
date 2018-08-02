@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/cli.h"
 #include "asterisk/linkedlists.h"
@@ -277,7 +275,7 @@ static char *handle_show_application(struct ast_cli_entry *e, int cmd, struct as
 		 * application at one time. You can type 'show application Dial Echo' and
 		 * you will see informations about these two applications ...
 		 */
-		return ast_complete_applications(a->line, a->word, a->n);
+		return ast_complete_applications(a->line, a->word, -1);
 	}
 
 	if (a->argc < 4) {
@@ -315,7 +313,6 @@ static char *handle_show_applications(struct ast_cli_entry *e, int cmd, struct a
 	int like = 0, describing = 0;
 	int total_match = 0;    /* Number of matches in like clause */
 	int total_apps = 0;     /* Number of apps registered */
-	static const char * const choices[] = { "like", "describing", NULL };
 
 	switch (cmd) {
 	case CLI_INIT:
@@ -327,7 +324,7 @@ static char *handle_show_applications(struct ast_cli_entry *e, int cmd, struct a
 			"       If 'describing', <text> will be a substring of the description\n";
 		return NULL;
 	case CLI_GENERATE:
-		return (a->pos != 3) ? NULL : ast_cli_complete(a->word, choices, a->n);
+		return NULL;
 	}
 
 	AST_RWLIST_RDLOCK(&apps);
@@ -397,6 +394,11 @@ int ast_unregister_application(const char *app)
 	struct ast_app *cur;
 	int cmp;
 
+	/* Anticipate need for conlock in unreference_cached_app(), in order to avoid
+	 * possible deadlock with pbx_extension_helper()/pbx_findapp()
+	 */
+	ast_rdlock_contexts();
+
 	AST_RWLIST_WRLOCK(&apps);
 	AST_RWLIST_TRAVERSE_SAFE_BEGIN(&apps, cur, list) {
 		cmp = strcasecmp(app, cur->name);
@@ -419,6 +421,8 @@ int ast_unregister_application(const char *app)
 	AST_RWLIST_TRAVERSE_SAFE_END;
 	AST_RWLIST_UNLOCK(&apps);
 
+	ast_unlock_contexts();
+
 	return cur ? 0 : -1;
 }
 
@@ -433,20 +437,23 @@ char *ast_complete_applications(const char *line, const char *word, int state)
 	AST_RWLIST_RDLOCK(&apps);
 	AST_RWLIST_TRAVERSE(&apps, app, list) {
 		cmp = strncasecmp(word, app->name, wordlen);
-		if (cmp > 0) {
-			continue;
-		}
-		if (!cmp) {
-			/* Found match. */
-			if (++which <= state) {
-				/* Not enough matches. */
-				continue;
-			}
-			ret = ast_strdup(app->name);
+		if (cmp < 0) {
+			/* No more matches. */
 			break;
+		} else if (!cmp) {
+			/* Found match. */
+			if (state != -1) {
+				if (++which <= state) {
+					/* Not enough matches. */
+					continue;
+				}
+				ret = ast_strdup(app->name);
+				break;
+			}
+			if (ast_cli_completion_add(ast_strdup(app->name))) {
+				break;
+			}
 		}
-		/* Not in container. */
-		break;
 	}
 	AST_RWLIST_UNLOCK(&apps);
 

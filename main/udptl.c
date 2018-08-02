@@ -63,12 +63,11 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <sys/time.h>
 #include <signal.h>
 #include <fcntl.h>
 
+#include "asterisk/module.h"
 #include "asterisk/udptl.h"
 #include "asterisk/frame.h"
 #include "asterisk/channel.h"
@@ -239,9 +238,9 @@ static int udptl_pre_apply_config(void);
 static struct aco_type general_option = {
 	.type = ACO_GLOBAL,
 	.name = "global",
-	.category_match = ACO_WHITELIST,
+	.category_match = ACO_WHITELIST_EXACT,
 	.item_offset = offsetof(struct udptl_config, general),
-	.category = "^general$",
+	.category = "general",
 };
 
 static struct aco_type *general_options[] = ACO_TYPES(&general_option);
@@ -305,15 +304,14 @@ static int decode_open_type(uint8_t *buf, unsigned int limit, unsigned int *len,
 	if (decode_length(buf, limit, len, &octet_cnt) != 0)
 		return -1;
 
-	if (octet_cnt > 0) {
-		/* Make sure the buffer contains at least the number of bits requested */
-		if ((*len + octet_cnt) > limit)
-			return -1;
-
-		*p_num_octets = octet_cnt;
-		*p_object = &buf[*len];
-		*len += octet_cnt;
+	/* Make sure the buffer contains at least the number of bits requested */
+	if ((*len + octet_cnt) > limit) {
+		return -1;
 	}
+
+	*p_num_octets = octet_cnt;
+	*p_object = &buf[*len];
+	*len += octet_cnt;
 
 	return 0;
 }
@@ -770,6 +768,18 @@ struct ast_frame *ast_udptl_read(struct ast_udptl *udptl)
 		return &ast_null_frame;
 	}
 
+	/*
+	 * If early media isn't turned on for the channel driver, it's going to
+	 * drop this frame.  By that time though, udptl has already incremented
+	 * the expected sequence number so if the CPE re-sends, the second frame
+	 * will be dropped as a dup even though the first frame never went through.
+	 * So we drop the frame here if the channel isn't up. 'tag' is set by the
+	 * channel drivers on T38_ENABLED or T38_PEER_REINVITE.
+	 */
+	if (udptl->tag == NULL) {
+		return &ast_null_frame;
+	}
+
 	if (udptl->nat) {
 		/* Send to whoever sent to us */
 		if (ast_sockaddr_cmp(&udptl->them, &addr)) {
@@ -1003,7 +1013,6 @@ struct ast_udptl *ast_udptl_new_with_bindaddr(struct ast_sched_context *sched, s
 	int x;
 	int startplace;
 	int i;
-	long int flags;
 	RAII_VAR(struct udptl_config *, cfg, ao2_global_obj_ref(globals), ao2_cleanup);
 
 	if (!cfg || !cfg->general) {
@@ -1034,8 +1043,7 @@ struct ast_udptl *ast_udptl_new_with_bindaddr(struct ast_sched_context *sched, s
 		ast_log(LOG_WARNING, "Unable to allocate socket: %s\n", strerror(errno));
 		return NULL;
 	}
-	flags = fcntl(udptl->fd, F_GETFL);
-	fcntl(udptl->fd, F_SETFL, flags | O_NONBLOCK);
+	ast_fd_set_flags(udptl->fd, O_NONBLOCK);
 
 #ifdef SO_NO_CHECK
 	if (cfg->general->nochecksums)
@@ -1348,9 +1356,10 @@ static int udptl_pre_apply_config(void) {
 	return 0;
 }
 
-int ast_udptl_reload(void)
+static int reload_module(void)
 {
 	__ast_udptl_reload(1);
+
 	return 0;
 }
 
@@ -1358,17 +1367,19 @@ int ast_udptl_reload(void)
  * \internal
  * \brief Clean up resources on Asterisk shutdown
  */
-static void udptl_shutdown(void)
+static int unload_module(void)
 {
 	ast_cli_unregister_multiple(cli_udptl, ARRAY_LEN(cli_udptl));
 	ao2_t_global_obj_release(globals, "Unref udptl global container in shutdown");
 	aco_info_destroy(&cfg_info);
+
+	return 0;
 }
 
-void ast_udptl_init(void)
+static int load_module(void)
 {
 	if (aco_info_init(&cfg_info)) {
-		return;
+		return AST_MODULE_LOAD_FAILURE;
 	}
 
 	aco_option_register(&cfg_info, "udptlstart", ACO_EXACT, general_options, __stringify(DEFAULT_UDPTLSTART),
@@ -1400,5 +1411,14 @@ void ast_udptl_init(void)
 
 	ast_cli_register_multiple(cli_udptl, ARRAY_LEN(cli_udptl));
 
-	ast_register_cleanup(udptl_shutdown);
+	return AST_MODULE_LOAD_SUCCESS;
 }
+
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_GLOBAL_SYMBOLS | AST_MODFLAG_LOAD_ORDER, "UDPTL",
+	.support_level = AST_MODULE_SUPPORT_CORE,
+	.load = load_module,
+	.unload = unload_module,
+	.reload = reload_module,
+	.load_pri = AST_MODPRI_CORE,
+	.requires = "extconfig",
+);

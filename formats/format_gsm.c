@@ -26,10 +26,8 @@
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -55,12 +53,15 @@ static const char gsm_silence[] = /* 33 */
 
 static struct ast_frame *gsm_read(struct ast_filestream *s, int *whennext)
 {
-	int res;
+	size_t res;
 
-	AST_FRAME_SET_BUFFER(&(s->fr), s->buf, AST_FRIENDLY_OFFSET, GSM_FRAME_SIZE)
+	AST_FRAME_SET_BUFFER(&(s->fr), s->buf, AST_FRIENDLY_OFFSET, GSM_FRAME_SIZE);
 	if ((res = fread(s->fr.data.ptr, 1, GSM_FRAME_SIZE, s->f)) != GSM_FRAME_SIZE) {
-		if (res)
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), GSM_FRAME_SIZE, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples = GSM_SAMPLES;
@@ -133,7 +134,7 @@ static int gsm_seek(struct ast_filestream *fs, off_t sample_offset, int whence)
 		int i;
 		fseeko(fs->f, 0, SEEK_END);
 		for (i=0; i< (offset - max) / GSM_FRAME_SIZE; i++) {
-			if (!fwrite(gsm_silence, 1, GSM_FRAME_SIZE, fs->f)) {
+			if (fwrite(gsm_silence, 1, GSM_FRAME_SIZE, fs->f) != GSM_FRAME_SIZE) {
 				ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
 			}
 		}
@@ -185,7 +186,7 @@ static int load_module(void)
 {
 	gsm_f.format = ast_format_gsm;
 	if (ast_format_def_register(&gsm_f))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

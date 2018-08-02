@@ -26,10 +26,8 @@
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -42,13 +40,16 @@ ASTERISK_REGISTER_FILE()
 
 static struct ast_frame *siren14read(struct ast_filestream *s, int *whennext)
 {
-	int res;
-	/* Send a frame from the file to the appropriate channel */
+	size_t res;
 
+	/* Send a frame from the file to the appropriate channel */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, BUF_SIZE);
 	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) != s->fr.datalen) {
-		if (res)
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples = BYTES_TO_SAMPLES(res);

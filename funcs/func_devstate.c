@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2007, Digium, Inc.
  *
- * Russell Bryant <russell@digium.com> 
+ * Russell Bryant <russell@digium.com>
  *
  * See http://www.asterisk.org for more information about
  * the Asterisk project. Please do not directly contact
@@ -20,7 +20,7 @@
  *
  * \brief Manually controlled blinky lights
  *
- * \author Russell Bryant <russell@digium.com> 
+ * \author Russell Bryant <russell@digium.com>
  *
  * \ingroup functions
  *
@@ -35,8 +35,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/channel.h"
@@ -341,7 +339,7 @@ static int load_module(void)
 		if (dev_name <= (const char *) 1)
 			continue;
 		ast_devstate_changed(ast_devstate_val(db_entry->data),
-			AST_DEVSTATE_CACHABLE, "Custom:%s\n", dev_name);
+			AST_DEVSTATE_CACHABLE, "Custom:%s", dev_name);
 	}
 	ast_db_freetree(db_tree);
 	db_tree = NULL;

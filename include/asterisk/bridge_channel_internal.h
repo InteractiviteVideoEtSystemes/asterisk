@@ -84,7 +84,7 @@ struct ast_bridge_channel *bridge_channel_internal_alloc(struct ast_bridge *brid
 
 /*!
  * \internal
- * \brief Clear owed events by the channel to the original bridge.
+ * \brief Settle owed events by the channel to the original bridge.
  * \since 12.0.0
  *
  * \param orig_bridge Original bridge the channel was in before leaving.
@@ -95,6 +95,17 @@ struct ast_bridge_channel *bridge_channel_internal_alloc(struct ast_bridge *brid
  * \return Nothing
  */
 void bridge_channel_settle_owed_events(struct ast_bridge *orig_bridge, struct ast_bridge_channel *bridge_channel);
+
+/*!
+ * \internal
+ * \brief Queue any deferred frames on the channel.
+ * \since 13.17.0
+ *
+ * \param bridge_channel Channel that the deferred frames should be pulled from and queued to.
+ *
+ * \return Nothing
+ */
+void bridge_channel_queue_deferred_frames(struct ast_bridge_channel *bridge_channel);
 
 /*!
  * \internal
@@ -118,6 +129,27 @@ int bridge_channel_internal_push(struct ast_bridge_channel *bridge_channel);
 
 /*!
  * \internal
+ * \brief Push the bridge channel into its specified bridge.
+ * \since 13.8.0
+ *
+ * \param bridge_channel Channel to push.
+ * \param optimized non-zero if the push with swap is for an optimization.
+ *
+ * \note A ref is not held by bridge_channel->swap when calling because the
+ * push with swap happens immediately.
+ *
+ * \note On entry, bridge_channel->bridge is already locked.
+ *
+ * \retval 0 on success.
+ * \retval -1 on failure.  The channel did not get pushed.
+ *
+ * \note On failure the caller must call
+ * ast_bridge_features_remove(bridge_channel->features, AST_BRIDGE_HOOK_REMOVE_ON_PULL);
+ */
+int bridge_channel_internal_push_full(struct ast_bridge_channel *bridge_channel, int optimized);
+
+/*!
+ * \internal
  * \brief Pull the bridge channel out of its current bridge.
  * \since 12.0.0
  *
@@ -130,47 +162,20 @@ int bridge_channel_internal_push(struct ast_bridge_channel *bridge_channel);
 void bridge_channel_internal_pull(struct ast_bridge_channel *bridge_channel);
 
 /*!
- * \brief Internal bridge channel wait condition and associated result.
- */
-struct bridge_channel_internal_cond {
-	/*! Lock for the data structure */
-	ast_mutex_t lock;
-	/*! Wait condition */
-	ast_cond_t cond;
-	/*! Wait until done */
-	int done;
-	/*! The bridge channel */
-	struct ast_bridge_channel *bridge_channel;
-};
-
-/*!
- * \internal
- * \brief Wait for the expected signal.
- * \since 13.5.0
+ * \brief Signal imparting threads to wake up.
+ * \since 13.9.0
  *
- * \param cond the wait object
+ * \param chan Channel imparted that we need to signal.
  *
  * \return Nothing
  */
-void bridge_channel_internal_wait(struct bridge_channel_internal_cond *cond);
-
-/*!
- * \internal
- * \brief Signal the condition wait.
- * \since 13.5.0
- *
- * \param cond the wait object
- *
- * \return Nothing
- */
-void bridge_channel_internal_signal(struct bridge_channel_internal_cond *cond);
+void bridge_channel_impart_signal(struct ast_channel *chan);
 
 /*!
  * \internal
  * \brief Join the bridge_channel to the bridge (blocking)
  *
  * \param bridge_channel The Channel in the bridge
- * \param cond data used for signaling
  *
  * \note The bridge_channel->swap holds a channel reference for the swap
  * channel going into the bridging system.  The ref ensures that the swap
@@ -185,8 +190,7 @@ void bridge_channel_internal_signal(struct bridge_channel_internal_cond *cond);
  * \retval 0 bridge channel successfully joined the bridge
  * \retval -1 bridge channel failed to join the bridge
  */
-int bridge_channel_internal_join(struct ast_bridge_channel *bridge_channel,
-				 struct bridge_channel_internal_cond *cond);
+int bridge_channel_internal_join(struct ast_bridge_channel *bridge_channel);
 
 /*!
  * \internal

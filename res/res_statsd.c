@@ -52,8 +52,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/config_options.h"
 #include "asterisk/module.h"
 #include "asterisk/netsock2.h"
@@ -233,8 +231,8 @@ static struct aco_type global_option = {
 	.type = ACO_GLOBAL,
 	.name = "global",
 	.item_offset = offsetof(struct conf, global),
-	.category = "^general$",
-	.category_match = ACO_WHITELIST
+	.category = "general",
+	.category_match = ACO_WHITELIST_EXACT,
 };
 
 static struct aco_type *global_options[] = ACO_TYPES(&global_option);
@@ -351,7 +349,8 @@ static int load_module(void)
 	}
 
 	if (statsd_init() != 0) {
-		return AST_MODULE_LOAD_FAILURE;
+		aco_info_destroy(&cfg_info);
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;
@@ -379,13 +378,13 @@ static int reload_module(void)
 	}
 }
 
-/* The priority of this module is set to be as low as possible, since it could
- * be used by any other sort of module.
+/* The priority of this module is set just after realtime, since it loads
+ * configuration and could be used by any other sort of module.
  */
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_GLOBAL_SYMBOLS | AST_MODFLAG_LOAD_ORDER, "Statsd client support",
 	.support_level = AST_MODULE_SUPPORT_EXTENDED,
 	.load = load_module,
 	.unload = unload_module,
 	.reload = reload_module,
-	.load_pri = 0,
+	.load_pri = AST_MODPRI_REALTIME_DRIVER + 5,
 );

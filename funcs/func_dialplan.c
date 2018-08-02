@@ -20,7 +20,7 @@
  *
  * \author Gregory Nietsky AKA irroot <gregory@networksentry.co.za>
  * \author Russell Bryant <russell@digium.com>
- * 
+ *
  * \ingroup functions
  */
 
@@ -29,8 +29,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/channel.h"

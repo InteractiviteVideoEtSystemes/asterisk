@@ -1,6 +1,6 @@
 /*
  * Asterisk -- An open source telephony toolkit.
- * 
+ *
  * Copyright (C) 1999-2006, Digium, Inc.
  *
  * Mark Spencer <markster@digium.com>
@@ -27,35 +27,18 @@
 #define	__STDC_VERSION__ 0
 #endif
 
-#ifdef HAVE_INTTYPES_H
 #include <inttypes.h>
-#endif
-
-#ifdef HAVE_LIMITS_H
 #include <limits.h>
-#endif
-
-#ifdef HAVE_UNISTD_H
 #include <unistd.h>
-#endif
 
 #ifdef HAVE_STDDEF_H
 #include <stddef.h>
 #endif
 
-#ifdef HAVE_STDINT_H
 #include <stdint.h>
-#endif
-
-#ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
-#endif
-
 #include <stdarg.h>
-
-#ifdef HAVE_STDLIB_H
 #include <stdlib.h>
-#endif
 
 #ifdef HAVE_ALLOCA_H
 #include <alloca.h>    /* not necessarily present - could be in stdlib */
@@ -65,12 +48,10 @@
 
 #include <stdio.h>	/* this is always present */
 
-#ifdef HAVE_STRING_H
 #include <string.h>
-#endif
 
 #ifndef AST_POLL_COMPAT
-#include <sys/poll.h>
+#include <poll.h>
 #else
 #include "asterisk/poll-compat.h"
 #endif
@@ -83,7 +64,7 @@
 void closefrom(int lowfd);
 #endif
 
-#if !defined(HAVE_ASPRINTF) && !defined(__AST_DEBUG_MALLOC)
+#if !defined(HAVE_ASPRINTF)
 int __attribute__((format(printf, 2, 3))) asprintf(char **str, const char *fmt, ...);
 #endif
 
@@ -115,7 +96,7 @@ int setenv(const char *name, const char *value, int overwrite);
 char *strcasestr(const char *, const char *);
 #endif
 
-#if !defined(HAVE_STRNDUP) && !defined(__AST_DEBUG_MALLOC)
+#if !defined(HAVE_STRNDUP)
 char *strndup(const char *, size_t);
 #endif
 
@@ -135,7 +116,7 @@ uint64_t strtoq(const char *nptr, char **endptr, int base);
 int unsetenv(const char *name);
 #endif
 
-#if !defined(HAVE_VASPRINTF) && !defined(__AST_DEBUG_MALLOC)
+#if !defined(HAVE_VASPRINTF)
 int __attribute__((format(printf, 2, 0))) vasprintf(char **strp, const char *fmt, va_list ap);
 #endif
 
@@ -158,7 +139,6 @@ void timersub(struct timeval *tvend, struct timeval *tvstart, struct timeval *tv
 
 #include <alloca.h>
 #include <strings.h>
-#include <string.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <signal.h>
@@ -207,7 +187,7 @@ typedef unsigned int	uint;
 typedef unsigned long long uint64_t;
 #endif
 
-/* glob compat stuff */ 
+/* glob compat stuff */
 #if defined(__Darwin__) || defined(__CYGWIN__)
 #define GLOB_ABORTED GLOB_ABEND
 #endif

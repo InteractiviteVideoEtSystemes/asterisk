@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/cli.h"
 #include "asterisk/linkedlists.h"
@@ -302,7 +300,8 @@ int ast_custom_function_unregister(struct ast_custom_function *acf)
  * \return True (non-zero) if reads escalate privileges.
  * \return False (zero) if reads just read.
  */
-static int read_escalates(const struct ast_custom_function *acf) {
+static int read_escalates(const struct ast_custom_function *acf)
+{
 	return acf->read_escalates;
 }
 
@@ -313,7 +312,8 @@ static int read_escalates(const struct ast_custom_function *acf) {
  * \return True (non-zero) if writes escalate privileges.
  * \return False (zero) if writes just write.
  */
-static int write_escalates(const struct ast_custom_function *acf) {
+static int write_escalates(const struct ast_custom_function *acf)
+{
 	return acf->write_escalates;
 }
 
@@ -482,7 +482,6 @@ int ast_thread_inhibit_escalations(void)
 
 	thread_inhibit_escalations = ast_threadstorage_get(
 		&thread_inhibit_escalations_tl, sizeof(*thread_inhibit_escalations));
-
 	if (thread_inhibit_escalations == NULL) {
 		ast_log(LOG_ERROR, "Error inhibiting privilege escalations for current thread\n");
 		return -1;
@@ -490,6 +489,23 @@ int ast_thread_inhibit_escalations(void)
 
 	*thread_inhibit_escalations = 1;
 	return 0;
+}
+
+int ast_thread_inhibit_escalations_swap(int inhibit)
+{
+	int *thread_inhibit_escalations;
+	int orig;
+
+	thread_inhibit_escalations = ast_threadstorage_get(
+		&thread_inhibit_escalations_tl, sizeof(*thread_inhibit_escalations));
+	if (thread_inhibit_escalations == NULL) {
+		ast_log(LOG_ERROR, "Error swapping privilege escalations inhibit for current thread\n");
+		return -1;
+	}
+
+	orig = *thread_inhibit_escalations;
+	*thread_inhibit_escalations = !!inhibit;
+	return orig;
 }
 
 /*!
@@ -505,7 +521,6 @@ static int thread_inhibits_escalations(void)
 
 	thread_inhibit_escalations = ast_threadstorage_get(
 		&thread_inhibit_escalations_tl, sizeof(*thread_inhibit_escalations));
-
 	if (thread_inhibit_escalations == NULL) {
 		ast_log(LOG_ERROR, "Error checking thread's ability to run dangerous functions\n");
 		/* On error, assume that we are inhibiting */

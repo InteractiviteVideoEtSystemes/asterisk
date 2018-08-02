@@ -20,17 +20,15 @@
  *
  * \brief Flat, binary, ADPCM vox file format.
  * \arg File name extensions: vox
- * 
+ *
  * \ingroup formats
  */
 
 /*** MODULEINFO
 	<support_level>extended</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -42,13 +40,16 @@ ASTERISK_REGISTER_FILE()
 
 static struct ast_frame *vox_read(struct ast_filestream *s, int *whennext)
 {
-	int res;
+	size_t res;
 
 	/* Send a frame from the file to the appropriate channel */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, BUF_SIZE);
 	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) < 1) {
-		if (res)
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples = res * 2;
@@ -121,12 +122,13 @@ static off_t vox_tell(struct ast_filestream *fs)
 {
      off_t offset;
      offset = ftello(fs->f) << 1;
-     return offset; 
+     return offset;
 }
 
 static struct ast_format_def vox_f = {
 	.name = "vox",
 	.exts = "vox",
+	.mime_types = "audio/x-vox",
 	.write = vox_write,
 	.seek = vox_seek,
 	.trunc = vox_trunc,
@@ -139,7 +141,7 @@ static int load_module(void)
 {
 	vox_f.format = ast_format_adpcm;
 	if (ast_format_def_register(&vox_f))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

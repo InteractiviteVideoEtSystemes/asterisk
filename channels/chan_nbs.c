@@ -19,7 +19,7 @@
 /*! \file
  *
  * \brief Network broadcast sound support channel driver
- * 
+ *
  * \author Mark Spencer <markster@digium.com>
  *
  * \ingroup channel_drivers
@@ -27,12 +27,10 @@
 
 /*** MODULEINFO
 	<depend>nbs</depend>
-	<support_level>extended</support_level>	
+	<support_level>deprecated</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -55,7 +53,7 @@ static char context[AST_MAX_EXTENSION] = "default";
 static const char type[] = "NBS";
 
 /* NBS creates private structures on demand */
-   
+
 struct nbs_pvt {
 	NBS *nbs;
 	struct ast_channel *owner;		/* Channel we belong to, possibly NULL */
@@ -140,7 +138,7 @@ static struct nbs_pvt *nbs_alloc(const char *data)
 				flags |= NBS_FLAG_OVERRIDE;
 		} else
 			flags = NBS_FLAG_OVERSPEAK;
-		
+
 		ast_copy_string(p->stream, stream, sizeof(p->stream));
 		p->nbs = nbs_newstream("asterisk", stream, flags);
 		if (!p->nbs) {
@@ -187,7 +185,7 @@ static int nbs_xwrite(struct ast_channel *ast, struct ast_frame *frame)
 		/* Don't try tos end audio on-hook */
 		return 0;
 	}
-	if (nbs_write(p->nbs, frame->data.ptr, frame->datalen / 2) < 0) 
+	if (nbs_write(p->nbs, frame->data.ptr, frame->datalen / 2) < 0)
 		return -1;
 	return 0;
 }
@@ -259,16 +257,17 @@ static int unload_module(void)
 static int load_module(void)
 {
 	if (!(nbs_tech.capabilities = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_format_cap_append(nbs_tech.capabilities, ast_format_slin, 0);
 	/* Make sure we can register our channel type */
 	if (ast_channel_register(&nbs_tech)) {
 		ast_log(LOG_ERROR, "Unable to register channel class %s\n", type);
+		ao2_ref(nbs_tech.capabilities, -1);
+		nbs_tech.capabilities = NULL;
 		return AST_MODULE_LOAD_DECLINE;
 	}
 	return AST_MODULE_LOAD_SUCCESS;
 }
 
-AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "Network Broadcast Sound Support");
-
+AST_MODULE_INFO_STANDARD_DEPRECATED(ASTERISK_GPL_KEY, "Network Broadcast Sound Support");

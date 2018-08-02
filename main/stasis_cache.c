@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/astobj2.h"
 #include "asterisk/hashtab.h"
 #include "asterisk/stasis_internal.h"
@@ -842,7 +840,7 @@ static void caching_topic_exec(void *data, struct stasis_subscription *sub,
 			}
 			ao2_cleanup(update);
 		} else {
-			ast_log(LOG_ERROR,
+			ast_debug(1,
 				"Attempting to remove an item from the %s cache that isn't there: %s %s\n",
 				stasis_topic_name(caching_topic->topic),
 				stasis_message_type_name(msg_type), msg_id);
@@ -870,9 +868,8 @@ static void caching_topic_exec(void *data, struct stasis_subscription *sub,
 
 struct stasis_caching_topic *stasis_caching_topic_create(struct stasis_topic *original_topic, struct stasis_cache *cache)
 {
-	RAII_VAR(struct stasis_caching_topic *, caching_topic, NULL, ao2_cleanup);
-	struct stasis_subscription *sub;
-	RAII_VAR(char *, new_name, NULL, ast_free);
+	struct stasis_caching_topic *caching_topic;
+	char *new_name;
 	int ret;
 
 	ret = ast_asprintf(&new_name, "%s-cached", stasis_topic_name(original_topic));
@@ -883,28 +880,31 @@ struct stasis_caching_topic *stasis_caching_topic_create(struct stasis_topic *or
 	caching_topic = ao2_alloc_options(sizeof(*caching_topic),
 		stasis_caching_topic_dtor, AO2_ALLOC_OPT_LOCK_NOLOCK);
 	if (caching_topic == NULL) {
+		ast_free(new_name);
+
 		return NULL;
 	}
 
 	caching_topic->topic = stasis_topic_create(new_name);
+	ast_free(new_name);
 	if (caching_topic->topic == NULL) {
+		ao2_ref(caching_topic, -1);
+
 		return NULL;
 	}
 
 	ao2_ref(cache, +1);
 	caching_topic->cache = cache;
 
-	sub = internal_stasis_subscribe(original_topic, caching_topic_exec, caching_topic, 0, 0);
-	if (sub == NULL) {
+	caching_topic->sub = internal_stasis_subscribe(original_topic, caching_topic_exec, caching_topic, 0, 0);
+	if (caching_topic->sub == NULL) {
+		ao2_ref(caching_topic, -1);
+
 		return NULL;
 	}
 
 	ao2_ref(original_topic, +1);
 	caching_topic->original_topic = original_topic;
-
-	/* This is for the reference contained in the subscription above */
-	ao2_ref(caching_topic, +1);
-	caching_topic->sub = sub;
 
 	/* The subscription holds the reference, so no additional ref bump. */
 	return caching_topic;
@@ -930,4 +930,3 @@ int stasis_cache_init(void)
 
 	return 0;
 }
-

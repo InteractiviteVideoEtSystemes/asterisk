@@ -27,8 +27,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <sys/stat.h>   /* stat(2) */
 
 #include "asterisk/module.h"
@@ -309,7 +307,7 @@ static int stat_read(struct ast_channel *chan, const char *cmd, char *data,
 			snprintf(buf, len, "%d", (int) s.st_ctime);
 			break;
 		case 'm':
-			snprintf(buf, len, "%o", s.st_mode);
+			snprintf(buf, len, "%o", (unsigned int) s.st_mode);
 			break;
 		}
 	}
@@ -624,7 +622,7 @@ static int file_read(struct ast_channel *chan, const char *cmd, char *data, stru
 				ast_log(LOG_ERROR, "Cannot seek to offset %" PRId64 ": %s\n", i, strerror(errno));
 			}
 			end = fread(fbuf, 1, sizeof(fbuf), ff);
-			for (pos = (end < sizeof(fbuf) ? fbuf + end - 1 : fbuf + sizeof(fbuf) - 1); pos > fbuf - 1; pos--) {
+			for (pos = (end < sizeof(fbuf) ? fbuf + end - 1 : fbuf + sizeof(fbuf) - 1); pos >= fbuf; pos--) {
 				LINE_COUNTER(pos, format, count);
 
 				if (length < 0 && count * -1 == length) {
@@ -1024,7 +1022,7 @@ static int file_write(struct ast_channel *chan, const char *cmd, char *data, con
 						fclose(ff);
 						return -1;
 					}
-					for (pos = fbuf + sizeof(fbuf) - 1; pos > fbuf - 1; pos--) {
+					for (pos = fbuf + sizeof(fbuf) - 1; pos >= fbuf; pos--) {
 						LINE_COUNTER(pos, newline_format, count);
 
 						if (length < 0 && count * -1 == length) {

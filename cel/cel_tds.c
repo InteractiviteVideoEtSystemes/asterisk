@@ -61,8 +61,6 @@ CREATE TABLE [dbo].[cel] (
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <time.h>
 #include <math.h>
 
@@ -582,4 +580,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "FreeTDS CEL Backend",
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CDR_DRIVER,
+	.requires = "cel",
 );

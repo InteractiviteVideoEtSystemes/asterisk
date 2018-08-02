@@ -54,8 +54,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/app.h"
 #include "asterisk/module.h"
 #include "asterisk/res_mwi_external.h"
@@ -82,16 +80,6 @@ struct ast_mwi_mailbox_object {
 };
 
 static struct ast_sorcery *mwi_sorcery;
-
-void ast_mwi_external_ref(void)
-{
-	ast_module_ref(ast_module_info->self);
-}
-
-void ast_mwi_external_unref(void)
-{
-	ast_module_unref(ast_module_info->self);
-}
 
 /*!
  * \internal

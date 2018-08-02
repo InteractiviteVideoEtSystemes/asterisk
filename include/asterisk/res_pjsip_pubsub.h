@@ -166,6 +166,20 @@ struct ast_datastore *ast_sip_publication_get_datastore(struct ast_sip_publicati
 void ast_sip_publication_remove_datastore(struct ast_sip_publication *publication, const char *name);
 
 /*!
+ * \brief Get the datastores container for a publication
+ *
+ * \param publication The publication to get the datastores container from
+ *
+ * \retval NULL datastores container not present
+ * \retval non-NULL datastores container
+ *
+ * \note The container is NOT returned with reference count bumped
+ *
+ * \since 14.0.0
+ */
+struct ao2_container *ast_sip_publication_get_datastores(const struct ast_sip_publication *publication);
+
+/*!
  * \brief Opaque structure representing an RFC 3265 SIP subscription
  */
 struct ast_sip_subscription;
@@ -214,9 +228,9 @@ enum ast_sip_subscription_notify_reason {
 	AST_SIP_SUBSCRIPTION_NOTIFY_REASON_OTHER
 };
 
-/*! Type used for conveying mailbox state */
-#define AST_SIP_EXTEN_STATE_DATA "ast_sip_exten_state_data"
 /*! Type used for extension state/presence */
+#define AST_SIP_EXTEN_STATE_DATA "ast_sip_exten_state_data"
+/*! Type used for conveying mailbox state */
 #define AST_SIP_MESSAGE_ACCUMULATOR "ast_sip_message_accumulator"
 
 /*!
@@ -339,6 +353,14 @@ struct ast_sip_subscription_handler {
 struct ast_sip_subscription *ast_sip_create_subscription(const struct ast_sip_subscription_handler *handler,
 		struct ast_sip_endpoint *endpoint, const char *resource);
 
+/*!
+ * \brief Get the pjsip dialog that is associated with this subscription
+ * \since 13.9.0
+ *
+ * \retval NULL Could not get dialog
+ * \retval non-NULL The dialog
+ */
+pjsip_dialog *ast_sip_subscription_get_dialog(struct ast_sip_subscription *sub);
 
 /*!
  * \brief Get the endpoint that is associated with this subscription
@@ -377,6 +399,18 @@ struct ast_taskprocessor *ast_sip_subscription_get_serializer(struct ast_sip_sub
  * \retval non-zero Failure
  */
 int ast_sip_subscription_notify(struct ast_sip_subscription *sub, struct ast_sip_body_data *notify_data, int terminate);
+
+/*!
+ * \brief Retrieve the local sip uri for this subscription
+ * \since 13.9.0
+ *
+ * This is the local sip URI of the subscribed resource.
+ *
+ * \param sub The subscription
+ * \retval NULL Could not get uri
+ * \retval non-NULL The local pjsip_sip_uri
+ */
+pjsip_sip_uri *ast_sip_subscription_get_sip_uri(struct ast_sip_subscription *sub);
 
 /*!
  * \brief Retrieve the local URI for this subscription
@@ -496,6 +530,20 @@ struct ast_datastore *ast_sip_subscription_get_datastore(struct ast_sip_subscrip
  * \param name The name of the datastore to remove
  */
 void ast_sip_subscription_remove_datastore(struct ast_sip_subscription *subscription, const char *name);
+
+/*!
+ * \brief Get the datastores container for a subscription
+ *
+ * \param subscription The subscription to get the datastores container from
+ *
+ * \retval NULL datastores container not present
+ * \retval non-NULL datastores container
+ *
+ * \note The container is NOT returned with reference count bumped
+ *
+ * \since 14.0.0
+ */
+struct ao2_container *ast_sip_subscription_get_datastores(const struct ast_sip_subscription *subscription);
 
 /*!
  * \brief Register a subscription handler
@@ -629,6 +677,19 @@ int ast_sip_pubsub_generate_body_content(const char *content_type,
 		const char *content_subtype, struct ast_sip_body_data *data, struct ast_str **str);
 
 /*!
+ * \brief Is a body generator registered for the given type/subtype.
+ * \since 14.0.0
+ *
+ * \param type The content type of the body
+ * \param subtype The content subtype of the body
+ *
+ * \note In "plain/text", "plain" is the type and "text" is the subtype.
+ *
+ * \retval non-zero if a generator is registered.
+ */
+int ast_sip_pubsub_is_body_generator_registered(const char *type, const char *subtype);
+
+/*!
  * \since 13.0.0
  * \brief Register a body generator with the pubsub core.
  *
@@ -692,14 +753,5 @@ const char *ast_sip_subscription_get_body_subtype(struct ast_sip_subscription *s
  * \return Nothing
  */
 void ast_sip_subscription_destroy(struct ast_sip_subscription *sub);
-
-/*! \brief Determines whether the res_pjsip_pubsub module is loaded */
-#define CHECK_PJSIP_PUBSUB_MODULE_LOADED()			\
-	do {							\
-		CHECK_PJSIP_MODULE_LOADED();			\
-		if (!ast_module_check("res_pjsip_pubsub.so")) {	\
-			return AST_MODULE_LOAD_DECLINE;		\
-		}						\
-	} while(0)
 
 #endif /* RES_PJSIP_PUBSUB_H */

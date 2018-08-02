@@ -32,8 +32,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/stun.h"
 #include "asterisk/cli.h"
@@ -345,6 +343,8 @@ int ast_stun_handle_packet(int s, struct sockaddr_in *src, unsigned char *data, 
 			if (st.username) {
 				append_attr_string(&attr, STUN_USERNAME, st.username, &resplen, &respleft);
 				snprintf(combined, sizeof(combined), "%16s%16s", st.username + 16, st.username);
+			} else {
+				combined[0] = '\0';
 			}
 
 			append_attr_address(&attr, STUN_MAPPED_ADDRESS, src, &resplen, &respleft);
@@ -400,8 +400,6 @@ int ast_stun_request(int s, struct sockaddr_in *dst,
 	stun_req_id(req);
 	reqlen = 0;
 	reqleft = sizeof(req_buf) - sizeof(struct stun_header);
-	req->msgtype = 0;
-	req->msglen = 0;
 	attr = (struct stun_attr *) req->ies;
 	if (username) {
 		append_attr_string(&attr, STUN_USERNAME, username, &reqlen, &reqleft);
@@ -413,6 +411,7 @@ int ast_stun_request(int s, struct sockaddr_in *dst,
 		/* send request, possibly wait for reply */
 		struct sockaddr_in src;
 		socklen_t srclen;
+		struct timeval start;
 
 		/* Send STUN message. */
 		res = stun_send(s, dst, req);
@@ -426,12 +425,20 @@ int ast_stun_request(int s, struct sockaddr_in *dst,
 			break;
 		}
 
+		start = ast_tvnow();
 try_again:
 		/* Wait for response. */
 		{
 			struct pollfd pfds = { .fd = s, .events = POLLIN };
+			int ms;
 
-			res = ast_poll(&pfds, 1, 3000);
+			ms = ast_remaining_ms(start, 3000);
+			if (ms <= 0) {
+				/* No response, timeout */
+				res = 1;
+				continue;
+			}
+			res = ast_poll(&pfds, 1, ms);
 			if (res < 0) {
 				/* Error */
 				continue;

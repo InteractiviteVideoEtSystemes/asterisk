@@ -43,10 +43,10 @@ ifeq ($(filter format_mp3,$(MENUSELECT_ADDONS)),)
 		echo ; \
 		echo "**************************************************************" ; \
 		echo "***                                                        ***" ; \
-		echo "***   --->  READ THIS OR YOUR BUILD WILL FAIL  <---        ***" ; \
+		echo "***    ---> IMPORTANT INFORMATION ABOUT format_mp3 <---    ***" ; \
 		echo "***                                                        ***" ; \
 		echo "*** format_mp3 has been selected to be installed, but the  ***" ; \
-		echo "*** mp3 decoder library has not yet been downloaded into   ***" ; \
+		echo "*** MP3 decoder library has not yet been downloaded into   ***" ; \
 		echo "*** the source tree.  To do so, please run the following   ***" ; \
 		echo "*** command:                                               ***" ; \
 		echo "***                                                        ***" ; \
@@ -59,9 +59,14 @@ endif
 
 include $(ASTTOPDIR)/Makefile.moddir_rules
 
-$(if $(filter chan_ooh323,$(EMBEDDED_MODS)),modules.link,chan_ooh323.so): _ASTCFLAGS+=$(H323CFLAGS)
+chan_mobile.o: _ASTCFLAGS+=$(AST_NO_FORMAT_TRUNCATION)
+chan_ooh323.so: _ASTCFLAGS+=$(H323CFLAGS)
 $(call MOD_ADD_C,chan_ooh323,$(H323SOURCE))
 
+ifneq ($(wildcard mp3/Makefile),)
 $(call MOD_ADD_C,format_mp3,mp3/common.c mp3/dct64_i386.c mp3/decode_ntom.c mp3/layer3.c mp3/tabinit.c mp3/interface.c)
 
 .PHONY: check_mp3
+else
+.PHONY: check_mp3 format_mp3.o format_mp3.so
+endif

@@ -54,8 +54,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/paths.h"	/* use various ast_config_AST_* */
 #include <ctype.h>
 #include <sys/time.h>
@@ -100,6 +98,7 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/rtp_engine.h"
 #include "asterisk/format_cache.h"
 #include "asterisk/translate.h"
+#include "asterisk/taskprocessor.h"
 
 /*** DOCUMENTATION
 	<manager name="Ping" language="en_US">
@@ -148,6 +147,9 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Logoff the current manager session.</para>
 		</description>
+		<see-also>
+			<ref type="manager">Login</ref>
+		</see-also>
 	</manager>
 	<manager name="Login" language="en_US">
 		<synopsis>
@@ -167,6 +169,9 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Login Manager.</para>
 		</description>
+		<see-also>
+			<ref type="manager">Logoff</ref>
+		</see-also>
 	</manager>
 	<manager name="Challenge" language="en_US">
 		<synopsis>
@@ -248,13 +253,15 @@ ASTERISK_REGISTER_FILE()
 				<parameter name="DNID">
 					<para>Dialed number identifier</para>
 				</parameter>
+				<parameter name="EffectiveConnectedLineNum">
+				</parameter>
+				<parameter name="EffectiveConnectedLineName">
+				</parameter>
 				<parameter name="TimeToHangup">
 					<para>Absolute lifetime of the channel</para>
 				</parameter>
 				<parameter name="BridgeID">
 					<para>Identifier of the bridge the channel is in, may be empty if not in one</para>
-				</parameter>
-				<parameter name="Linkedid">
 				</parameter>
 				<parameter name="Application">
 					<para>Application currently executing on the channel</para>
@@ -328,6 +335,9 @@ ASTERISK_REGISTER_FILE()
 				<para>If a channel name is not provided then the variable is considered global.</para>
 			</note>
 		</description>
+		<see-also>
+			<ref type="manager">Getvar</ref>
+		</see-also>
 	</manager>
 	<manager name="Getvar" language="en_US">
 		<synopsis>
@@ -348,6 +358,9 @@ ASTERISK_REGISTER_FILE()
 				<para>If a channel name is not provided then the variable is considered global.</para>
 			</note>
 		</description>
+		<see-also>
+			<ref type="manager">Setvar</ref>
+		</see-also>
 	</manager>
 	<manager name="GetConfig" language="en_US">
 		<synopsis>
@@ -380,6 +393,12 @@ ASTERISK_REGISTER_FILE()
 			In the case where a category name is non-unique, a filter may be specified
 			to match only categories with matching variable values.</para>
 		</description>
+		<see-also>
+			<ref type="manager">GetConfigJSON</ref>
+			<ref type="manager">UpdateConfig</ref>
+			<ref type="manager">CreateConfig</ref>
+			<ref type="manager">ListCategories</ref>
+		</see-also>
 	</manager>
 	<manager name="GetConfigJSON" language="en_US">
 		<synopsis>
@@ -404,6 +423,12 @@ ASTERISK_REGISTER_FILE()
 			In the case where a category name is non-unique, a filter may be specified
 			to match only categories with matching variable values.</para>
 		</description>
+		<see-also>
+			<ref type="manager">GetConfig</ref>
+			<ref type="manager">UpdateConfig</ref>
+			<ref type="manager">CreateConfig</ref>
+			<ref type="manager">ListCategories</ref>
+		</see-also>
 	</manager>
 	<manager name="UpdateConfig" language="en_US">
 		<synopsis>
@@ -495,6 +520,12 @@ ASTERISK_REGISTER_FILE()
 			<para>This action will modify, create, or delete configuration elements
 			in Asterisk configuration files.</para>
 		</description>
+		<see-also>
+			<ref type="manager">GetConfig</ref>
+			<ref type="manager">GetConfigJSON</ref>
+			<ref type="manager">CreateConfig</ref>
+			<ref type="manager">ListCategories</ref>
+		</see-also>
 	</manager>
 	<manager name="CreateConfig" language="en_US">
 		<synopsis>
@@ -511,6 +542,12 @@ ASTERISK_REGISTER_FILE()
 			directory. This action is intended to be used before an UpdateConfig
 			action.</para>
 		</description>
+		<see-also>
+			<ref type="manager">GetConfig</ref>
+			<ref type="manager">GetConfigJSON</ref>
+			<ref type="manager">UpdateConfig</ref>
+			<ref type="manager">ListCategories</ref>
+		</see-also>
 	</manager>
 	<manager name="ListCategories" language="en_US">
 		<synopsis>
@@ -525,6 +562,12 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>This action will dump the categories in a given file.</para>
 		</description>
+		<see-also>
+			<ref type="manager">GetConfig</ref>
+			<ref type="manager">GetConfigJSON</ref>
+			<ref type="manager">UpdateConfig</ref>
+			<ref type="manager">CreateConfig</ref>
+		</see-also>
 	</manager>
 	<manager name="Redirect" language="en_US">
 		<synopsis>
@@ -560,6 +603,9 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Redirect (transfer) a call.</para>
 		</description>
+		<see-also>
+			<ref type="manager">BlindTransfer</ref>
+		</see-also>
 	</manager>
 	<manager name="Atxfer" language="en_US">
 		<synopsis>
@@ -580,6 +626,28 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Attended transfer.</para>
 		</description>
+		<see-also>
+			<ref type="managerEvent">AttendedTransfer</ref>
+		</see-also>
+	</manager>
+	<manager name="CancelAtxfer" language="en_US">
+		<synopsis>
+			Cancel an attended transfer.
+		</synopsis>
+		<syntax>
+			<xi:include xpointer="xpointer(/docs/manager[@name='Login']/syntax/parameter[@name='ActionID'])" />
+			<parameter name="Channel" required="true">
+				<para>The transferer channel.</para>
+			</parameter>
+		</syntax>
+		<description>
+			<para>Cancel an attended transfer. Note, this uses the configured cancel attended transfer
+			feature option (atxferabort) to cancel the transfer. If not available this action will fail.
+			</para>
+		</description>
+		<see-also>
+			<ref type="managerEvent">AttendedTransfer</ref>
+		</see-also>
 	</manager>
 	<manager name="Originate" language="en_US">
 		<synopsis>
@@ -704,6 +772,9 @@ ASTERISK_REGISTER_FILE()
 			<para>Will return an <literal>Extension Status</literal> message. The response will include
 			the hint for the extension and the status.</para>
 		</description>
+		<see-also>
+			<ref type="managerEvent">ExtensionStatus</ref>
+		</see-also>
 	</manager>
 	<manager name="PresenceState" language="en_US">
 		<synopsis>
@@ -720,6 +791,9 @@ ASTERISK_REGISTER_FILE()
 			<para>Will return a <literal>Presence State</literal> message. The response will include the
 			presence state and, if set, a presence subtype and custom message.</para>
 		</description>
+		<see-also>
+			<ref type="managerEvent">PresenceStatus</ref>
+		</see-also>
 	</manager>
 	<manager name="AbsoluteTimeout" language="en_US">
 		<synopsis>
@@ -757,6 +831,9 @@ ASTERISK_REGISTER_FILE()
 			<para>Waiting: <literal>0</literal> if messages waiting, <literal>1</literal>
 			if no messages waiting.</para>
 		</description>
+		<see-also>
+			<ref type="manager">MailboxCount</ref>
+		</see-also>
 	</manager>
 	<manager name="MailboxCount" language="en_US">
 		<synopsis>
@@ -777,6 +854,9 @@ ASTERISK_REGISTER_FILE()
 			<para>NewMessages: <replaceable>count</replaceable></para>
 			<para>OldMessages: <replaceable>count</replaceable></para>
 		</description>
+		<see-also>
+			<ref type="manager">MailboxStatus</ref>
+		</see-also>
 	</manager>
 	<manager name="ListCommands" language="en_US">
 		<synopsis>
@@ -826,6 +906,10 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Send an event to manager sessions.</para>
 		</description>
+		<see-also>
+			<ref type="managerEvent">UserEvent</ref>
+			<ref type="application">UserEvent</ref>
+		</see-also>
 	</manager>
 	<manager name="WaitEvent" language="en_US">
 		<synopsis>
@@ -878,6 +962,9 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Send a reload event.</para>
 		</description>
+		<see-also>
+			<ref type="manager">ModuleLoad</ref>
+		</see-also>
 	</manager>
 	<managerEvent language="en_US" name="CoreShowChannel">
 		<managerEventInstance class="EVENT_FLAG_CALL">
@@ -990,6 +1077,10 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Loads, unloads or reloads an Asterisk module in a running system.</para>
 		</description>
+		<see-also>
+			<ref type="manager">Reload</ref>
+			<ref type="manager">ModuleCheck</ref>
+		</see-also>
 	</manager>
 	<manager name="ModuleCheck" language="en_US">
 		<synopsis>
@@ -1005,6 +1096,9 @@ ASTERISK_REGISTER_FILE()
 			<para>Checks if Asterisk module is loaded. Will return Success/Failure.
 			For success returns, the module revision number is included.</para>
 		</description>
+		<see-also>
+			<ref type="manager">ModuleLoad</ref>
+		</see-also>
 	</manager>
 	<manager name="AOCMessage" language="en_US">
 		<synopsis>
@@ -1111,6 +1205,10 @@ ASTERISK_REGISTER_FILE()
 		<description>
 			<para>Generates an AOC-D or AOC-E message on a channel.</para>
 		</description>
+		<see-also>
+			<ref type="managerEvent">AOC-D</ref>
+			<ref type="managerEvent">AOC-E</ref>
+		</see-also>
 	</manager>
 	<function name="AMI_CLIENT" language="en_US">
 		<synopsis>
@@ -1170,6 +1268,9 @@ ASTERISK_REGISTER_FILE()
 			this command can be used to create filters that may bypass
 			filters defined in manager.conf</para>
 		</description>
+		<see-also>
+			<ref type="manager">FilterList</ref>
+		</see-also>
 	</manager>
 	<manager name="FilterList" language="en_US">
 		<synopsis>
@@ -1179,6 +1280,9 @@ ASTERISK_REGISTER_FILE()
 			<para>The filters displayed are for the current session.  Only those filters defined in
                         manager.conf will be present upon starting a new session.</para>
 		</description>
+		<see-also>
+			<ref type="manager">Filter</ref>
+		</see-also>
 	</manager>
 	<manager name="BlindTransfer" language="en_US">
 		<synopsis>
@@ -1197,6 +1301,7 @@ ASTERISK_REGISTER_FILE()
 		</description>
 		<see-also>
 			<ref type="manager">Redirect</ref>
+			<ref type="managerEvent">BlindTransfer</ref>
 		</see-also>
 	</manager>
 	<managerEvent name="ExtensionStatus" language="en_US">
@@ -1274,6 +1379,9 @@ ASTERISK_REGISTER_FILE()
 					</enumlist>
 				</parameter>
 			</syntax>
+			<see-also>
+				<ref type="manager">ExtensionState</ref>
+			</see-also>
 		</managerEventInstance>
 	</managerEvent>
 	<managerEvent name="PresenceStatus" language="en_US">
@@ -1287,6 +1395,9 @@ ASTERISK_REGISTER_FILE()
 				<parameter name="Subtype" />
 				<parameter name="Message" />
 			</syntax>
+			<see-also>
+				<ref type="manager">PresenceState</ref>
+			</see-also>
 		</managerEventInstance>
 	</managerEvent>
  ***/
@@ -1459,8 +1570,7 @@ static void acl_change_stasis_unsubscribe(void)
 struct mansession_session {
 				/*! \todo XXX need to document which fields it is protecting */
 	struct ast_sockaddr addr;	/*!< address we are connecting from */
-	FILE *f;		/*!< fdopen() on the underlying fd */
-	int fd;			/*!< descriptor used for output. Either the socket (AMI) or a temporary file (HTTP) */
+	struct ast_iostream *stream;	/*!< AMI stream */
 	int inuse;		/*!< number of HTTP sessions using this entry */
 	int needdestroy;	/*!< Whether an HTTP session should be destroyed */
 	pthread_t waiting_thread;	/*!< Sleeping thread using this descriptor */
@@ -1502,9 +1612,8 @@ enum mansession_message_parsing {
  */
 struct mansession {
 	struct mansession_session *session;
+	struct ast_iostream *stream;
 	struct ast_tcptls_session_instance *tcptls_session;
-	FILE *f;
-	int fd;
 	enum mansession_message_parsing parsing;
 	int write_error:1;
 	struct manager_custom_hook *hook;
@@ -1546,9 +1655,22 @@ static AST_RWLIST_HEAD_STATIC(actions, manager_action);
 /*! \brief list of hooks registered */
 static AST_RWLIST_HEAD_STATIC(manager_hooks, manager_custom_hook);
 
+#ifdef AST_XML_DOCS
 /*! \brief A container of event documentation nodes */
 static AO2_GLOBAL_OBJ_STATIC(event_docs);
+#endif
 
+static int __attribute__((format(printf, 9, 0))) __manager_event_sessions(
+	struct ao2_container *sessions,
+	int category,
+	const char *event,
+	int chancount,
+	struct ast_channel **chans,
+	const char *file,
+	int line,
+	const char *func,
+	const char *fmt,
+	...);
 static enum add_filter_result manager_add_filter(const char *filter_pattern, struct ao2_container *whitefilters, struct ao2_container *blackfilters);
 
 static int match_filter(struct mansession *s, char *eventdata);
@@ -1648,7 +1770,12 @@ void manager_json_to_ast_str(struct ast_json *obj, const char *key,
 {
 	struct ast_json_iter *i;
 
-	if (!obj || (!res && !(*res) && (!(*res = ast_str_create(1024))))) {
+	/* If obj or res is not given, just return */
+	if (!obj || !res) {
+		return;
+	}
+
+	if (!*res && !(*res = ast_str_create(1024))) {
 		return;
 	}
 
@@ -1679,45 +1806,86 @@ void manager_json_to_ast_str(struct ast_json *obj, const char *key,
 	}
 }
 
-
 struct ast_str *ast_manager_str_from_json_object(struct ast_json *blob, key_exclusion_cb exclusion_cb)
 {
 	struct ast_str *res = ast_str_create(1024);
-	manager_json_to_ast_str(blob, NULL, &res, exclusion_cb);
+
+	if (!ast_json_is_null(blob)) {
+	   manager_json_to_ast_str(blob, NULL, &res, exclusion_cb);
+	}
+
 	return res;
 }
+
+#define manager_event_sessions(sessions, category, event, contents , ...)	\
+	__manager_event_sessions(sessions, category, event, 0, NULL, __FILE__, __LINE__, __PRETTY_FUNCTION__, contents , ## __VA_ARGS__)
+
+#define any_manager_listeners(sessions)	\
+	((sessions && ao2_container_count(sessions)) || !AST_RWLIST_EMPTY(&manager_hooks))
 
 static void manager_default_msg_cb(void *data, struct stasis_subscription *sub,
 				    struct stasis_message *message)
 {
-	RAII_VAR(struct ast_manager_event_blob *, ev, NULL, ao2_cleanup);
+	struct ao2_container *sessions;
+	struct ast_manager_event_blob *ev;
 
-	ev = stasis_message_to_ami(message);
-
-	if (ev == NULL) {
-		/* Not and AMI message; disregard */
+	if (!stasis_message_can_be_ami(message)) {
+		/* Not an AMI message; disregard */
 		return;
 	}
 
-	manager_event(ev->event_flags, ev->manager_event, "%s",
-		ev->extra_fields);
+	sessions = ao2_global_obj_ref(mgr_sessions);
+	if (!any_manager_listeners(sessions)) {
+		/* Nobody is listening */
+		ao2_cleanup(sessions);
+		return;
+	}
+
+	ev = stasis_message_to_ami(message);
+	if (!ev) {
+		/* Conversion failure */
+		ao2_cleanup(sessions);
+		return;
+	}
+
+	manager_event_sessions(sessions, ev->event_flags, ev->manager_event,
+		"%s", ev->extra_fields);
+	ao2_ref(ev, -1);
+	ao2_cleanup(sessions);
 }
 
 static void manager_generic_msg_cb(void *data, struct stasis_subscription *sub,
 				    struct stasis_message *message)
 {
-	struct ast_json_payload *payload = stasis_message_data(message);
-	int class_type = ast_json_integer_get(ast_json_object_get(payload->json, "class_type"));
-	const char *type = ast_json_string_get(ast_json_object_get(payload->json, "type"));
-	struct ast_json *event = ast_json_object_get(payload->json, "event");
-	RAII_VAR(struct ast_str *, event_buffer, NULL, ast_free);
+	struct ast_json_payload *payload;
+	int class_type;
+	const char *type;
+	struct ast_json *event;
+	struct ast_str *event_buffer;
+	struct ao2_container *sessions;
+
+	sessions = ao2_global_obj_ref(mgr_sessions);
+	if (!any_manager_listeners(sessions)) {
+		/* Nobody is listening */
+		ao2_cleanup(sessions);
+		return;
+	}
+
+	payload = stasis_message_data(message);
+	class_type = ast_json_integer_get(ast_json_object_get(payload->json, "class_type"));
+	type = ast_json_string_get(ast_json_object_get(payload->json, "type"));
+	event = ast_json_object_get(payload->json, "event");
 
 	event_buffer = ast_manager_str_from_json_object(event, NULL);
 	if (!event_buffer) {
 		ast_log(AST_LOG_WARNING, "Error while creating payload for event %s\n", type);
+		ao2_cleanup(sessions);
 		return;
 	}
-	manager_event(class_type, type, "%s", ast_str_buffer(event_buffer));
+	manager_event_sessions(sessions, class_type, type,
+		"%s", ast_str_buffer(event_buffer));
+	ast_free(event_buffer);
+	ao2_cleanup(sessions);
 }
 
 void ast_manager_publish_event(const char *type, int class_type, struct ast_json *obj)
@@ -2027,10 +2195,6 @@ static void session_destructor(void *obj)
 		ast_datastore_free(datastore);
 	}
 
-	if (session->f != NULL) {
-		fflush(session->f);
-		fclose(session->f);
-	}
 	if (eqe) {
 		ast_atomic_fetchadd_int(&eqe->usecount, -1);
 	}
@@ -2065,7 +2229,6 @@ static struct mansession_session *build_mansession(const struct ast_sockaddr *ad
 		return NULL;
 	}
 
-	newsession->fd = -1;
 	newsession->waiting_thread = AST_PTHREADT_NULL;
 	newsession->writetimeout = 100;
 	newsession->send_events = -1;
@@ -2154,15 +2317,17 @@ static int manager_displayconnects(struct mansession_session *session)
 	return ret;
 }
 
+#ifdef AST_XML_DOCS
 static void print_event_instance(struct ast_cli_args *a, struct ast_xml_doc_item *instance);
+#endif
 
 static char *handle_showmancmd(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	struct manager_action *cur;
 	struct ast_str *authority;
-	int num, l, which;
+	int num;
+	int l;
 	const char *auth_str;
-	char *ret = NULL;
 #ifdef AST_XML_DOCS
 	char syntax_title[64], description_title[64], synopsis_title[64], seealso_title[64];
 	char arguments_title[64], privilege_title[64], final_response_title[64], list_responses_title[64];
@@ -2177,21 +2342,22 @@ static char *handle_showmancmd(struct ast_cli_entry *e, int cmd, struct ast_cli_
 		return NULL;
 	case CLI_GENERATE:
 		l = strlen(a->word);
-		which = 0;
 		AST_RWLIST_RDLOCK(&actions);
 		AST_RWLIST_TRAVERSE(&actions, cur, list) {
-			if (!strncasecmp(a->word, cur->action, l) && ++which > a->n) {
-				ret = ast_strdup(cur->action);
-				break;	/* make sure we exit even if ast_strdup() returns NULL */
+			if (!strncasecmp(a->word, cur->action, l)) {
+				if (ast_cli_completion_add(ast_strdup(cur->action))) {
+					break;
+				}
 			}
 		}
 		AST_RWLIST_UNLOCK(&actions);
-		return ret;
+		return NULL;
 	}
-	authority = ast_str_alloca(MAX_AUTH_PERM_STRING);
 	if (a->argc < 4) {
 		return CLI_SHOWUSAGE;
 	}
+
+	authority = ast_str_alloca(MAX_AUTH_PERM_STRING);
 
 #ifdef AST_XML_DOCS
 	/* setup the titles */
@@ -2220,6 +2386,22 @@ static char *handle_showmancmd(struct ast_cli_entry *e, int cmd, struct ast_cli_
 					char *seealso = ast_xmldoc_printable(S_OR(cur->seealso, "Not available"), 1);
 					char *privilege = ast_xmldoc_printable(S_OR(auth_str, "Not available"), 1);
 					char *responses = ast_xmldoc_printable("None", 1);
+
+					if (!syntax || !synopsis || !description || !arguments
+							|| !seealso || !privilege || !responses) {
+						ast_free(syntax);
+						ast_free(synopsis);
+						ast_free(description);
+						ast_free(arguments);
+						ast_free(seealso);
+						ast_free(privilege);
+						ast_free(responses);
+						ast_cli(a->fd, "Allocation failure.\n");
+						AST_RWLIST_UNLOCK(&actions);
+
+						return CLI_FAILURE;
+					}
+
 					ast_cli(a->fd, "%s%s\n\n%s%s\n\n%s%s\n\n%s%s\n\n%s%s\n\n%s%s\n\n%s",
 						syntax_title, syntax,
 						synopsis_title, synopsis,
@@ -2247,6 +2429,14 @@ static char *handle_showmancmd(struct ast_cli_entry *e, int cmd, struct ast_cli_
 						ast_cli(a->fd, "Event: %s\n", cur->final_response->name);
 						print_event_instance(a, cur->final_response);
 					}
+
+					ast_free(syntax);
+					ast_free(synopsis);
+					ast_free(description);
+					ast_free(arguments);
+					ast_free(seealso);
+					ast_free(privilege);
+					ast_free(responses);
 				} else
 #endif
 				{
@@ -2291,8 +2481,7 @@ static char *handle_mandebug(struct ast_cli_entry *e, int cmd, struct ast_cli_ar
 static char *handle_showmanager(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	struct ast_manager_user *user = NULL;
-	int l, which;
-	char *ret = NULL;
+	int l;
 	struct ast_str *rauthority = ast_str_alloca(MAX_AUTH_PERM_STRING);
 	struct ast_str *wauthority = ast_str_alloca(MAX_AUTH_PERM_STRING);
 	struct ast_variable *v;
@@ -2306,19 +2495,19 @@ static char *handle_showmanager(struct ast_cli_entry *e, int cmd, struct ast_cli
 		return NULL;
 	case CLI_GENERATE:
 		l = strlen(a->word);
-		which = 0;
 		if (a->pos != 3) {
 			return NULL;
 		}
 		AST_RWLIST_RDLOCK(&users);
 		AST_RWLIST_TRAVERSE(&users, user, list) {
-			if ( !strncasecmp(a->word, user->username, l) && ++which > a->n ) {
-				ret = ast_strdup(user->username);
-				break;
+			if (!strncasecmp(a->word, user->username, l)) {
+				if (ast_cli_completion_add(ast_strdup(user->username))) {
+					break;
+				}
 			}
 		}
 		AST_RWLIST_UNLOCK(&users);
-		return ret;
+		return NULL;
 	}
 
 	if (a->argc != 4) {
@@ -2342,7 +2531,7 @@ static char *handle_showmanager(struct ast_cli_entry *e, int cmd, struct ast_cli
 		"        write perm: %s\n"
 		"   displayconnects: %s\n"
 		"allowmultiplelogin: %s\n",
-		(user->username ? user->username : "(N/A)"),
+		S_OR(user->username, "(N/A)"),
 		(user->secret ? "<Set>" : "(N/A)"),
 		((user->acl && !ast_acl_list_is_empty(user->acl)) ? "yes" : "no"),
 		user_authority_to_str(user->readperm, &rauthority),
@@ -2478,7 +2667,7 @@ static char *handle_showmanconn(struct ast_cli_entry *e, int cmd, struct ast_cli
 				ast_sockaddr_stringify_addr(&session->addr),
 				(int) (session->sessionstart),
 				(int) (now - session->sessionstart),
-				session->fd,
+				session->stream ? ast_iostream_get_fd(session->stream) : -1,
 				session->inuse,
 				session->readperm,
 				session->writeperm);
@@ -2520,6 +2709,8 @@ static char *handle_showmaneventq(struct ast_cli_entry *e, int cmd, struct ast_c
 	return CLI_SUCCESS;
 }
 
+static int reload_module(void);
+
 /*! \brief CLI command manager reload */
 static char *handle_manager_reload(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
@@ -2536,7 +2727,7 @@ static char *handle_manager_reload(struct ast_cli_entry *e, int cmd, struct ast_
 	if (a->argc > 2) {
 		return CLI_SHOWUSAGE;
 	}
-	reload_manager();
+	reload_module();
 	return CLI_SUCCESS;
 }
 
@@ -2741,39 +2932,44 @@ int ast_hook_send_action(struct manager_custom_hook *hook, const char *msg)
 	}
 
 	action = astman_get_header(&m, "Action");
-	if (strcasecmp(action, "login")) {
-		act_found = action_find(action);
-		if (act_found) {
-			/*
-			 * we have to simulate a session for this action request
-			 * to be able to pass it down for processing
-			 * This is necessary to meet the previous design of manager.c
-			 */
-			s.hook = hook;
-			s.f = (void*)1; /* set this to something so our request will make it through all functions that test it*/
 
-			ao2_lock(act_found);
-			if (act_found->registered && act_found->func) {
-				if (act_found->module) {
-					ast_module_ref(act_found->module);
-				}
-				ao2_unlock(act_found);
-				ret = act_found->func(&s, &m);
-				ao2_lock(act_found);
-				if (act_found->module) {
-					ast_module_unref(act_found->module);
-				}
-			} else {
-				ret = -1;
-			}
-			ao2_unlock(act_found);
-			ao2_t_ref(act_found, -1, "done with found action object");
+	do {
+		if (!strcasecmp(action, "login")) {
+			break;
 		}
-	}
+
+		act_found = action_find(action);
+		if (!act_found) {
+			break;
+		}
+
+		/*
+		 * we have to simulate a session for this action request
+		 * to be able to pass it down for processing
+		 * This is necessary to meet the previous design of manager.c
+		 */
+		s.hook = hook;
+
+		ret = -1;
+		ao2_lock(act_found);
+		if (act_found->registered && act_found->func) {
+			struct ast_module *mod_ref = ast_module_running_ref(act_found->module);
+
+			ao2_unlock(act_found);
+			/* If the action is in a module it must be running. */
+			if (!act_found->module || mod_ref) {
+				ret = act_found->func(&s, &m);
+				ast_module_unref(mod_ref);
+			}
+		} else {
+			ao2_unlock(act_found);
+		}
+		ao2_t_ref(act_found, -1, "done with found action object");
+	} while (0);
+
 	ast_free(dup_str);
 	return ret;
 }
-
 
 /*!
  * helper function to send a string to the socket.
@@ -2781,9 +2977,8 @@ int ast_hook_send_action(struct manager_custom_hook *hook, const char *msg)
  */
 static int send_string(struct mansession *s, char *string)
 {
-	int res;
-	FILE *f = s->f ? s->f : s->session->f;
-	int fd = s->f ? s->fd : s->session->fd;
+	struct ast_iostream *stream;
+	int len, res;
 
 	/* It's a result from one of the hook's action invocation */
 	if (s->hook) {
@@ -2795,7 +2990,14 @@ static int send_string(struct mansession *s, char *string)
 		return 0;
 	}
 
-	if ((res = ast_careful_fwrite(f, fd, string, strlen(string), s->session->writetimeout))) {
+	stream = s->stream ? s->stream : s->session->stream;
+
+	len = strlen(string);
+	ast_iostream_set_timeout_inactivity(stream, s->session->writetimeout);
+	res = ast_iostream_write(stream, string, len);
+	ast_iostream_set_timeout_disable(stream);
+
+	if (res < len) {
 		s->write_error = 1;
 	}
 
@@ -2836,10 +3038,10 @@ void astman_append(struct mansession *s, const char *fmt, ...)
 		return;
 	}
 
-	if (s->f != NULL || s->session->f != NULL) {
+	if (s->hook || (s->tcptls_session != NULL && s->tcptls_session->stream != NULL)) {
 		send_string(s, ast_str_buffer(buf));
 	} else {
-		ast_verbose("fd == -1 in astman_append, should not happen\n");
+		ast_verbose("No connection stream in astman_append, should not happen\n");
 	}
 }
 
@@ -3980,7 +4182,7 @@ static int action_waitevent(struct mansession *s, const struct message *m)
 			break;
 		}
 		if (s->session->managerid == 0) {	/* AMI session */
-			if (ast_wait_for_input(s->session->fd, 1000)) {
+			if (ast_wait_for_input(ast_iostream_get_fd(s->session->stream), 1000)) {
 				break;
 			}
 		} else {	/* HTTP session */
@@ -4108,10 +4310,26 @@ static int action_login(struct mansession *s, const struct message *m)
 		&& ast_test_flag(&ast_options, AST_OPT_FLAG_FULLY_BOOTED)) {
 		struct ast_str *auth = ast_str_alloca(MAX_AUTH_PERM_STRING);
 		const char *cat_str = authority_to_str(EVENT_FLAG_SYSTEM, &auth);
+		long uptime = 0;
+		long lastreloaded = 0;
+		struct timeval tmp;
+		struct timeval curtime = ast_tvnow();
+
+		if (ast_startuptime.tv_sec) {
+			tmp = ast_tvsub(curtime, ast_startuptime);
+			uptime = tmp.tv_sec;
+		}
+
+		if (ast_lastreloadtime.tv_sec) {
+			tmp = ast_tvsub(curtime, ast_lastreloadtime);
+			lastreloaded = tmp.tv_sec;
+		}
 
 		astman_append(s, "Event: FullyBooted\r\n"
 			"Privilege: %s\r\n"
-			"Status: Fully Booted\r\n\r\n", cat_str);
+			"Uptime: %ld\r\n"
+			"LastReload: %ld\r\n"
+			"Status: Fully Booted\r\n\r\n", cat_str, uptime, lastreloaded);
 	}
 	return 0;
 }
@@ -4414,7 +4632,6 @@ static void generate_status(struct mansession *s, struct ast_channel *chan, char
 		"EffectiveConnectedLineName: %s\r\n"
 		"TimeToHangup: %ld\r\n"
 		"BridgeID: %s\r\n"
-		"Linkedid: %s\r\n"
 		"Application: %s\r\n"
 		"Data: %s\r\n"
 		"Nativeformats: %s\r\n"
@@ -4435,7 +4652,6 @@ static void generate_status(struct mansession *s, struct ast_channel *chan, char
 		S_COR(effective_id.name.valid, effective_id.name.str, "<unknown>"),
 		(long)ast_channel_whentohangup(chan)->tv_sec,
 		bridge ? bridge->uniqueid : "",
-		ast_channel_linkedid(chan),
 		ast_channel_appl(chan),
 		ast_channel_data(chan),
 		ast_format_cap_get_names(ast_channel_nativeformats(chan), &codec_buf),
@@ -4529,10 +4745,13 @@ static int action_status(struct mansession *s, const struct message *m)
 
 static int action_sendtext(struct mansession *s, const struct message *m)
 {
-	struct ast_channel *c = NULL;
+	struct ast_channel *c;
 	const char *name = astman_get_header(m, "Channel");
 	const char *textmsg = astman_get_header(m, "Message");
-	int res = 0;
+	struct ast_control_read_action_payload *frame_payload;
+	int payload_size;
+	int frame_size;
+	int res;
 
 	if (ast_strlen_zero(name)) {
 		astman_send_error(s, m, "No channel specified");
@@ -4544,13 +4763,29 @@ static int action_sendtext(struct mansession *s, const struct message *m)
 		return 0;
 	}
 
-	if (!(c = ast_channel_get_by_name(name))) {
+	c = ast_channel_get_by_name(name);
+	if (!c) {
 		astman_send_error(s, m, "No such channel");
 		return 0;
 	}
 
-	res = ast_sendtext(c, textmsg);
-	c = ast_channel_unref(c);
+	payload_size = strlen(textmsg) + 1;
+	frame_size = payload_size + sizeof(*frame_payload);
+
+	frame_payload = ast_malloc(frame_size);
+	if (!frame_payload) {
+		ast_channel_unref(c);
+		astman_send_error(s, m, "Failure");
+		return 0;
+	}
+
+	frame_payload->action = AST_FRAME_READ_ACTION_SEND_TEXT;
+	frame_payload->payload_size = payload_size;
+	memcpy(frame_payload->payload, textmsg, payload_size);
+	res = ast_queue_control_data(c, AST_CONTROL_READ_ACTION, frame_payload, frame_size);
+
+	ast_free(frame_payload);
+	ast_channel_unref(c);
 
 	if (res >= 0) {
 		astman_send_ack(s, m, "Success");
@@ -4696,14 +4931,10 @@ static int action_redirect(struct mansession *s, const struct message *m)
 
 	/* Release the bridge wait. */
 	if (chan1_wait) {
-		ast_channel_lock(chan);
-		ast_clear_flag(ast_channel_flags(chan), AST_FLAG_BRIDGE_DUAL_REDIRECT_WAIT);
-		ast_channel_unlock(chan);
+		ast_channel_clear_flag(chan, AST_FLAG_BRIDGE_DUAL_REDIRECT_WAIT);
 	}
 	if (chan2_wait) {
-		ast_channel_lock(chan2);
-		ast_clear_flag(ast_channel_flags(chan2), AST_FLAG_BRIDGE_DUAL_REDIRECT_WAIT);
-		ast_channel_unlock(chan2);
+		ast_channel_clear_flag(chan2, AST_FLAG_BRIDGE_DUAL_REDIRECT_WAIT);
 	}
 
 	chan2 = ast_channel_unref(chan2);
@@ -4716,7 +4947,7 @@ static int action_blind_transfer(struct mansession *s, const struct message *m)
 	const char *name = astman_get_header(m, "Channel");
 	const char *exten = astman_get_header(m, "Exten");
 	const char *context = astman_get_header(m, "Context");
-	RAII_VAR(struct ast_channel *, chan, NULL, ao2_cleanup);
+	struct ast_channel *chan;
 
 	if (ast_strlen_zero(name)) {
 		astman_send_error(s, m, "No channel specified");
@@ -4753,6 +4984,7 @@ static int action_blind_transfer(struct mansession *s, const struct message *m)
 		break;
 	}
 
+	ast_channel_unref(chan);
 	return 0;
 }
 
@@ -4809,6 +5041,47 @@ static int action_atxfer(struct mansession *s, const struct message *m)
 
 	return 0;
 }
+
+static int action_cancel_atxfer(struct mansession *s, const struct message *m)
+{
+	const char *name = astman_get_header(m, "Channel");
+	struct ast_channel *chan = NULL;
+	char *feature_code;
+	const char *digit;
+
+	if (ast_strlen_zero(name)) {
+		astman_send_error(s, m, "No channel specified");
+		return 0;
+	}
+
+	if (!(chan = ast_channel_get_by_name(name))) {
+		astman_send_error(s, m, "Channel specified does not exist");
+		return 0;
+	}
+
+	ast_channel_lock(chan);
+	feature_code = ast_get_chan_features_atxferabort(chan);
+	ast_channel_unlock(chan);
+
+	if (!feature_code) {
+		astman_send_error(s, m, "No disconnect feature code found");
+		ast_channel_unref(chan);
+		return 0;
+	}
+
+	for (digit = feature_code; *digit; ++digit) {
+		struct ast_frame f = { AST_FRAME_DTMF, .subclass.integer = *digit };
+		ast_queue_frame(chan, &f);
+	}
+	ast_free(feature_code);
+
+	chan = ast_channel_unref(chan);
+
+	astman_send_ack(s, m, "CancelAtxfer successfully queued");
+
+	return 0;
+}
+
 
 static int check_blacklist(const char *cmd)
 {
@@ -4978,13 +5251,15 @@ static void *fast_originate(void *data)
 
 	if (!ast_strlen_zero(in->app)) {
 		res = ast_pbx_outgoing_app(in->tech, in->cap, in->data,
-			in->timeout, in->app, in->appdata, &reason, 1,
+			in->timeout, in->app, in->appdata, &reason,
+			AST_OUTGOING_WAIT,
 			S_OR(in->cid_num, NULL),
 			S_OR(in->cid_name, NULL),
 			in->vars, in->account, &chan, &assignedids);
 	} else {
 		res = ast_pbx_outgoing_exten(in->tech, in->cap, in->data,
-			in->timeout, in->context, in->exten, in->priority, &reason, 1,
+			in->timeout, in->context, in->exten, in->priority, &reason,
+			AST_OUTGOING_WAIT,
 			S_OR(in->cid_num, NULL),
 			S_OR(in->cid_name, NULL),
 			in->vars, in->account, &chan, in->early_media, &assignedids);
@@ -5455,11 +5730,16 @@ static int action_originate(struct mansession *s, const struct message *m)
 			}
 		}
 	} else if (!ast_strlen_zero(app)) {
-		res = ast_pbx_outgoing_app(tech, cap, data, to, app, appdata, &reason, 1, l, n, vars, account, NULL, assignedids.uniqueid ? &assignedids : NULL);
+		res = ast_pbx_outgoing_app(tech, cap, data, to, app, appdata, &reason,
+				AST_OUTGOING_WAIT, l, n, vars, account, NULL,
+				assignedids.uniqueid ? &assignedids : NULL);
 		ast_variables_destroy(vars);
 	} else {
 		if (exten && context && pi) {
-			res = ast_pbx_outgoing_exten(tech, cap, data, to, context, exten, pi, &reason, 1, l, n, vars, account, NULL, bridge_early, assignedids.uniqueid ? &assignedids : NULL);
+			res = ast_pbx_outgoing_exten(tech, cap, data, to,
+					context, exten, pi, &reason, AST_OUTGOING_WAIT,
+					l, n, vars, account, NULL, bridge_early,
+					assignedids.uniqueid ? &assignedids : NULL);
 			ast_variables_destroy(vars);
 		} else {
 			astman_send_error(s, m, "Originate with 'Exten' requires 'Context' and 'Priority'");
@@ -5521,8 +5801,9 @@ static int action_extensionstate(struct mansession *s, const struct message *m)
 {
 	const char *exten = astman_get_header(m, "Exten");
 	const char *context = astman_get_header(m, "Context");
-	char hint[256] = "";
+	char hint[256];
 	int status;
+
 	if (ast_strlen_zero(exten)) {
 		astman_send_error(s, m, "Extension not specified");
 		return 0;
@@ -5531,16 +5812,18 @@ static int action_extensionstate(struct mansession *s, const struct message *m)
 		context = "default";
 	}
 	status = ast_extension_state(NULL, context, exten);
-	ast_get_hint(hint, sizeof(hint) - 1, NULL, 0, NULL, context, exten);
+	hint[0] = '\0';
+	ast_get_hint(hint, sizeof(hint), NULL, 0, NULL, context, exten);
 	astman_start_ack(s, m);
-	astman_append(s,   "Message: Extension Status\r\n"
-			   "Exten: %s\r\n"
-			   "Context: %s\r\n"
-			   "Hint: %s\r\n"
-			   "Status: %d\r\n"
-		           "StatusText: %s\r\n\r\n",
-		      exten, context, hint, status,
-		      ast_extension_state2str(status));
+	astman_append(s, "Message: Extension Status\r\n"
+		"Exten: %s\r\n"
+		"Context: %s\r\n"
+		"Hint: %s\r\n"
+		"Status: %d\r\n"
+		"StatusText: %s\r\n"
+		"\r\n",
+		exten, context, hint, status,
+		ast_extension_state2str(status));
 	return 0;
 }
 
@@ -5737,7 +6020,11 @@ static int match_filter(struct mansession *s, char *eventdata)
 {
 	int result = 0;
 
-	ast_debug(3, "Examining AMI event:\n%s\n", eventdata);
+	if (manager_debug) {
+		ast_verbose("<-- Examining AMI event: -->\n%s\n", eventdata);
+	} else {
+		ast_debug(3, "Examining AMI event:\n%s\n", eventdata);
+	}
 	if (!ao2_container_count(s->session->whitefilters) && !ao2_container_count(s->session->blackfilters)) {
 		return 1; /* no filtering means match all */
 	} else if (ao2_container_count(s->session->whitefilters) && !ao2_container_count(s->session->blackfilters)) {
@@ -5768,7 +6055,7 @@ static int process_events(struct mansession *s)
 	int ret = 0;
 
 	ao2_lock(s->session);
-	if (s->session->f != NULL) {
+	if (s->session->stream != NULL) {
 		struct eventqent *eqe = s->session->last_ev;
 
 		while ((eqe = advance_event(eqe))) {
@@ -5931,7 +6218,7 @@ static int action_coreshowchannels(struct mansession *s, const struct message *m
 	const char *actionid = astman_get_header(m, "ActionID");
 	char idText[256];
 	int numchans = 0;
-	RAII_VAR(struct ao2_container *, channels, NULL, ao2_cleanup);
+	struct ao2_container *channels;
 	struct ao2_iterator it_chans;
 	struct stasis_message *msg;
 
@@ -5941,7 +6228,8 @@ static int action_coreshowchannels(struct mansession *s, const struct message *m
 		idText[0] = '\0';
 	}
 
-	if (!(channels = stasis_cache_dump(ast_channel_cache_by_name(), ast_channel_snapshot_type()))) {
+	channels = stasis_cache_dump(ast_channel_cache_by_name(), ast_channel_snapshot_type());
+	if (!channels) {
 		astman_send_error(s, m, "Could not get cached channels");
 		return 0;
 	}
@@ -5952,7 +6240,7 @@ static int action_coreshowchannels(struct mansession *s, const struct message *m
 	for (; (msg = ao2_iterator_next(&it_chans)); ao2_ref(msg, -1)) {
 		struct ast_channel_snapshot *cs = stasis_message_data(msg);
 		struct ast_str *built = ast_manager_build_channel_state_string_prefix(cs, "");
-		char durbuf[10] = "";
+		char durbuf[16] = "";
 
 		if (!built) {
 			continue;
@@ -5993,6 +6281,7 @@ static int action_coreshowchannels(struct mansession *s, const struct message *m
 	astman_send_list_complete_start(s, m, "CoreShowChannelsComplete", numchans);
 	astman_send_list_complete_end(s);
 
+	ao2_ref(channels, -1);
 	return 0;
 }
 
@@ -6138,6 +6427,14 @@ static int process_message(struct mansession *s, const struct message *m)
 		return 0;
 	}
 
+	if (ast_shutting_down()) {
+		ast_log(LOG_ERROR, "Unable to process manager action '%s'. Asterisk is shutting down.\n", action);
+		mansession_lock(s);
+		astman_send_error(s, m, "Asterisk is shutting down");
+		mansession_unlock(s);
+		return 0;
+	}
+
 	if (!s->session->authenticated
 		&& strcasecmp(action, "Login")
 		&& strcasecmp(action, "Logoff")
@@ -6180,21 +6477,21 @@ static int process_message(struct mansession *s, const struct message *m)
 		if ((s->session->writeperm & act_found->authority)
 			|| act_found->authority == 0) {
 			/* We have the authority to execute the action. */
+			ret = -1;
 			ao2_lock(act_found);
 			if (act_found->registered && act_found->func) {
-				ast_debug(1, "Running action '%s'\n", act_found->action);
-				if (act_found->module) {
-					ast_module_ref(act_found->module);
-				}
+				struct ast_module *mod_ref = ast_module_running_ref(act_found->module);
+
 				ao2_unlock(act_found);
-				ret = act_found->func(s, m);
-				acted = 1;
-				ao2_lock(act_found);
-				if (act_found->module) {
-					ast_module_unref(act_found->module);
+				if (mod_ref || !act_found->module) {
+					ast_debug(1, "Running action '%s'\n", act_found->action);
+					ret = act_found->func(s, m);
+					acted = 1;
+					ast_module_unref(mod_ref);
 				}
+			} else {
+				ao2_unlock(act_found);
 			}
-			ao2_unlock(act_found);
 		}
 		if (!acted) {
 			/*
@@ -6300,7 +6597,7 @@ static int get_input(struct mansession *s, char *output)
 		s->session->waiting_thread = pthread_self();
 		ao2_unlock(s->session);
 
-		res = ast_wait_for_input(s->session->fd, timeout);
+		res = ast_wait_for_input(ast_iostream_get_fd(s->session->stream), timeout);
 
 		ao2_lock(s->session);
 		s->session->waiting_thread = AST_PTHREADT_NULL;
@@ -6318,7 +6615,7 @@ static int get_input(struct mansession *s, char *output)
 	}
 
 	ao2_lock(s->session);
-	res = fread(src + s->session->inlen, 1, maxlen - s->session->inlen, s->session->f);
+	res = ast_iostream_read(s->session->stream, src + s->session->inlen, maxlen - s->session->inlen);
 	if (res < 1) {
 		res = -1;	/* error return */
 	} else {
@@ -6451,13 +6748,11 @@ static void *session_do(void *data)
 	struct mansession s = {
 		.tcptls_session = data,
 	};
-	int flags;
 	int res;
+	int arg = 1;
 	struct ast_sockaddr ser_remote_address_tmp;
-	struct protoent *p;
 
 	if (ast_atomic_fetchadd_int(&unauth_sessions, +1) >= authlimit) {
-		fclose(ser->f);
 		ast_atomic_fetchadd_int(&unauth_sessions, -1);
 		goto done;
 	}
@@ -6466,7 +6761,6 @@ static void *session_do(void *data)
 	session = build_mansession(&ser_remote_address_tmp);
 
 	if (session == NULL) {
-		fclose(ser->f);
 		ast_atomic_fetchadd_int(&unauth_sessions, -1);
 		goto done;
 	}
@@ -6474,20 +6768,10 @@ static void *session_do(void *data)
 	/* here we set TCP_NODELAY on the socket to disable Nagle's algorithm.
 	 * This is necessary to prevent delays (caused by buffering) as we
 	 * write to the socket in bits and pieces. */
-	p = getprotobyname("tcp");
-	if (p) {
-		int arg = 1;
-		if( setsockopt(ser->fd, p->p_proto, TCP_NODELAY, (char *)&arg, sizeof(arg) ) < 0 ) {
-			ast_log(LOG_WARNING, "Failed to set manager tcp connection to TCP_NODELAY mode: %s\nSome manager actions may be slow to respond.\n", strerror(errno));
-		}
-	} else {
-		ast_log(LOG_WARNING, "Failed to set manager tcp connection to TCP_NODELAY, getprotobyname(\"tcp\") failed\nSome manager actions may be slow to respond.\n");
+	if (setsockopt(ast_iostream_get_fd(ser->stream), IPPROTO_TCP, TCP_NODELAY, (char *) &arg, sizeof(arg)) < 0) {
+		ast_log(LOG_WARNING, "Failed to set TCP_NODELAY on manager connection: %s\n", strerror(errno));
 	}
-
-	/* make sure socket is non-blocking */
-	flags = fcntl(ser->fd, F_GETFL);
-	flags |= O_NONBLOCK;
-	fcntl(ser->fd, F_SETFL, flags);
+	ast_iostream_nonblock(ser->stream);
 
 	ao2_lock(session);
 	/* Hook to the tail of the event queue */
@@ -6496,8 +6780,7 @@ static void *session_do(void *data)
 	ast_mutex_init(&s.lock);
 
 	/* these fields duplicate those in the 'ser' structure */
-	session->fd = s.fd = ser->fd;
-	session->f = s.f = ser->f;
+	session->stream = s.stream = ser->stream;
 	ast_sockaddr_copy(&session->addr, &ser_remote_address_tmp);
 	s.session = session;
 
@@ -6516,9 +6799,9 @@ static void *session_do(void *data)
 	 * We cannot let the stream exclusively wait for data to arrive.
 	 * We have to wake up the task to send async events.
 	 */
-	ast_tcptls_stream_set_exclusive_input(ser->stream_cookie, 0);
+	ast_iostream_set_exclusive_input(ser->stream, 0);
 
-	ast_tcptls_stream_set_timeout_sequence(ser->stream_cookie,
+	ast_iostream_set_timeout_sequence(ser->stream,
 		ast_tvnow(), authtimeout * 1000);
 
 	astman_append(&s, "Asterisk Call Manager/%s\r\n", AMI_VERSION);	/* welcome prompt */
@@ -6527,7 +6810,7 @@ static void *session_do(void *data)
 			break;
 		}
 		if (session->authenticated) {
-			ast_tcptls_stream_set_timeout_disable(ser->stream_cookie);
+			ast_iostream_set_timeout_disable(ser->stream);
 		}
 	}
 	/* session is over, explain why and terminate */
@@ -6615,11 +6898,10 @@ static int append_event(const char *str, int category)
 
 static void append_channel_vars(struct ast_str **pbuf, struct ast_channel *chan)
 {
-	RAII_VAR(struct varshead *, vars, NULL, ao2_cleanup);
+	struct varshead *vars;
 	struct ast_var_t *var;
 
 	vars = ast_channel_get_manager_vars(chan);
-
 	if (!vars) {
 		return;
 	}
@@ -6627,62 +6909,67 @@ static void append_channel_vars(struct ast_str **pbuf, struct ast_channel *chan)
 	AST_LIST_TRAVERSE(vars, var, entries) {
 		ast_str_append(pbuf, 0, "ChanVariable(%s): %s=%s\r\n", ast_channel_name(chan), var->name, var->value);
 	}
+	ao2_ref(vars, -1);
 }
 
 /* XXX see if can be moved inside the function */
 AST_THREADSTORAGE(manager_event_buf);
 #define MANAGER_EVENT_BUF_INITSIZE   256
 
-int __ast_manager_event_multichan(int category, const char *event, int chancount,
-	struct ast_channel **chans, const char *file, int line, const char *func,
-	const char *fmt, ...)
+static int __attribute__((format(printf, 9, 0))) __manager_event_sessions_va(
+	struct ao2_container *sessions,
+	int category,
+	const char *event,
+	int chancount,
+	struct ast_channel **chans,
+	const char *file,
+	int line,
+	const char *func,
+	const char *fmt,
+	va_list ap)
 {
-	RAII_VAR(struct ao2_container *, sessions, ao2_global_obj_ref(mgr_sessions), ao2_cleanup);
-	struct mansession_session *session;
-	struct manager_custom_hook *hook;
 	struct ast_str *auth = ast_str_alloca(MAX_AUTH_PERM_STRING);
 	const char *cat_str;
-	va_list ap;
 	struct timeval now;
 	struct ast_str *buf;
 	int i;
 
-	if (!(sessions && ao2_container_count(sessions)) && AST_RWLIST_EMPTY(&manager_hooks)) {
-		return 0;
-	}
-
-	if (!(buf = ast_str_thread_get(&manager_event_buf, MANAGER_EVENT_BUF_INITSIZE))) {
+	buf = ast_str_thread_get(&manager_event_buf, MANAGER_EVENT_BUF_INITSIZE);
+	if (!buf) {
 		return -1;
 	}
 
 	cat_str = authority_to_str(category, &auth);
 	ast_str_set(&buf, 0,
-			"Event: %s\r\nPrivilege: %s\r\n",
-			 event, cat_str);
+		"Event: %s\r\n"
+		"Privilege: %s\r\n",
+		event, cat_str);
 
 	if (timestampevents) {
 		now = ast_tvnow();
 		ast_str_append(&buf, 0,
-				"Timestamp: %ld.%06lu\r\n",
-				 (long)now.tv_sec, (unsigned long) now.tv_usec);
+			"Timestamp: %ld.%06lu\r\n",
+			(long)now.tv_sec, (unsigned long) now.tv_usec);
 	}
 	if (manager_debug) {
 		static int seq;
+
 		ast_str_append(&buf, 0,
-				"SequenceNumber: %d\r\n",
-				 ast_atomic_fetchadd_int(&seq, 1));
+			"SequenceNumber: %d\r\n",
+			ast_atomic_fetchadd_int(&seq, 1));
 		ast_str_append(&buf, 0,
-				"File: %s\r\nLine: %d\r\nFunc: %s\r\n", file, line, func);
+			"File: %s\r\n"
+			"Line: %d\r\n"
+			"Func: %s\r\n",
+			file, line, func);
 	}
 	if (!ast_strlen_zero(ast_config_AST_SYSTEM_NAME)) {
 		ast_str_append(&buf, 0,
-				"SystemName: %s\r\n",
-				 ast_config_AST_SYSTEM_NAME);
+			"SystemName: %s\r\n",
+			ast_config_AST_SYSTEM_NAME);
 	}
 
-	va_start(ap, fmt);
 	ast_str_append_va(&buf, 0, fmt, ap);
-	va_end(ap);
 	for (i = 0; i < chancount; i++) {
 		append_channel_vars(&buf, chans[i]);
 	}
@@ -6693,9 +6980,11 @@ int __ast_manager_event_multichan(int category, const char *event, int chancount
 
 	/* Wake up any sleeping sessions */
 	if (sessions) {
-		struct ao2_iterator i;
-		i = ao2_iterator_init(sessions, 0);
-		while ((session = ao2_iterator_next(&i))) {
+		struct ao2_iterator iter;
+		struct mansession_session *session;
+
+		iter = ao2_iterator_init(sessions, 0);
+		while ((session = ao2_iterator_next(&iter))) {
 			ao2_lock(session);
 			if (session->waiting_thread != AST_PTHREADT_NULL) {
 				pthread_kill(session->waiting_thread, SIGURG);
@@ -6710,10 +6999,12 @@ int __ast_manager_event_multichan(int category, const char *event, int chancount
 			ao2_unlock(session);
 			unref_mansession(session);
 		}
-		ao2_iterator_destroy(&i);
+		ao2_iterator_destroy(&iter);
 	}
 
 	if (category != EVENT_FLAG_SHUTDOWN && !AST_RWLIST_EMPTY(&manager_hooks)) {
+		struct manager_custom_hook *hook;
+
 		AST_RWLIST_RDLOCK(&manager_hooks);
 		AST_RWLIST_TRAVERSE(&manager_hooks, hook, list) {
 			hook->helper(category, event, ast_str_buffer(buf));
@@ -6722,6 +7013,50 @@ int __ast_manager_event_multichan(int category, const char *event, int chancount
 	}
 
 	return 0;
+}
+
+static int __attribute__((format(printf, 9, 0))) __manager_event_sessions(
+	struct ao2_container *sessions,
+	int category,
+	const char *event,
+	int chancount,
+	struct ast_channel **chans,
+	const char *file,
+	int line,
+	const char *func,
+	const char *fmt,
+	...)
+{
+	va_list ap;
+	int res;
+
+	va_start(ap, fmt);
+	res = __manager_event_sessions_va(sessions, category, event, chancount, chans,
+		file, line, func, fmt, ap);
+	va_end(ap);
+	return res;
+}
+
+int __ast_manager_event_multichan(int category, const char *event, int chancount,
+	struct ast_channel **chans, const char *file, int line, const char *func,
+	const char *fmt, ...)
+{
+	struct ao2_container *sessions = ao2_global_obj_ref(mgr_sessions);
+	va_list ap;
+	int res;
+
+	if (!any_manager_listeners(sessions)) {
+		/* Nobody is listening */
+		ao2_cleanup(sessions);
+		return 0;
+	}
+
+	va_start(ap, fmt);
+	res = __manager_event_sessions_va(sessions, category, event, chancount, chans,
+		file, line, func, fmt, ap);
+	va_end(ap);
+	ao2_cleanup(sessions);
+	return res;
 }
 
 /*! \brief
@@ -6757,11 +7092,12 @@ int ast_manager_unregister(const char *action)
 	return 0;
 }
 
-static int manager_state_cb(char *context, char *exten, struct ast_state_cb_info *info, void *data)
+static int manager_state_cb(const char *context, const char *exten, struct ast_state_cb_info *info, void *data)
 {
 	/* Notify managers of change */
 	char hint[512];
 
+	hint[0] = '\0';
 	ast_get_hint(hint, sizeof(hint), NULL, 0, NULL, context, exten);
 
 	switch(info->reason) {
@@ -7334,23 +7670,9 @@ static void xml_translate(struct ast_str **out, char *in, struct ast_variable *g
 
 static void close_mansession_file(struct mansession *s)
 {
-	if (s->f) {
-		if (fclose(s->f)) {
-			ast_log(LOG_ERROR, "fclose() failed: %s\n", strerror(errno));
-		}
-		s->f = NULL;
-		s->fd = -1;
-	} else if (s->fd != -1) {
-		/*
-		 * Issuing shutdown() is necessary here to avoid a race
-		 * condition where the last data written may not appear
-		 * in the TCP stream.  See ASTERISK-23548
-		 */
-		shutdown(s->fd, SHUT_RDWR);
-		if (close(s->fd)) {
-			ast_log(LOG_ERROR, "close() failed: %s\n", strerror(errno));
-		}
-		s->fd = -1;
+	if (s->stream) {
+		ast_iostream_close(s->stream);
+		s->stream = NULL;
 	} else {
 		ast_log(LOG_ERROR, "Attempted to close file/file descriptor on mansession without a valid file or file descriptor.\n");
 	}
@@ -7359,17 +7681,20 @@ static void close_mansession_file(struct mansession *s)
 static void process_output(struct mansession *s, struct ast_str **out, struct ast_variable *params, enum output_format format)
 {
 	char *buf;
-	size_t l;
+	off_t l;
+	int fd;
 
-	if (!s->f)
+	if (!s->stream)
 		return;
 
 	/* Ensure buffer is NULL-terminated */
-	fprintf(s->f, "%c", 0);
-	fflush(s->f);
+	ast_iostream_write(s->stream, "", 1);
 
-	if ((l = ftell(s->f)) > 0) {
-		if (MAP_FAILED == (buf = mmap(NULL, l, PROT_READ | PROT_WRITE, MAP_PRIVATE, s->fd, 0))) {
+	fd = ast_iostream_get_fd(s->stream);
+
+	l = lseek(fd, 0, SEEK_CUR);
+	if (l > 0) {
+		if (MAP_FAILED == (buf = mmap(NULL, l, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0))) {
 			ast_log(LOG_WARNING, "mmap failed.  Manager output was not processed\n");
 		} else {
 			if (format == FORMAT_XML || format == FORMAT_HTML) {
@@ -7396,6 +7721,7 @@ static int generic_http_callback(struct ast_tcptls_session_instance *ser,
 	struct mansession s = { .session = NULL, .tcptls_session = ser };
 	struct mansession_session *session = NULL;
 	uint32_t ident;
+	int fd;
 	int blastaway = 0;
 	struct ast_variable *v;
 	struct ast_variable *params = get_params;
@@ -7451,17 +7777,17 @@ static int generic_http_callback(struct ast_tcptls_session_instance *ser,
 	}
 
 	s.session = session;
-	s.fd = mkstemp(template);	/* create a temporary file for command output */
+	fd = mkstemp(template);	/* create a temporary file for command output */
 	unlink(template);
-	if (s.fd <= -1) {
+	if (fd <= -1) {
 		ast_http_error(ser, 500, "Server Error", "Internal Server Error (mkstemp failed)");
 		goto generic_callback_out;
 	}
-	s.f = fdopen(s.fd, "w+");
-	if (!s.f) {
+	s.stream = ast_iostream_from_fd(&fd);
+	if (!s.stream) {
 		ast_log(LOG_WARNING, "HTTP Manager, fdopen failed: %s!\n", strerror(errno));
 		ast_http_error(ser, 500, "Server Error", "Internal Server Error (fdopen failed)");
-		close(s.fd);
+		close(fd);
 		goto generic_callback_out;
 	}
 
@@ -7601,9 +7927,9 @@ generic_callback_out:
 		if (blastaway) {
 			session_destroy(session);
 		} else {
-			if (session->f) {
-				fclose(session->f);
-				session->f = NULL;
+			if (session->stream) {
+				ast_iostream_close(session->stream);
+				session->stream = NULL;
 			}
 			unref_mansession(session);
 		}
@@ -7628,6 +7954,7 @@ static int auth_http_callback(struct ast_tcptls_session_instance *ser,
 	struct message m = { 0 };
 	unsigned int idx;
 	size_t hdrlen;
+	int fd;
 
 	time_t time_now = time(NULL);
 	unsigned long nonce = 0, nc;
@@ -7698,13 +8025,21 @@ static int auth_http_callback(struct ast_tcptls_session_instance *ser,
 
 	/* compute the expected response to compare with what we received */
 	{
-		char a2[256];
-		char a2_hash[256];
+		char *a2;
+		/* ast_md5_hash outputs 32 characters plus NULL terminator. */
+		char a2_hash[33];
 		char resp[256];
 
 		/* XXX Now request method are hardcoded in A2 */
-		snprintf(a2, sizeof(a2), "%s:%s", ast_get_http_method(method), d.uri);
+		if (ast_asprintf(&a2, "%s:%s", ast_get_http_method(method), d.uri) < 0) {
+			AST_RWLIST_UNLOCK(&users);
+			ast_http_request_close_on_completion(ser);
+			ast_http_error(ser, 500, "Server Error", "Internal Server Error (out of memory)");
+			return 0;
+		}
+
 		ast_md5_hash(a2_hash, a2);
+		ast_free(a2);
 
 		if (d.qop) {
 			/* RFC 2617 */
@@ -7806,17 +8141,17 @@ static int auth_http_callback(struct ast_tcptls_session_instance *ser,
 
 	ast_mutex_init(&s.lock);
 	s.session = session;
-	s.fd = mkstemp(template);	/* create a temporary file for command output */
+	fd = mkstemp(template);	/* create a temporary file for command output */
 	unlink(template);
-	if (s.fd <= -1) {
+	if (fd <= -1) {
 		ast_http_error(ser, 500, "Server Error", "Internal Server Error (mkstemp failed)");
 		goto auth_callback_out;
 	}
-	s.f = fdopen(s.fd, "w+");
-	if (!s.f) {
+	s.stream = ast_iostream_from_fd(&fd);
+	if (!s.stream) {
 		ast_log(LOG_WARNING, "HTTP Manager, fdopen failed: %s!\n", strerror(errno));
 		ast_http_error(ser, 500, "Server Error", "Internal Server Error (fdopen failed)");
-		close(s.fd);
+		close(fd);
 		goto auth_callback_out;
 	}
 
@@ -7867,7 +8202,7 @@ static int auth_http_callback(struct ast_tcptls_session_instance *ser,
 		m.headers[idx] = NULL;
 	}
 
-	result_size = ftell(s.f); /* Calculate approx. size of result */
+	result_size = lseek(ast_iostream_get_fd(s.stream), 0, SEEK_CUR); /* Calculate approx. size of result */
 
 	http_header = ast_str_create(80);
 	out = ast_str_create(result_size * 2 + 512);
@@ -7919,11 +8254,10 @@ auth_callback_out:
 	ast_free(out);
 
 	ao2_lock(session);
-	if (session->f) {
-		fclose(session->f);
+	if (session->stream) {
+		ast_iostream_close(session->stream);
+		session->stream = NULL;
 	}
-	session->f = NULL;
-	session->fd = -1;
 	ao2_unlock(session);
 
 	if (session->needdestroy) {
@@ -8187,7 +8521,7 @@ static char *handle_manager_show_settings(struct ast_cli_entry *e, int cmd, stru
 	ast_cli(a->fd, FORMAT, "Manager (AMI):", AST_CLI_YESNO(manager_enabled));
 	ast_cli(a->fd, FORMAT, "Web Manager (AMI/HTTP):", AST_CLI_YESNO(webmanager_enabled));
 	ast_cli(a->fd, FORMAT, "TCP Bindaddress:", manager_enabled != 0 ? ast_sockaddr_stringify(&ami_desc.local_address) : "Disabled");
-	ast_cli(a->fd, FORMAT2, "HTTP Timeout (minutes):", httptimeout);
+	ast_cli(a->fd, FORMAT2, "HTTP Timeout (seconds):", httptimeout);
 	ast_cli(a->fd, FORMAT, "TLS Enable:", AST_CLI_YESNO(ami_tls_cfg.enabled));
 	ast_cli(a->fd, FORMAT, "TLS Bindaddress:", ami_tls_cfg.enabled != 0 ? ast_sockaddr_stringify(&amis_desc.local_address) : "Disabled");
 	ast_cli(a->fd, FORMAT, "TLS Certfile:", ami_tls_cfg.certfile);
@@ -8337,8 +8671,6 @@ static char *handle_manager_show_event(struct ast_cli_entry *e, int cmd, struct 
 	struct ao2_iterator it_events;
 	struct ast_xml_doc_item *item, *temp;
 	int length;
-	int which;
-	char *match = NULL;
 
 	if (cmd == CLI_INIT) {
 		e->command = "manager show event";
@@ -8355,19 +8687,24 @@ static char *handle_manager_show_event(struct ast_cli_entry *e, int cmd, struct 
 	}
 
 	if (cmd == CLI_GENERATE) {
+		if (a->pos != 3) {
+			return NULL;
+		}
+
 		length = strlen(a->word);
-		which = 0;
 		it_events = ao2_iterator_init(events, 0);
 		while ((item = ao2_iterator_next(&it_events))) {
-			if (!strncasecmp(a->word, item->name, length) && ++which > a->n) {
-				match = ast_strdup(item->name);
-				ao2_ref(item, -1);
-				break;
+			if (!strncasecmp(a->word, item->name, length)) {
+				if (ast_cli_completion_add(ast_strdup(item->name))) {
+					ao2_ref(item, -1);
+					break;
+				}
 			}
 			ao2_ref(item, -1);
 		}
 		ao2_iterator_destroy(&it_events);
-		return match;
+
+		return NULL;
 	}
 
 	if (a->argc != 4) {
@@ -8477,6 +8814,7 @@ static void manager_shutdown(void)
 	ast_manager_unregister("ListCategories");
 	ast_manager_unregister("Redirect");
 	ast_manager_unregister("Atxfer");
+	ast_manager_unregister("CancelAtxfer");
 	ast_manager_unregister("Originate");
 	ast_manager_unregister("Command");
 	ast_manager_unregister("ExtensionState");
@@ -8531,6 +8869,10 @@ static void manager_shutdown(void)
 	ami_tls_cfg.pvtfile = NULL;
 	ast_free(ami_tls_cfg.cipher);
 	ami_tls_cfg.cipher = NULL;
+	ast_free(ami_tls_cfg.cafile);
+	ami_tls_cfg.cafile = NULL;
+	ast_free(ami_tls_cfg.capath);
+	ami_tls_cfg.capath = NULL;
 
 	ao2_global_obj_release(mgr_sessions);
 
@@ -8564,6 +8906,8 @@ static int manager_subscriptions_init(void)
 	if (!stasis_router) {
 		return -1;
 	}
+	stasis_message_router_set_congestion_limits(stasis_router, -1,
+		6 * AST_TASKPROCESSOR_HIGH_WATER_LEVEL);
 
 	res |= stasis_message_router_set_default(stasis_router,
 		manager_default_msg_cb, NULL);
@@ -8629,6 +8973,10 @@ static void manager_set_defaults(void)
 	ami_tls_cfg.pvtfile = ast_strdup("");
 	ast_free(ami_tls_cfg.cipher);
 	ami_tls_cfg.cipher = ast_strdup("");
+	ast_free(ami_tls_cfg.cafile);
+	ami_tls_cfg.cafile = ast_strdup("");
+	ast_free(ami_tls_cfg.capath);
+	ami_tls_cfg.capath = ast_strdup("");
 }
 
 static int __init_manager(int reload, int by_external_config)
@@ -8653,8 +9001,6 @@ static int __init_manager(int reload, int by_external_config)
 		struct ao2_container *temp_event_docs;
 #endif
 		int res;
-
-		ast_register_cleanup(manager_shutdown);
 
 		res = STASIS_MESSAGE_TYPE_INIT(ast_manager_get_generic_type);
 		if (res != 0) {
@@ -8682,6 +9028,7 @@ static int __init_manager(int reload, int by_external_config)
 		ast_manager_register_xml_core("ListCategories", EVENT_FLAG_CONFIG, action_listcategories);
 		ast_manager_register_xml_core("Redirect", EVENT_FLAG_CALL, action_redirect);
 		ast_manager_register_xml_core("Atxfer", EVENT_FLAG_CALL, action_atxfer);
+		ast_manager_register_xml_core("CancelAtxfer", EVENT_FLAG_CALL, action_cancel_atxfer);
 		ast_manager_register_xml_core("Originate", EVENT_FLAG_ORIGINATE, action_originate);
 		ast_manager_register_xml_core("Command", EVENT_FLAG_COMMAND, action_command);
 		ast_manager_register_xml_core("ExtensionState", EVENT_FLAG_CALL | EVENT_FLAG_REPORTING, action_extensionstate);
@@ -9137,12 +9484,19 @@ static void acl_change_stasis_cb(void *data, struct stasis_subscription *sub,
 	__init_manager(1, 1);
 }
 
-int init_manager(void)
+static int unload_module(void)
 {
-	return __init_manager(0, 0);
+	return 0;
 }
 
-int reload_manager(void)
+static int load_module(void)
+{
+	ast_register_cleanup(manager_shutdown);
+
+	return __init_manager(0, 0) ? AST_MODULE_LOAD_FAILURE : AST_MODULE_LOAD_SUCCESS;
+}
+
+static int reload_module(void)
 {
 	return __init_manager(1, 0);
 }
@@ -9187,28 +9541,22 @@ struct ast_datastore *astman_datastore_find(struct mansession *s, const struct a
 }
 
 int ast_str_append_event_header(struct ast_str **fields_string,
-					const char *header, const char *value)
+	const char *header, const char *value)
 {
-	struct ast_str *working_str = *fields_string;
-
-	if (!working_str) {
-		working_str = ast_str_create(128);
-		if (!working_str) {
+	if (!*fields_string) {
+		*fields_string = ast_str_create(128);
+		if (!*fields_string) {
 			return -1;
 		}
-		*fields_string = working_str;
 	}
 
-	ast_str_append(&working_str, 0,
-		"%s: %s\r\n",
-		header, value);
-
-	return 0;
+	return (ast_str_append(fields_string, 0, "%s: %s\r\n", header, value) < 0) ? -1 : 0;
 }
 
 static void manager_event_blob_dtor(void *obj)
 {
 	struct ast_manager_event_blob *ev = obj;
+
 	ast_string_field_free_memory(ev);
 }
 
@@ -9220,18 +9568,19 @@ ast_manager_event_blob_create(
 	const char *extra_fields_fmt,
 	...)
 {
-	RAII_VAR(struct ast_manager_event_blob *, ev, NULL, ao2_cleanup);
+	struct ast_manager_event_blob *ev;
 	va_list argp;
 
 	ast_assert(extra_fields_fmt != NULL);
 	ast_assert(manager_event != NULL);
 
-	ev = ao2_alloc(sizeof(*ev), manager_event_blob_dtor);
+	ev = ao2_alloc_options(sizeof(*ev), manager_event_blob_dtor, AO2_ALLOC_OPT_LOCK_NOLOCK);
 	if (!ev) {
 		return NULL;
 	}
 
 	if (ast_string_field_init(ev, 20)) {
+		ao2_ref(ev, -1);
 		return NULL;
 	}
 
@@ -9239,10 +9588,17 @@ ast_manager_event_blob_create(
 	ev->event_flags = event_flags;
 
 	va_start(argp, extra_fields_fmt);
-	ast_string_field_ptr_build_va(ev, &ev->extra_fields, extra_fields_fmt,
-				      argp);
+	ast_string_field_ptr_build_va(ev, &ev->extra_fields, extra_fields_fmt, argp);
 	va_end(argp);
 
-	ao2_ref(ev, +1);
 	return ev;
 }
+
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_GLOBAL_SYMBOLS | AST_MODFLAG_LOAD_ORDER, "Asterisk Manager Interface",
+	.support_level = AST_MODULE_SUPPORT_CORE,
+	.load = load_module,
+	.unload = unload_module,
+	.reload = reload_module,
+	.load_pri = AST_MODPRI_CORE,
+	.requires = "extconfig,acl,http",
+);

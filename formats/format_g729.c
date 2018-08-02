@@ -19,20 +19,18 @@
 /*! \file
  *
  * \brief Save to raw, headerless G729 data.
- * \note This is not an encoder/decoder. The codec fo g729 is only
+ * \note This is not an encoder/decoder. The codec for g729 is only
  * available with a commercial license from Digium, due to patent
  * restrictions. Check http://www.digium.com for information.
- * \arg Extensions: g729 
+ * \arg Extensions: g729
  * \ingroup formats
  */
 
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -48,13 +46,17 @@ ASTERISK_REGISTER_FILE()
 
 static struct ast_frame *g729_read(struct ast_filestream *s, int *whennext)
 {
-	int res;
+	size_t res;
+
 	/* Send a frame from the file to the appropriate channel */
 	s->fr.samples = G729A_SAMPLES;
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, BUF_SIZE);
 	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) != s->fr.datalen) {
-		if (res && (res != 10))	/* XXX what for ? */
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+		if (res && res != 10) /* XXX what for ? */ {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples;
@@ -84,7 +86,7 @@ static int g729_seek(struct ast_filestream *fs, off_t sample_offset, int whence)
 	cur = ftello(fs->f);
 	fseeko(fs->f, 0, SEEK_END);
 	max = ftello(fs->f);
-	
+
 	bytes = BUF_SIZE * (sample_offset / G729A_SAMPLES);
 	if (whence == SEEK_SET)
 		offset = bytes;
@@ -140,7 +142,7 @@ static int load_module(void)
 {
 	g729_f.format = ast_format_g729;
 	if (ast_format_def_register(&g729_f))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

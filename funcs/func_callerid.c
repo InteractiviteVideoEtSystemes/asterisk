@@ -30,8 +30,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/channel.h"
 #include "asterisk/pbx.h"
@@ -373,22 +371,27 @@ ASTERISK_REGISTER_FILE()
 			fields get/set a combined value for the corresponding
 			<replaceable>...-name-pres</replaceable> and <replaceable>...-num-pres</replaceable>
 			fields.</para>
-			<para>The allowable values for the <replaceable>reason</replaceable>
+			<para>The recognized values for the <replaceable>reason</replaceable>
 			and <replaceable>orig-reason</replaceable> fields are the following:</para>
 			<enumlist>
-				<enum name = "unknown"><para>Unknown</para></enum>
-				<enum name = "cfb"><para>Call Forwarding Busy</para></enum>
-				<enum name = "cfnr"><para>Call Forwarding No Reply</para></enum>
-				<enum name = "unavailable"><para>Callee is Unavailable</para></enum>
-				<enum name = "time_of_day"><para>Time of Day</para></enum>
-				<enum name = "dnd"><para>Do Not Disturb</para></enum>
-				<enum name = "deflection"><para>Call Deflection</para></enum>
-				<enum name = "follow_me"><para>Follow Me</para></enum>
-				<enum name = "out_of_order"><para>Called DTE Out-Of-Order</para></enum>
 				<enum name = "away"><para>Callee is Away</para></enum>
 				<enum name = "cf_dte"><para>Call Forwarding By The Called DTE</para></enum>
+				<enum name = "cfb"><para>Call Forwarding Busy</para></enum>
+				<enum name = "cfnr"><para>Call Forwarding No Reply</para></enum>
 				<enum name = "cfu"><para>Call Forwarding Unconditional</para></enum>
+				<enum name = "deflection"><para>Call Deflection</para></enum>
+				<enum name = "dnd"><para>Do Not Disturb</para></enum>
+				<enum name = "follow_me"><para>Follow Me</para></enum>
+				<enum name = "out_of_order"><para>Called DTE Out-Of-Order</para></enum>
+				<enum name = "send_to_vm"><para>Send the call to voicemail</para></enum>
+				<enum name = "time_of_day"><para>Time of Day</para></enum>
+				<enum name = "unavailable"><para>Callee is Unavailable</para></enum>
+				<enum name = "unknown"><para>Unknown</para></enum>
 			</enumlist>
+			<note><para>You can set a user defined reason string that SIP can
+			send/receive instead.  The user defined reason string my need to be
+			quoted depending upon SIP or the peer's requirements.  These strings
+			are treated as unknown by the non-SIP channel drivers.</para></note>
 			<para>The allowable values for the <replaceable>xxx-name-charset</replaceable>
 			field are the following:</para>
 			<enumlist>
@@ -975,7 +978,7 @@ static int callerpres_write(struct ast_channel *chan, const char *cmd, char *dat
 static int callerid_read(struct ast_channel *chan, const char *cmd, char *data, char *buf, size_t len)
 {
 	char *parms;
-	struct ast_party_members member;
+	struct ast_party_members member = { 0, };
 	AST_DECLARE_APP_ARGS(args,
 		AST_APP_ARG(member);	/*!< Member name */
 		AST_APP_ARG(cid);		/*!< Optional caller id to parse instead of from the channel. */
@@ -1132,8 +1135,8 @@ static int callerid_write(struct ast_channel *chan, const char *cmd, char *data,
 	enum ID_FIELD_STATUS status;
 	char *val;
 	char *parms;
-	struct ast_party_func_args args;
-	struct ast_party_members member;
+	struct ast_party_func_args args = { 0, };
+	struct ast_party_members member = { 0, };
 
 	if (!value || !chan) {
 		return -1;
@@ -1288,7 +1291,7 @@ static int callerid_write(struct ast_channel *chan, const char *cmd, char *data,
  */
 static int connectedline_read(struct ast_channel *chan, const char *cmd, char *data, char *buf, size_t len)
 {
-	struct ast_party_members member;
+	struct ast_party_members member = { 0, };
 	char *read_what;
 	enum ID_FIELD_STATUS status;
 
@@ -1356,8 +1359,8 @@ static int connectedline_write(struct ast_channel *chan, const char *cmd, char *
 	char *val;
 	char *parms;
 	void (*set_it)(struct ast_channel *chan, const struct ast_party_connected_line *connected, const struct ast_set_party_connected_line *update);
-	struct ast_party_func_args args;
-	struct ast_party_members member;
+	struct ast_party_func_args args = { 0, };
+	struct ast_party_members member = { 0, };
 	struct ast_flags opts;
 	char *opt_args[CONNECTED_LINE_OPT_ARG_ARRAY_SIZE];
 	enum ID_FIELD_STATUS status;
@@ -1461,7 +1464,7 @@ static int connectedline_write(struct ast_channel *chan, const char *cmd, char *
  */
 static int redirecting_read(struct ast_channel *chan, const char *cmd, char *data, char *buf, size_t len)
 {
-	struct ast_party_members member;
+	struct ast_party_members member = { 0, };
 	char *read_what;
 	const struct ast_party_redirecting *ast_redirecting;
 	enum ID_FIELD_STATUS status;
@@ -1598,8 +1601,8 @@ static int redirecting_write(struct ast_channel *chan, const char *cmd, char *da
 	char *val;
 	char *parms;
 	void (*set_it)(struct ast_channel *chan, const struct ast_party_redirecting *redirecting, const struct ast_set_party_redirecting *update);
-	struct ast_party_func_args args;
-	struct ast_party_members member;
+	struct ast_party_func_args args = { 0, };
+	struct ast_party_members member = { 0, };
 	struct ast_flags opts;
 	char *opt_args[REDIRECTING_OPT_ARG_ARRAY_SIZE];
 

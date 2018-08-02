@@ -34,12 +34,11 @@
  */
 
 /*** MODULEINFO
+	<use type="module">func_periodic_hook</use>
 	<support_level>core</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/paths.h"	/* use ast_config_AST_MONITOR_DIR */
 #include "asterisk/stringfields.h"
@@ -138,6 +137,11 @@ ASTERISK_REGISTER_FILE()
 				<para>Will be executed when the recording is over.</para>
 				<para>Any strings matching <literal>^{X}</literal> will be unescaped to <variable>X</variable>.</para>
 				<para>All variables will be evaluated at the time MixMonitor is called.</para>
+				<warning><para>Do not use untrusted strings such as <variable>CALLERID(num)</variable>
+				or <variable>CALLERID(name)</variable> as part of the command parameters.  You
+				risk a command injection attack executing arbitrary commands if the untrusted
+				strings aren't filtered to remove dangerous characters.  See function
+				<variable>FILTER()</variable>.</para></warning>
 			</parameter>
 		</syntax>
 		<description>
@@ -150,6 +154,11 @@ ASTERISK_REGISTER_FILE()
 					<para>Will contain the filename used to record.</para>
 				</variable>
 			</variablelist>
+			<warning><para>Do not use untrusted strings such as <variable>CALLERID(num)</variable>
+			or <variable>CALLERID(name)</variable> as part of ANY of the application's
+			parameters.  You risk a command injection attack executing arbitrary commands
+			if the untrusted strings aren't filtered to remove dangerous characters.  See
+			function <variable>FILTER()</variable>.</para></warning>
 		</description>
 		<see-also>
 			<ref type="application">Monitor</ref>
@@ -224,6 +233,11 @@ ASTERISK_REGISTER_FILE()
 				<para>Will be executed when the recording is over.
 				Any strings matching <literal>^{X}</literal> will be unescaped to <variable>X</variable>.
 				All variables will be evaluated at the time MixMonitor is called.</para>
+				<warning><para>Do not use untrusted strings such as <variable>CALLERID(num)</variable>
+				or <variable>CALLERID(name)</variable> as part of the command parameters.  You
+				risk a command injection attack executing arbitrary commands if the untrusted
+				strings aren't filtered to remove dangerous characters.  See function
+				<variable>FILTER()</variable>.</para></warning>
 			</parameter>
 		</syntax>
 		<description>
@@ -619,6 +633,16 @@ static void mixmonitor_save_prep(struct mixmonitor *mixmonitor, char *filename, 
 	}
 }
 
+static int mixmonitor_autochan_is_bridged(struct ast_autochan *autochan)
+{
+	int is_bridged;
+
+	ast_autochan_channel_lock(autochan);
+	is_bridged = ast_channel_is_bridged(autochan->chan);
+	ast_autochan_channel_unlock(autochan);
+	return is_bridged;
+}
+
 static void *mixmonitor_thread(void *obj)
 {
 	struct mixmonitor *mixmonitor = obj;
@@ -676,8 +700,7 @@ static void *mixmonitor_thread(void *obj)
 		ast_audiohook_unlock(&mixmonitor->audiohook);
 
 		if (!ast_test_flag(mixmonitor, MUXFLAG_BRIDGED)
-			|| (mixmonitor->autochan->chan
-				&& ast_channel_is_bridged(mixmonitor->autochan->chan))) {
+			|| mixmonitor_autochan_is_bridged(mixmonitor->autochan)) {
 			ast_mutex_lock(&mixmonitor->mixmonitor_ds->lock);
 
 			/* Write out the frame(s) */
@@ -726,11 +749,11 @@ static void *mixmonitor_thread(void *obj)
 
 	ast_audiohook_unlock(&mixmonitor->audiohook);
 
-	ast_channel_lock(mixmonitor->autochan->chan);
 	if (ast_test_flag(mixmonitor, MUXFLAG_BEEP_STOP)) {
+		ast_autochan_channel_lock(mixmonitor->autochan);
 		ast_stream_and_wait(mixmonitor->autochan->chan, "beep", "");
+		ast_autochan_channel_unlock(mixmonitor->autochan);
 	}
-	ast_channel_unlock(mixmonitor->autochan->chan);
 
 	ast_autochan_destroy(mixmonitor->autochan);
 
@@ -790,6 +813,8 @@ static int setup_mixmonitor_ds(struct mixmonitor *mixmonitor, struct ast_channel
 
 	if (ast_asprintf(datastore_id, "%p", mixmonitor_ds) == -1) {
 		ast_log(LOG_ERROR, "Failed to allocate memory for MixMonitor ID.\n");
+		ast_free(mixmonitor_ds);
+		return -1;
 	}
 
 	ast_mutex_init(&mixmonitor_ds->lock);
@@ -802,11 +827,11 @@ static int setup_mixmonitor_ds(struct mixmonitor *mixmonitor, struct ast_channel
 		return -1;
 	}
 
-	ast_channel_lock(mixmonitor->autochan->chan);
 	if (ast_test_flag(mixmonitor, MUXFLAG_BEEP_START)) {
+		ast_autochan_channel_lock(mixmonitor->autochan);
 		ast_stream_and_wait(mixmonitor->autochan->chan, "beep", "");
+		ast_autochan_channel_unlock(mixmonitor->autochan);
 	}
-	ast_channel_unlock(mixmonitor->autochan->chan);
 
 	mixmonitor_ds->samp_rate = 8000;
 	mixmonitor_ds->audiohook = &mixmonitor->audiohook;
@@ -1531,4 +1556,9 @@ static int load_module(void)
 	return res;
 }
 
-AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Mixed Audio Monitoring Application");
+AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Mixed Audio Monitoring Application",
+	.support_level = AST_MODULE_SUPPORT_CORE,
+	.load = load_module,
+	.unload = unload_module,
+	.optional_modules = "func_periodic_hook",
+);

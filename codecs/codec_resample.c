@@ -17,11 +17,11 @@
  * at the top of the source tree.
  */
 
-/*! 
+/*!
  * \file
  *
  * \brief Resample slinear audio
- * 
+ *
  * \ingroup codecs
  */
 
@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 #include "speex/speex_resampler.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/translate.h"
@@ -155,7 +153,7 @@ static int load_module(void)
 
 	trans_size = ARRAY_LEN(codec_list) * (ARRAY_LEN(codec_list) - 1);
 	if (!(translators = ast_calloc(1, sizeof(struct ast_translator) * trans_size))) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	for (x = 0; x < ARRAY_LEN(codec_list); x++) {
@@ -182,7 +180,7 @@ static int load_module(void)
 	ast_unregister_translator won't fail.*/
 	if (res) {
 		unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;

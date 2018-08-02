@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/logger.h"
 #include "asterisk/format.h"
 #include "asterisk/format_cap.h"
@@ -162,12 +160,15 @@ static inline int format_cap_framed_init(struct format_cap_framed *framed, struc
 	}
 	list = AST_VECTOR_GET_ADDR(&cap->formats, ast_format_get_codec_id(format));
 
+	/* This takes the allocation reference */
+	if (AST_VECTOR_APPEND(&cap->preference_order, framed)) {
+		ao2_ref(framed, -1);
+		return -1;
+	}
+
 	/* Order doesn't matter for formats, so insert at the head for performance reasons */
 	ao2_ref(framed, +1);
 	AST_LIST_INSERT_HEAD(list, framed, entry);
-
-	/* This takes the allocation reference */
-	AST_VECTOR_APPEND(&cap->preference_order, framed);
 
 	cap->framing = MIN(cap->framing, framing ? framing : ast_format_get_default_ms(format));
 
@@ -270,6 +271,7 @@ int ast_format_cap_append_from_cap(struct ast_format_cap *dst, const struct ast_
 {
 	int idx, res = 0;
 
+	/* NOTE:  The streams API is dependent on the formats being in "preference" order */
 	for (idx = 0; (idx < AST_VECTOR_SIZE(&src->preference_order)) && !res; ++idx) {
 		struct format_cap_framed *framed = AST_VECTOR_GET(&src->preference_order, idx);
 
@@ -327,7 +329,7 @@ int ast_format_cap_update_by_allow_disallow(struct ast_format_cap *cap, const ch
 	parse = ast_strdupa(list);
 
 	/* If the list is being fed to us as a result of ast_format_cap_get_names,
-	 * strip off the paranthesis and immediately apply the inverse of the
+	 * strip off the parenthesis and immediately apply the inverse of the
 	 * allowing option
 	 */
 	if (parse[0] == '(' && parse[strlen(parse) - 1] == ')') {
@@ -342,7 +344,7 @@ int ast_format_cap_update_by_allow_disallow(struct ast_format_cap *cap, const ch
 	}
 
 
-	while ((this = strsep(&parse, ",|"))) {
+	while ((this = ast_strip(strsep(&parse, ",|")))) {
 		int framems = 0;
 		struct ast_format *format = NULL;
 
@@ -703,7 +705,7 @@ const char *ast_format_cap_get_names(struct ast_format_cap *cap, struct ast_str 
 
 	ast_str_set(buf, 0, "(");
 
-	if (!AST_VECTOR_SIZE(&cap->preference_order)) {
+	if (!cap || !AST_VECTOR_SIZE(&cap->preference_order)) {
 		ast_str_append(buf, 0, "nothing)");
 		return ast_str_buffer(*buf);
 	}

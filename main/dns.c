@@ -35,8 +35,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/network.h"
 #include <arpa/nameser.h>	/* res_* functions */
 #include <resolv.h>
@@ -254,12 +252,10 @@ static int dns_search_res(const char *dname, int rr_class, int rr_type,
 {
 
 	int ret = AST_DNS_SEARCH_FAILURE;
-	struct __res_state dns_state;
 
 	ast_mutex_lock(&res_lock);
 	res_init();
-	ret = res_search(&dns_state,
-	                 dname,
+	ret = res_search(dname,
 	                 rr_class,
 	                 rr_type,
 	                 dns_response,
@@ -559,7 +555,7 @@ enum ast_dns_search_result ast_search_dns_ex(void *context, const char *dname, i
 
 	if (dns_response_len < 0) {
 		ast_debug(1, "DNS search failed for %s\n", dname);
-		response_handler(context, (unsigned char *)"", 0, ns_r_nxdomain);
+		response_handler(context, (unsigned char *)"", 0, NXDOMAIN);
 		return AST_DNS_SEARCH_FAILURE;
 	}
 
@@ -627,4 +623,3 @@ struct ao2_container *ast_dns_get_nameservers(void)
 
 	return nameservers;
 }
-

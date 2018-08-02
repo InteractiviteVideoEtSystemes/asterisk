@@ -38,8 +38,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/paths.h"	/* use ast_config_AST_LOG_DIR */
 #include "asterisk/config.h"
 #include "asterisk/channel.h"
@@ -362,4 +360,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Comma Separated Value
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CDR_DRIVER,
+	.requires = "cdr",
 );

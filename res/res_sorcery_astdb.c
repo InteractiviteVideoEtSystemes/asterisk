@@ -30,8 +30,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <regex.h>
 
 #include "asterisk/module.h"
@@ -46,6 +44,7 @@ static void *sorcery_astdb_retrieve_fields(const struct ast_sorcery *sorcery, vo
 static void sorcery_astdb_retrieve_multiple(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects,
 					     const struct ast_variable *fields);
 static void sorcery_astdb_retrieve_regex(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *regex);
+static void sorcery_astdb_retrieve_prefix(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *prefix, const size_t prefix_len);
 static int sorcery_astdb_update(const struct ast_sorcery *sorcery, void *data, void *object);
 static int sorcery_astdb_delete(const struct ast_sorcery *sorcery, void *data, void *object);
 static void sorcery_astdb_close(void *data);
@@ -58,69 +57,11 @@ static struct ast_sorcery_wizard astdb_object_wizard = {
 	.retrieve_fields = sorcery_astdb_retrieve_fields,
 	.retrieve_multiple = sorcery_astdb_retrieve_multiple,
 	.retrieve_regex = sorcery_astdb_retrieve_regex,
+	.retrieve_prefix = sorcery_astdb_retrieve_prefix,
 	.update = sorcery_astdb_update,
 	.delete = sorcery_astdb_delete,
 	.close = sorcery_astdb_close,
 };
-
-/*! \brief Helper function which converts from a sorcery object set to a json object */
-static struct ast_json *sorcery_objectset_to_json(const struct ast_variable *objectset)
-{
-	struct ast_json *json = ast_json_object_create();
-	const struct ast_variable *field;
-
-	for (field = objectset; field; field = field->next) {
-		struct ast_json *value = ast_json_string_create(field->value);
-
-		if (!value) {
-			ast_json_unref(json);
-			return NULL;
-		} else if (ast_json_object_set(json, field->name, value)) {
-			ast_json_unref(json);
-			return NULL;
-		}
-	}
-
-	return json;
-}
-
-/*! \brief Helper function which converts a json object to a sorcery object set */
-static struct ast_variable *sorcery_json_to_objectset(struct ast_json *json)
-{
-	struct ast_json_iter *field;
-	struct ast_variable *objset = NULL;
-
-	for (field = ast_json_object_iter(json); field; field = ast_json_object_iter_next(json, field)) {
-		struct ast_json *value = ast_json_object_iter_value(field);
-		struct ast_variable *variable = ast_variable_new(ast_json_object_iter_key(field), ast_json_string_get(value), "");
-
-		if (!variable) {
-			ast_variables_destroy(objset);
-			return NULL;
-		}
-
-		variable->next = objset;
-		objset = variable;
-	}
-
-	return objset;
-}
-
-/*! \brief Helper function which compares two json objects and sees if they are equal, but only looks at the criteria provided */
-static int sorcery_json_equal(struct ast_json *object, struct ast_json *criteria)
-{
-	struct ast_json_iter *field;
-
-	for (field = ast_json_object_iter(criteria); field; field = ast_json_object_iter_next(criteria, field)) {
-		struct ast_json *object_field = ast_json_object_get(object, ast_json_object_iter_key(field));
-
-		if (!object_field || !ast_json_equal(object_field, ast_json_object_iter_value(field))) {
-			return 0;
-		}
-	}
-
-	return 1;
-}
 
 static int sorcery_astdb_create(const struct ast_sorcery *sorcery, void *data, void *object)
 {
@@ -138,18 +79,69 @@ static int sorcery_astdb_create(const struct ast_sorcery *sorcery, void *data, v
 	return ast_db_put(family, ast_sorcery_object_get_id(object), value);
 }
 
+/*! \brief Internal helper function which returns a filtered objectset.
+ *
+ * The following are filtered out of the objectset:
+ * \li Fields that are not registered with sorcery.
+ *
+ * \param objectset Objectset to filter.
+ * \param sorcery The sorcery instance that is requesting an objectset.
+ * \param type The object type
+ *
+ * \return The filtered objectset
+ */
+static struct ast_variable *sorcery_astdb_filter_objectset(struct ast_variable *objectset, const struct ast_sorcery *sorcery,
+	const char *type)
+{
+	struct ast_variable *previous = NULL, *field = objectset;
+	struct ast_sorcery_object_type *object_type;
+
+	object_type = ast_sorcery_get_object_type(sorcery, type);
+	if (!object_type) {
+		ast_log(LOG_WARNING, "Unknown sorcery object type %s. Expect errors\n", type);
+		return objectset;
+	}
+
+	while (field) {
+		struct ast_variable *removed;
+
+		if (ast_sorcery_is_object_field_registered(object_type, field->name)) {
+			previous = field;
+			field = field->next;
+			continue;
+		}
+
+		ast_debug(1, "Filtering out astdb field '%s' from retrieval\n", field->name);
+
+		if (previous) {
+			previous->next = field->next;
+		} else {
+			objectset = field->next;
+		}
+
+		removed = field;
+		field = field->next;
+		removed->next = NULL;
+
+		ast_variables_destroy(removed);
+	}
+
+	ao2_cleanup(object_type);
+
+	return objectset;
+}
+
 /*! \brief Internal helper function which retrieves an object, or multiple objects, using fields for criteria */
 static void *sorcery_astdb_retrieve_fields_common(const struct ast_sorcery *sorcery, void *data, const char *type, const struct ast_variable *fields, struct ao2_container *objects)
 {
 	const char *prefix = data;
 	char family[strlen(prefix) + strlen(type) + 2];
 	RAII_VAR(struct ast_db_entry *, entries, NULL, ast_db_freetree);
-	RAII_VAR(struct ast_json *, criteria, NULL, ast_json_unref);
 	struct ast_db_entry *entry;
 
 	snprintf(family, sizeof(family), "%s/%s", prefix, type);
 
-	if (!(entries = ast_db_gettree(family, NULL)) || (fields && !(criteria = sorcery_objectset_to_json(fields)))) {
+	if (!(entries = ast_db_gettree(family, NULL))) {
 		return NULL;
 	}
 
@@ -157,16 +149,25 @@ static void *sorcery_astdb_retrieve_fields_common(const struct ast_sorcery *sorc
 		const char *key = entry->key + strlen(family) + 2;
 		RAII_VAR(struct ast_json *, json, NULL, ast_json_unref);
 		struct ast_json_error error;
-		RAII_VAR(struct ast_variable *, objset, NULL, ast_variables_destroy);
+		RAII_VAR(struct ast_variable *, existing, NULL, ast_variables_destroy);
 		void *object = NULL;
 
 		if (!(json = ast_json_load_string(entry->data, &error))) {
 			return NULL;
-		} else if (criteria && !sorcery_json_equal(json, criteria)) {
+		}
+
+		if (ast_json_to_ast_variables(json, &existing) != AST_JSON_TO_AST_VARS_CODE_SUCCESS) {
+			return NULL;
+		}
+
+		existing = sorcery_astdb_filter_objectset(existing, sorcery, type);
+
+		if (fields && !ast_variable_lists_match(existing, fields, 0)) {
 			continue;
-		} else if (!(objset = sorcery_json_to_objectset(json)) ||
-			!(object = ast_sorcery_alloc(sorcery, type, key)) ||
-			ast_sorcery_objectset_apply(sorcery, object, objset)) {
+		}
+
+		if (!(object = ast_sorcery_alloc(sorcery, type, key)) ||
+			ast_sorcery_objectset_apply(sorcery, object, existing)) {
 			ao2_cleanup(object);
 			return NULL;
 		}
@@ -199,9 +200,12 @@ static void *sorcery_astdb_retrieve_id(const struct ast_sorcery *sorcery, void *
 
 	snprintf(family, sizeof(family), "%s/%s", prefix, type);
 
-	if (ast_db_get_allocated(family, id, &value) || !(json = ast_json_load_string(value, &error)) ||
-		!(objset = sorcery_json_to_objectset(json)) || !(object = ast_sorcery_alloc(sorcery, type, id)) ||
-		ast_sorcery_objectset_apply(sorcery, object, objset)) {
+	if (ast_db_get_allocated(family, id, &value)
+		|| !(json = ast_json_load_string(value, &error))
+		|| (ast_json_to_ast_variables(json, &objset) != AST_JSON_TO_AST_VARS_CODE_SUCCESS)
+		|| !(objset = sorcery_astdb_filter_objectset(objset, sorcery, type))
+		|| !(object = ast_sorcery_alloc(sorcery, type, id))
+		|| ast_sorcery_objectset_apply(sorcery, object, objset)) {
 		ast_debug(3, "Failed to retrieve object '%s' from astdb\n", id);
 		ao2_cleanup(object);
 		return NULL;
@@ -310,10 +314,11 @@ static void sorcery_astdb_retrieve_regex(const struct ast_sorcery *sorcery, void
 
 		if (regexec(&expression, key, 0, NULL, 0)) {
 			continue;
-		} else if (!(json = ast_json_load_string(entry->data, &error)) ||
-			!(objset = sorcery_json_to_objectset(json)) ||
-			!(object = ast_sorcery_alloc(sorcery, type, key)) ||
-			ast_sorcery_objectset_apply(sorcery, object, objset)) {
+		} else if (!(json = ast_json_load_string(entry->data, &error))
+			|| (ast_json_to_ast_variables(json, &objset) != AST_JSON_TO_AST_VARS_CODE_SUCCESS)
+			|| !(objset = sorcery_astdb_filter_objectset(objset, sorcery, type))
+			|| !(object = ast_sorcery_alloc(sorcery, type, key))
+			|| ast_sorcery_objectset_apply(sorcery, object, objset)) {
 			regfree(&expression);
 			return;
 		}
@@ -322,6 +327,42 @@ static void sorcery_astdb_retrieve_regex(const struct ast_sorcery *sorcery, void
 	}
 
 	regfree(&expression);
+}
+
+static void sorcery_astdb_retrieve_prefix(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *prefix, const size_t prefix_len)
+{
+	const char *family_prefix = data;
+	size_t family_len = strlen(family_prefix) + strlen(type) + 1; /* +1 for slash delimiter */
+	char family[family_len + 1];
+	char tree[prefix_len + 1];
+	RAII_VAR(struct ast_db_entry *, entries, NULL, ast_db_freetree);
+	struct ast_db_entry *entry;
+
+	snprintf(tree, sizeof(tree), "%.*s", (int) prefix_len, prefix);
+	snprintf(family, sizeof(family), "%s/%s", family_prefix, type);
+
+	if (!(entries = ast_db_gettree_by_prefix(family, tree))) {
+		return;
+	}
+
+	for (entry = entries; entry; entry = entry->next) {
+		/* The key in the entry includes the family, so we need to strip it out */
+		const char *key = entry->key + family_len + 2;
+		RAII_VAR(struct ast_json *, json, NULL, ast_json_unref);
+		struct ast_json_error error;
+		RAII_VAR(void *, object, NULL, ao2_cleanup);
+		RAII_VAR(struct ast_variable *, objset, NULL, ast_variables_destroy);
+
+		if (!(json = ast_json_load_string(entry->data, &error))
+		   || (ast_json_to_ast_variables(json, &objset) != AST_JSON_TO_AST_VARS_CODE_SUCCESS)
+		   || !(objset = sorcery_astdb_filter_objectset(objset, sorcery, type))
+		   || !(object = ast_sorcery_alloc(sorcery, type, key))
+		   || ast_sorcery_objectset_apply(sorcery, object, objset)) {
+			return;
+		}
+
+		ao2_link(objects, object);
+	}
 }
 
 static int sorcery_astdb_update(const struct ast_sorcery *sorcery, void *data, void *object)

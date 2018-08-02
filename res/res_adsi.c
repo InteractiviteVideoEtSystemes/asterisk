@@ -31,12 +31,10 @@
  */
 
 /*** MODULEINFO
-	<support_level>core</support_level>
+	<support_level>deprecated</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <time.h>
 #include <math.h>
@@ -1210,7 +1208,7 @@ static int unload_module(void)
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "ADSI Resource",
-	.support_level = AST_MODULE_SUPPORT_CORE,
+	.support_level = AST_MODULE_SUPPORT_DEPRECATED,
 	.load = load_module,
 	.unload = unload_module,
 	.reload = reload,

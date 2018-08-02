@@ -16,6 +16,8 @@ enum {
 	COLUMN_USES,
 	/*! Conflicts */
 	COLUMN_CNFS,
+	/*! Description */
+	COLUMN_DESC,
 	/*! Number of columns, must be the last element in the enum */
 	NUM_COLUMNS,
 };
@@ -206,7 +208,7 @@ static GtkWidget *get_menubar_menu(GtkWidget *window)
 
 	/* This function generates the menu items. Pass the item factory,
 	   the number of items in the array, the array itself, and any
-	   callback data for the the menu items. */
+	   callback data for the menu items. */
 	gtk_item_factory_create_items(item_factory, nmenu_items, menu_items, NULL);
 
 	/* Attach the new accelerator group to the window. */
@@ -230,13 +232,13 @@ int run_menu(void)
 	GtkWidget *menubar;
 
 	gtk_init(&argc, &argv);
-   
+
    	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	gtk_widget_set_size_request(window, 640, 480);
 	gtk_window_set_title(GTK_WINDOW(window), "GMenuselect");
 
 	main_vbox = gtk_vbox_new(FALSE, 1);
-	gtk_container_set_border_width(GTK_CONTAINER(main_vbox), 1); 
+	gtk_container_set_border_width(GTK_CONTAINER(main_vbox), 1);
 	gtk_container_add(GTK_CONTAINER(window), main_vbox);
 
 	menubar = get_menubar_menu(window);
@@ -254,7 +256,8 @@ int run_menu(void)
 		G_TYPE_BOOLEAN,  /* COLUMN_SELECTED */
 		G_TYPE_STRING,   /* COLUMN_DEPS */
 		G_TYPE_STRING,   /* COLUMN_USES */
-		G_TYPE_STRING);  /* COLUMN_CNFS */
+		G_TYPE_STRING,  /* COLUMN_CNFS */
+		G_TYPE_STRING);  /* COLUMN_DESC */
 
 	AST_LIST_TRAVERSE(&categories, cat, list) {
 		GtkTreeIter iter, iter2;
@@ -307,6 +310,7 @@ int run_menu(void)
 				COLUMN_DEPS, dep_buf,
 				COLUMN_USES, use_buf,
 				COLUMN_CNFS, cnf_buf,
+				COLUMN_DESC, mem->displayname,
 				-1);
 		}
 	}
@@ -343,7 +347,12 @@ int run_menu(void)
 	column = gtk_tree_view_column_new_with_attributes("Conflicts With",
 				renderer, "text", COLUMN_CNFS, NULL);
 	gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
-	
+
+	renderer = gtk_cell_renderer_text_new();
+	column = gtk_tree_view_column_new_with_attributes("Description",
+				renderer, "text", COLUMN_DESC, NULL);
+	gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
+
 	g_signal_connect(tree, "row-activated", (GCallback) row_activated_handler, store);
 
 	gtk_container_add(GTK_CONTAINER(s_window), GTK_WIDGET(tree));
@@ -351,7 +360,7 @@ int run_menu(void)
 	gtk_box_pack_end(GTK_BOX(main_vbox), s_window, TRUE, TRUE, 0);
 
 	gtk_widget_show_all(window);
-   
+
 	gtk_main();
 
 	return main_res;

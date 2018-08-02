@@ -23,13 +23,12 @@
  */
 
 /*** MODULEINFO
+	<use type="module">res_crypto</use>
 	<use type="external">crypto</use>
 	<support_level>core</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/module.h"
 #include "asterisk/pbx.h"
@@ -146,7 +145,7 @@ static int aes_helper(struct ast_channel *chan, const char *cmd, char *data,
 	}
 
 	if (encrypt) {                            /* if encrypting encode result to base64 */
-		ast_base64encode(buf, (unsigned char *) tmp, strlen(tmp), len);
+		ast_base64encode(buf, (unsigned char *) tmp, tmpP - tmp, len);
 	} else {
 		memcpy(buf, tmp, len);
 	}
@@ -182,5 +181,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "AES dialplan functions",
 	.support_level = AST_MODULE_SUPPORT_CORE,
 	.load = load_module,
 	.unload = unload_module,
-	.nonoptreq = "res_crypto",
+	.requires = "res_crypto",
 );

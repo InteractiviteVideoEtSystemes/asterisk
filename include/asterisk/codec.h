@@ -33,6 +33,7 @@ enum ast_media_type {
 	AST_MEDIA_TYPE_VIDEO,
 	AST_MEDIA_TYPE_IMAGE,
 	AST_MEDIA_TYPE_TEXT,
+	AST_MEDIA_TYPE_END,
 };
 
 struct ast_module;
@@ -75,6 +76,8 @@ struct ast_codec {
 	int (*get_length)(unsigned int samples);
 	/*! \brief Whether the media can be smoothed or not */
 	unsigned int smooth;
+	/*! \brief Flags to be passed to the smoother */
+	unsigned int smoother_flags;
 	/*! \brief The module that registered this codec */
 	struct ast_module *mod;
 };
@@ -163,6 +166,17 @@ int ast_codec_get_max(void);
  * \retval string representation of the media type
  */
 const char *ast_codec_media_type2str(enum ast_media_type type);
+
+/*!
+ * \brief Conversion function to take a media string and convert it to a media type
+ *
+ * \param media_type_str The media type string
+ *
+ * \retval The ast_media_type that corresponds to the string
+ *
+ * \since 15.0.0
+ */
+enum ast_media_type ast_media_type_from_str(const char *media_type_str);
 
 /*!
  * \brief Get the number of samples contained within a frame

@@ -22,7 +22,6 @@
 
 #include "asterisk/stringfields.h"
 #include "asterisk/stasis.h"
-#include "asterisk/json.h"
 #include "asterisk/channel.h"
 
 /*! \addtogroup StasisTopicsAndMessages
@@ -73,6 +72,7 @@ struct ast_channel_snapshot {
 	struct ast_flags softhangup_flags;      /*!< softhangup channel flags */
 	struct varshead *manager_vars;          /*!< Variables to be appended to manager events */
 	int tech_properties;                    /*!< Properties of the channel's technology */
+	struct varshead *ari_vars;              /*!< Variables to be appended to ARI events */
 };
 
 /*!

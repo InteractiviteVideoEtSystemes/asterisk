@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/bridge.h"
 #include "asterisk/bridge_after.h"
 #include "asterisk/bridge_internal.h"
@@ -76,24 +74,54 @@ static void bridge_stasis_run_cb(struct ast_channel *chan, void *data)
 	pbx_exec(chan, app_stasis, app_name);
 }
 
-static int add_channel_to_bridge(
+struct defer_bridge_add_obj {
+	/*! Bridge to join (has ref) */
+	struct ast_bridge *bridge;
+	/*!
+	 * \brief Channel to swap with in the bridge. (has ref)
+	 *
+	 * \note NULL if not swapping with a channel.
+	 */
+	struct ast_channel *swap;
+};
+
+static void defer_bridge_add_dtor(void *obj)
+{
+	struct defer_bridge_add_obj *defer = obj;
+
+	ao2_cleanup(defer->bridge);
+	ast_channel_cleanup(defer->swap);
+}
+
+static int defer_bridge_add(
 	struct stasis_app_control *control,
 	struct ast_channel *chan, void *obj)
 {
-	struct ast_bridge *bridge = obj;
-	int res;
+	struct defer_bridge_add_obj *defer = obj;
 
-	res = control_add_channel_to_bridge(control,
-		chan, bridge);
-	return res;
+	return control_swap_channel_in_bridge(control, defer->bridge, chan, defer->swap);
 }
 
 static void bridge_stasis_queue_join_action(struct ast_bridge *self,
-	struct ast_bridge_channel *bridge_channel)
+	struct ast_bridge_channel *bridge_channel, struct ast_bridge_channel *swap)
 {
+	struct defer_bridge_add_obj *defer;
+
+	defer = ao2_alloc_options(sizeof(*defer), defer_bridge_add_dtor,
+		AO2_ALLOC_OPT_LOCK_NOLOCK);
+	if (!defer) {
+		return;
+	}
+	ao2_ref(self, +1);
+	defer->bridge = self;
+	if (swap) {
+		ast_channel_ref(swap->chan);
+		defer->swap = swap->chan;
+	}
+
 	ast_channel_lock(bridge_channel->chan);
-	command_prestart_queue_command(bridge_channel->chan, add_channel_to_bridge,
-		ao2_bump(self), __ao2_cleanup);
+	command_prestart_queue_command(bridge_channel->chan, defer_bridge_add,
+		defer, __ao2_cleanup);
 	ast_channel_unlock(bridge_channel->chan);
 }
 
@@ -127,13 +155,13 @@ static int bridge_stasis_push_peek(struct ast_bridge *self, struct ast_bridge_ch
 	}
 	to_be_replaced = ast_channel_snapshot_get_latest(ast_channel_uniqueid(swap->chan));
 
-	ast_debug(3, "Copying stasis app name %s from %s to %s\n", app_name(control_app(swap_control)),
+	ast_debug(3, "Copying stasis app name %s from %s to %s\n", stasis_app_name(control_app(swap_control)),
 		ast_channel_name(swap->chan), ast_channel_name(bridge_channel->chan));
 
 	ast_channel_lock(bridge_channel->chan);
 
 	/* copy the app name from the swap channel */
-	app_set_replace_channel_app(bridge_channel->chan, app_name(control_app(swap_control)));
+	app_set_replace_channel_app(bridge_channel->chan, stasis_app_name(control_app(swap_control)));
 
 	/* set the replace channel snapshot */
 	app_set_replace_channel_snapshot(bridge_channel->chan, to_be_replaced);
@@ -167,18 +195,19 @@ static int bridge_stasis_push(struct ast_bridge *self, struct ast_bridge_channel
 
 	if (!control && !stasis_app_channel_is_internal(bridge_channel->chan)) {
 		/* channel not in Stasis(), get it there */
+		ast_debug(1, "Bridge %s: pushing non-stasis %p(%s) setup to come back in under stasis\n",
+			self->uniqueid, bridge_channel, ast_channel_name(bridge_channel->chan));
+
 		/* Attach after-bridge callback and pass ownership of swap_app to it */
 		if (ast_bridge_set_after_callback(bridge_channel->chan,
 			bridge_stasis_run_cb, NULL, NULL)) {
-			ast_log(LOG_ERROR, "Failed to set after bridge callback\n");
+			ast_log(LOG_ERROR,
+				"Failed to set after bridge callback for bridge %s non-stasis push of %s\n",
+				self->uniqueid, ast_channel_name(bridge_channel->chan));
 			return -1;
 		}
 
-		bridge_stasis_queue_join_action(self, bridge_channel);
-		if (swap) {
-			/* nudge the swap channel out of the bridge */
-			ast_bridge_channel_leave_bridge(swap, BRIDGE_CHANNEL_STATE_END_NO_DISSOLVE, 0);
-		}
+		bridge_stasis_queue_join_action(self, bridge_channel, swap);
 
 		/* Return -1 so the push fails and the after-bridge callback gets called
 		 * This keeps the bridging framework from putting the channel into the bridge
@@ -186,6 +215,7 @@ static int bridge_stasis_push(struct ast_bridge *self, struct ast_bridge_channel
 		 */
 		return -1;
 	}
+	ao2_cleanup(control);
 
 	/*
 	 * If going into a holding bridge, default the role to participant, if
@@ -205,7 +235,6 @@ static int bridge_stasis_push(struct ast_bridge *self, struct ast_bridge_channel
 		}
 	}
 
-	ao2_cleanup(control);
 	if (self->allowed_capabilities & STASIS_BRIDGE_MIXING_CAPABILITIES) {
 		ast_bridge_channel_update_linkedids(bridge_channel, swap);
 		if (ast_test_flag(&self->feature_flags, AST_BRIDGE_FLAG_SMART)) {
@@ -221,7 +250,7 @@ static int bridge_stasis_moving(struct ast_bridge_channel *bridge_channel, void 
 {
 	if (src->v_table == &bridge_stasis_v_table &&
 			dst->v_table != &bridge_stasis_v_table) {
-		RAII_VAR(struct stasis_app_control *, control, NULL, ao2_cleanup);
+		struct stasis_app_control *control;
 		struct ast_channel *chan;
 
 		chan = bridge_channel->chan;
@@ -234,6 +263,7 @@ static int bridge_stasis_moving(struct ast_bridge_channel *bridge_channel, void 
 
 		stasis_app_channel_set_stasis_end_published(chan);
 		app_send_end_msg(control_app(control), chan);
+		ao2_ref(control, -1);
 	}
 
 	return -1;

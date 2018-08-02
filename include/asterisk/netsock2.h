@@ -129,6 +129,22 @@ static inline void ast_sockaddr_setnull(struct ast_sockaddr *addr)
 }
 
 /*!
+ * \brief
+ * Copies the data from a sockaddr to an ast_sockaddr
+ *
+ * \param dst The destination ast_sockaddr
+ * \param src The source sockaddr
+ * \param len Length of the value stored in sockaddr
+ * \retval void
+ */
+static inline void ast_sockaddr_copy_sockaddr(struct ast_sockaddr *dst,
+		struct sockaddr *src, socklen_t len)
+{
+	memcpy(dst, src, len);
+	dst->len = len;
+}
+
+/*!
  * \since 1.8
  *
  * \brief
@@ -373,7 +389,7 @@ int ast_sockaddr_split_hostport(char *str, char **host, char **port, int flags);
  *
  * Host names are NOT allowed.
  *
- * \param[out] addr The resulting ast_sockaddr. This MAY be NULL from 
+ * \param[out] addr The resulting ast_sockaddr. This MAY be NULL from
  * functions that are performing validity checks only, e.g. ast_parse_arg().
  * \param str The string to parse
  * \param flags If set to zero, a port MAY be present. If set to
@@ -420,6 +436,44 @@ int ast_sockaddr_parse(struct ast_sockaddr *addr, const char *str, int flags);
  */
 int ast_sockaddr_resolve(struct ast_sockaddr **addrs, const char *str,
 			 int flags, int family);
+
+/*!
+ * \since 16.0
+ *
+ * \brief
+ * Return the first entry from ast_sockaddr_resolve filtered by address family
+ *
+ * \details
+ * Parses a string containing a host name or an IPv4 or IPv6 address followed
+ * by an optional port (separated by a colon).  This function only returns the
+ * first address into the ast_sockaddr. Allowed formats for name are the following:
+ *
+ * hostname:port
+ * host.example.com:port
+ * a.b.c.d
+ * a.b.c.d:port
+ * a:b:c:...:d
+ * [a:b:c:...:d]
+ * [a:b:c:...:d]:port
+ *
+ * \param[out] addr The resulting ast_sockaddr
+ * \param name The string to parse
+ * \param flags If set to zero, a port MAY be present. If set to
+ * PARSE_PORT_IGNORE, a port MAY be present but will be ignored. If set to
+ * PARSE_PORT_REQUIRE, a port MUST be present. If set to PARSE_PORT_FORBID, a
+ * port MUST NOT be present.
+ *
+ * \param family Only addresses of the given family will be returned. Use 0 or
+ * AST_AF_UNSPEC to specify any address family.  Behavior is ultimately determined
+ * by getaddrinfo in how it orders return results.  First result is selected to
+ * be returned.
+ *
+ * \retval 0 Success
+ * \retval non-zero Failure
+ * \warning Using this function potentially means you have a faulty design.
+ */
+int ast_sockaddr_resolve_first_af(struct ast_sockaddr *addr,
+				      const char* name, int flag, int family);
 
 /*!
  * \brief

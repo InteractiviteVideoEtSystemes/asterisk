@@ -39,8 +39,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -49,7 +47,6 @@ ASTERISK_REGISTER_FILE()
 #include <fcntl.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-#include <sys/signal.h>
 #include <signal.h>
 #include <ctype.h>
 
@@ -1671,7 +1668,7 @@ static struct ast_channel_tech skinny_tech = {
 	.send_digit_end = skinny_senddigit_end,
 };
 
-static int skinny_extensionstate_cb(char *context, char *id, struct ast_state_cb_info *info, void *data);
+static int skinny_extensionstate_cb(const char *context, const char *exten, struct ast_state_cb_info *info, void *data);
 
 static struct skinny_line *skinny_line_alloc(void)
 {
@@ -3413,7 +3410,7 @@ static void transmit_serviceurlstat(struct skinny_device *d, int instance)
 	transmit_response(d, req);
 }
 
-static int skinny_extensionstate_cb(char *context, char *exten, struct ast_state_cb_info *info, void *data)
+static int skinny_extensionstate_cb(const char *context, const char *exten, struct ast_state_cb_info *info, void *data)
 {
 	struct skinny_container *container = data;
 	struct skinny_device *d = NULL;
@@ -3709,49 +3706,49 @@ static char *skinny_debugs(void)
 	int posn = 0;
 
 	ptr = dbgcli_buf;
-	strncpy(ptr, "\0", 1);
+	ptr[0] = '\0';
 	if (skinnydebug & DEBUG_GENERAL) {
-		strncpy(ptr, "general ", 8);
+		strcpy(ptr, "general "); /* SAFE */
 		posn += 8;
 		ptr += 8;
 	}
 	if (skinnydebug & DEBUG_SUB) {
-		strncpy(ptr, "sub ", 4);
+		strcpy(ptr, "sub "); /* SAFE */
 		posn += 4;
 		ptr += 4;
 	}
 	if (skinnydebug & DEBUG_AUDIO) {
-		strncpy(ptr, "audio ", 6);
+		strcpy(ptr, "audio "); /* SAFE */
 		posn += 6;
 		ptr += 6;
 	}
 	if (skinnydebug & DEBUG_PACKET) {
-		strncpy(ptr, "packet ", 7);
+		strcpy(ptr, "packet "); /* SAFE */
 		posn += 7;
 		ptr += 7;
 	}
 	if (skinnydebug & DEBUG_LOCK) {
-		strncpy(ptr, "lock ", 5);
+		strcpy(ptr, "lock "); /* SAFE */
 		posn += 5;
 		ptr += 5;
 	}
 	if (skinnydebug & DEBUG_TEMPLATE) {
-		strncpy(ptr, "template ", 9);
+		strcpy(ptr, "template "); /* SAFE */
 		posn += 9;
 		ptr += 9;
 	}
 	if (skinnydebug & DEBUG_THREAD) {
-		strncpy(ptr, "thread ", 7);
+		strcpy(ptr, "thread "); /* SAFE */
 		posn += 7;
 		ptr += 7;
 	}
 	if (skinnydebug & DEBUG_HINT) {
-		strncpy(ptr, "hint ", 5);
+		strcpy(ptr, "hint "); /* SAFE */
 		posn += 5;
 		ptr += 5;
 	}
 	if (skinnydebug & DEBUG_KEEPALIVE) {
-		strncpy(ptr, "keepalive ", 10);
+		strcpy(ptr, "keepalive "); /* SAFE */
 		posn += 10;
 		ptr += 10;
 	}
@@ -3924,24 +3921,40 @@ static char *complete_skinny_show_device(const char *line, const char *word, int
 
 static char *complete_skinny_reset(const char *line, const char *word, int pos, int state)
 {
-	return (pos == 2 ? complete_skinny_devices(word, state) : NULL);
+	if (pos == 2) {
+		static const char * const completions[] = { "all", NULL };
+		char *ret = ast_cli_complete(word, completions, state);
+		if (!ret) {
+			ret = complete_skinny_devices(word, state - 1);
+		}
+		return ret;
+	} else if (pos == 3) {
+		static const char * const completions[] = { "restart", NULL };
+		return ast_cli_complete(word, completions, state);
+	}
+
+	return NULL;
 }
 
 static char *complete_skinny_show_line(const char *line, const char *word, int pos, int state)
 {
-	struct skinny_device *d;
-	struct skinny_line *l;
-	int wordlen = strlen(word), which = 0;
+	if (pos == 3) {
+		struct skinny_device *d;
+		struct skinny_line *l;
+		int wordlen = strlen(word), which = 0;
 
-	if (pos != 3)
-		return NULL;
-
-	AST_LIST_TRAVERSE(&devices, d, list) {
-		AST_LIST_TRAVERSE(&d->lines, l, list) {
-			if (!strncasecmp(word, l->name, wordlen) && ++which > state) {
-				return ast_strdup(l->name);
+		AST_LIST_TRAVERSE(&devices, d, list) {
+			AST_LIST_TRAVERSE(&d->lines, l, list) {
+				if (!strncasecmp(word, l->name, wordlen) && ++which > state) {
+					return ast_strdup(l->name);
+				}
 			}
 		}
+	} else if (pos == 4) {
+		static const char * const completions[] = { "on", NULL };
+		return ast_cli_complete(word, completions, state);
+	} else if (pos == 5) {
+		return complete_skinny_devices(word, state);
 	}
 
 	return NULL;
@@ -4583,7 +4596,7 @@ static char *handle_skinny_show_line(struct ast_cli_entry *e, int cmd, struct as
 	case CLI_INIT:
 		e->command = "skinny show line";
 		e->usage =
-			"Usage: skinny show line <Line> [ on <DeviceID|DeviceName> ]\n"
+			"Usage: skinny show line <Line> [on <DeviceID|DeviceName>]\n"
 			"       List all lineinformation of a specific line known to the Skinny subsystem.\n";
 		return NULL;
 	case CLI_GENERATE:
@@ -4740,15 +4753,19 @@ static void start_rtp(struct skinny_subchannel *sub)
 {
 	struct skinny_line *l = sub->line;
 	struct skinny_device *d = l->device;
+#if 0
 	int hasvideo = 0;
+#endif
 	struct ast_sockaddr bindaddr_tmp;
 
 	skinny_locksub(sub);
 	SKINNY_DEBUG(DEBUG_AUDIO, 3, "Sub %u - Starting RTP\n", sub->callid);
 	ast_sockaddr_from_sin(&bindaddr_tmp, &bindaddr);
 	sub->rtp = ast_rtp_instance_new("asterisk", sched, &bindaddr_tmp, NULL);
+#if 0
 	if (hasvideo)
 		sub->vrtp = ast_rtp_instance_new("asterisk", sched, &bindaddr_tmp, NULL);
+#endif
 
 	if (sub->rtp) {
 		ast_rtp_instance_set_prop(sub->rtp, AST_RTP_PROPERTY_RTCP, 1);
@@ -4762,11 +4779,13 @@ static void start_rtp(struct skinny_subchannel *sub)
 		ast_channel_set_fd(sub->owner, 0, ast_rtp_instance_fd(sub->rtp, 0));
 		ast_channel_set_fd(sub->owner, 1, ast_rtp_instance_fd(sub->rtp, 1));
 	}
+#if 0
 	if (hasvideo && sub->vrtp && sub->owner) {
 		ast_rtp_instance_set_channel_id(sub->vrtp, ast_channel_uniqueid(sub->owner));
 		ast_channel_set_fd(sub->owner, 2, ast_rtp_instance_fd(sub->vrtp, 0));
 		ast_channel_set_fd(sub->owner, 3, ast_rtp_instance_fd(sub->vrtp, 1));
 	}
+#endif
 	if (sub->rtp) {
 		ast_rtp_instance_set_qos(sub->rtp, qos.tos_audio, qos.cos_audio, "Skinny RTP");
 		ast_rtp_instance_set_prop(sub->rtp, AST_RTP_PROPERTY_NAT, l->nat);
@@ -6408,7 +6427,6 @@ static int handle_stimulus_message(struct skinny_req *req, struct skinnysession 
 	case STIMULUS_CALLPARK:
 		{
 		char extout[AST_MAX_EXTENSION];
-		char message[32];
 		RAII_VAR(struct ast_bridge_channel *, bridge_channel, NULL, ao2_cleanup);
 		SKINNY_DEBUG(DEBUG_PACKET, 3, "Received STIMULUS_CALLPARK from %s, inst %d, callref %d\n",
 			d->name, instance, callreference);
@@ -6430,7 +6448,10 @@ static int handle_stimulus_message(struct skinny_req *req, struct skinnysession 
 			}
 
 			if (!ast_parking_park_call(bridge_channel, extout, sizeof(extout))) {
-				snprintf(message, sizeof(message), "Call Parked at: %s", extout);
+				static const char msg_prefix[] = "Call Parked at: ";
+				char message[sizeof(msg_prefix) + sizeof(extout)];
+
+				snprintf(message, sizeof(message), "%s%s", msg_prefix, extout);
 				transmit_displaynotify(d, message, 10);
 				break;
 			}
@@ -6645,7 +6666,7 @@ static int handle_capabilities_res_message(struct skinny_req *req, struct skinny
 #ifdef AST_DEVMODE
 	struct ast_str *codec_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 #endif
-	
+
 
 	if (!codecs) {
 		return 0;
@@ -7161,7 +7182,6 @@ static int handle_soft_key_event_message(struct skinny_req *req, struct skinnyse
 	case SOFTKEY_PARK:
 		{
 		char extout[AST_MAX_EXTENSION];
-		char message[32];
 		RAII_VAR(struct ast_bridge_channel *, bridge_channel, NULL, ao2_cleanup);
 		SKINNY_DEBUG(DEBUG_PACKET, 3, "Received SOFTKEY_PARK from %s, inst %d, callref %d\n",
 			d->name, instance, callreference);
@@ -7183,7 +7203,10 @@ static int handle_soft_key_event_message(struct skinny_req *req, struct skinnyse
 			}
 
 			if (!ast_parking_park_call(bridge_channel, extout, sizeof(extout))) {
-				snprintf(message, sizeof(message), "Call Parked at: %s", extout);
+				static const char msg_prefix[] = "Call Parked at: ";
+				char message[sizeof(msg_prefix) + sizeof(extout)];
+
+				snprintf(message, sizeof(message), "%s%s", msg_prefix, extout);
 				transmit_displaynotify(d, message, 10);
 				break;
 			}
@@ -7413,6 +7436,11 @@ static void destroy_session(struct skinnysession *s)
 	}
 	ast_mutex_unlock(&s->lock);
 	ast_mutex_destroy(&s->lock);
+
+	if (s->t != AST_PTHREADT_NULL) {
+		pthread_detach(s->t);
+	}
+
 	ast_free(s);
 }
 
@@ -7486,6 +7514,8 @@ static void skinny_session_cleanup(void *data)
 	destroy_session(s);
 }
 
+#define PACKET_TIMEOUT 10000
+
 static void *skinny_session(void *data)
 {
 	int res;
@@ -7496,11 +7526,6 @@ static void *skinny_session(void *data)
 	int dlen = 0;
 	int eventmessage = 0;
 	struct pollfd fds[1];
-
-	if (!s) {
-		ast_log(LOG_WARNING, "Bad Skinny Session\n");
-		return 0;
-	}
 
 	ast_log(LOG_NOTICE, "Starting Skinny session from %s\n", ast_inet_ntoa(s->sin.sin_addr));
 
@@ -7532,77 +7557,85 @@ static void *skinny_session(void *data)
 			}
 		}
 
-		if (fds[0].revents) {
-
-			if (!(req = ast_calloc(1, SKINNY_MAX_PACKET))) {
-				ast_log(LOG_WARNING, "Unable to allocated memorey for skinny_req.\n");
-				break;
-			}
-
-			ast_mutex_lock(&s->lock);
-			s->lockstate = 1;
-
-			if ((res = read(s->fd, req, skinny_header_size)) != skinny_header_size) {
-				if (res < 0) {
-					ast_log(LOG_WARNING, "Header read() returned error: %s\n", strerror(errno));
-				} else {
-					ast_log(LOG_WARNING, "Unable to read header. Only found %d bytes.\n", res);
-				}
-				break;
-			}
-
-			eventmessage = letohl(req->e);
-			if (eventmessage < 0) {
-				ast_log(LOG_ERROR, "Event Message is NULL from socket %d, This is bad\n", s->fd);
-				break;
-			}
-
-			dlen = letohl(req->len) - 4;
-			if (dlen < 0) {
-				ast_log(LOG_WARNING, "Skinny Client sent invalid data.\n");
-				break;
-			}
-			if (dlen > (SKINNY_MAX_PACKET - skinny_header_size)) {
-				ast_log(LOG_WARNING, "Skinny packet too large (%d bytes), max length(%d bytes)\n", dlen+8, SKINNY_MAX_PACKET);
-				break;
-			}
-
-			bytesread = 0;
-			while (1) {
-				if ((res = read(s->fd, ((char*)&req->data)+bytesread, dlen-bytesread)) < 0) {
-					ast_log(LOG_WARNING, "Data read() returned error: %s\n", strerror(errno));
-					break;
-				}
-				bytesread += res;
-				if (bytesread >= dlen) {
-					if (res < bytesread) {
-						ast_log(LOG_WARNING, "Rest of partial data received.\n");
-					}
-					if (bytesread > dlen) {
-						ast_log(LOG_WARNING, "Client sent wrong amount of data (%d), expected (%d).\n", bytesread, dlen);
-						res = -1;
-					}
-					break;
-				}
-
-				ast_log(LOG_WARNING, "Partial data received, waiting (%d bytes read of %d)\n", bytesread, dlen);
-				if (sched_yield() < 0) {
-					ast_log(LOG_WARNING, "Data yield() returned error: %s\n", strerror(errno));
-					res = -1;
-					break;
-				}
-			}
-
-			s->lockstate = 0;
-			ast_mutex_unlock(&s->lock);
-			if (res < 0) {
-				break;
-			}
-
-			pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
-			res = handle_message(req, s);
-			pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+		if (!fds[0].revents) {
+			continue;
 		}
+		ast_debug(1, "Reading header\n");
+
+		if (!(req = ast_calloc(1, SKINNY_MAX_PACKET))) {
+			ast_log(LOG_WARNING, "Unable to allocated memorey for skinny_req.\n");
+			break;
+		}
+
+		ast_mutex_lock(&s->lock);
+		s->lockstate = 1;
+
+		if ((res = read(s->fd, req, skinny_header_size)) != skinny_header_size) {
+			if (res < 0) {
+				ast_log(LOG_WARNING, "Header read() returned error: %s\n", strerror(errno));
+			} else {
+				ast_log(LOG_WARNING, "Unable to read header. Only found %d bytes.\n", res);
+			}
+			break;
+		}
+
+		eventmessage = letohl(req->e);
+		if (eventmessage < 0) {
+			ast_log(LOG_ERROR, "Event Message is NULL from socket %d, This is bad\n", s->fd);
+			break;
+		}
+
+		dlen = letohl(req->len) - 4;
+		if (dlen < 0) {
+			ast_log(LOG_WARNING, "Skinny Client sent invalid data.\n");
+			break;
+		}
+		if (dlen > (SKINNY_MAX_PACKET - skinny_header_size)) {
+			ast_log(LOG_WARNING, "Skinny packet too large (%d bytes), max length(%d bytes)\n", dlen+8, SKINNY_MAX_PACKET);
+			break;
+		}
+
+		ast_debug(1, "Read header: Message ID: 0x%04x,  %d bytes in packet\n", eventmessage, dlen);
+
+		bytesread = 0;
+		while (bytesread < dlen) {
+			ast_debug(1, "Waiting %dms for %d bytes of %d\n", PACKET_TIMEOUT, dlen - bytesread, dlen);
+			fds[0].revents = 0;
+			res = ast_poll(fds, 1, PACKET_TIMEOUT);
+			if (res <= 0) {
+				if (res == 0) {
+					ast_debug(1, "Poll timed out waiting for %d bytes\n", dlen - bytesread);
+				} else {
+					ast_log(LOG_WARNING, "Poll failed waiting for %d bytes: %s\n",
+						dlen - bytesread, strerror(errno));
+				}
+				ast_verb(3, "Ending Skinny session from %s (bad input)\n", ast_inet_ntoa(s->sin.sin_addr));
+				res = -1;
+
+				break;
+			}
+			if (!fds[0].revents) {
+				continue;
+			}
+
+			res = read(s->fd, ((char*)&req->data)+bytesread, dlen-bytesread);
+			if (res < 0) {
+				ast_log(LOG_WARNING, "Data read() returned error: %s\n", strerror(errno));
+				break;
+			}
+			bytesread += res;
+			ast_debug(1, "Read %d bytes.  %d of %d now read\n", res, bytesread, dlen);
+		}
+
+		s->lockstate = 0;
+		ast_mutex_unlock(&s->lock);
+		if (res < 0) {
+			break;
+		}
+
+		pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+		res = handle_message(req, s);
+		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 
 		if (req) {
 			ast_free(req);
@@ -7626,7 +7659,6 @@ static void *accept_thread(void *ignore)
 	struct sockaddr_in sin;
 	socklen_t sinlen;
 	struct skinnysession *s;
-	struct protoent *p;
 	int arg = 1;
 
 	for (;;) {
@@ -7643,12 +7675,10 @@ static void *accept_thread(void *ignore)
 			continue;
 		}
 
-		p = getprotobyname("tcp");
-		if(p) {
-			if( setsockopt(as, p->p_proto, TCP_NODELAY, (char *)&arg, sizeof(arg) ) < 0 ) {
-				ast_log(LOG_WARNING, "Failed to set Skinny tcp connection to TCP_NODELAY mode: %s\n", strerror(errno));
-			}
+		if (setsockopt(as, IPPROTO_TCP, TCP_NODELAY, (char *) &arg, sizeof(arg)) < 0) {
+			ast_log(LOG_WARNING, "Failed to set TCP_NODELAY on Skinny TCP connection: %s\n", strerror(errno));
 		}
+
 		if (!(s = ast_calloc(1, sizeof(struct skinnysession)))) {
 			close(as);
 			ast_atomic_fetchadd_int(&unauth_sessions, -1);
@@ -7662,6 +7692,7 @@ static void *accept_thread(void *ignore)
 		s->keepalive_timeout_sched = -1;
 
 		if (ast_pthread_create(&s->t, NULL, skinny_session, s)) {
+			s->t = AST_PTHREADT_NULL;
 			destroy_session(s);
 		}
 	}
@@ -8688,7 +8719,7 @@ static int load_module(void)
 		ao2_ref(skinny_tech.capabilities, -1);
 		ao2_ref(default_cap, -1);
 		ast_log(LOG_WARNING, "Unable to create schedule context\n");
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	/* Make sure we can register our skinny channel type */
@@ -8696,7 +8727,7 @@ static int load_module(void)
 		ao2_ref(default_cap, -1);
 		ao2_ref(skinny_tech.capabilities, -1);
 		ast_log(LOG_ERROR, "Unable to register channel class 'Skinny'\n");
-		return -1;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	ast_rtp_glue_register(&skinny_rtp_glue);
@@ -8713,7 +8744,7 @@ static int load_module(void)
 		ast_channel_unregister(&skinny_tech);
 		ao2_ref(default_cap, -1);
 		ao2_ref(skinny_tech.capabilities, -1);
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;

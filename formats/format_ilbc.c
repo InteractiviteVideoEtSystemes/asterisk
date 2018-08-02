@@ -2,7 +2,7 @@
  * Asterisk -- An open source telephony toolkit.
  *
  * Brian K. West <brian@bkw.org>
- * 
+ *
  * Copyright (C) 1999 - 2005, Digium, Inc.
  *
  * Mark Spencer <markster@digium.com>
@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
 #include "asterisk/endian.h"
@@ -47,12 +45,16 @@ ASTERISK_REGISTER_FILE()
 
 static struct ast_frame *ilbc_read(struct ast_filestream *s, int *whennext)
 {
-	int res;
+	size_t res;
+
 	/* Send a frame from the file to the appropriate channel */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, ILBC_BUF_SIZE);
 	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) != s->fr.datalen) {
-		if (res)
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples = ILBC_SAMPLES;
@@ -81,7 +83,7 @@ static int ilbc_seek(struct ast_filestream *fs, off_t sample_offset, int whence)
 	cur = ftello(fs->f);
 	fseeko(fs->f, 0, SEEK_END);
 	max = ftello(fs->f);
-	
+
 	bytes = ILBC_BUF_SIZE * (sample_offset / ILBC_SAMPLES);
 	if (whence == SEEK_SET)
 		offset = bytes;
@@ -137,7 +139,7 @@ static int load_module(void)
 {
 	ilbc_f.format = ast_format_ilbc;
 	if (ast_format_def_register(&ilbc_f))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

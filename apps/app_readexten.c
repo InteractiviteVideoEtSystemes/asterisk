@@ -20,17 +20,15 @@
  * \brief Trivial application to read an extension into a variable
  *
  * \author David Chappell <David.Chappell@trincoll.edu>
- * 
+ *
  * \ingroup applications
  */
 
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/file.h"
 #include "asterisk/pbx.h"

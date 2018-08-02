@@ -25,13 +25,12 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "app.h"
 #include "control.h"
 #include "messaging.h"
 
 #include "asterisk/callerid.h"
+#include "asterisk/cli.h"
 #include "asterisk/stasis_app.h"
 #include "asterisk/stasis_bridges.h"
 #include "asterisk/stasis_channels.h"
@@ -41,6 +40,9 @@ ASTERISK_REGISTER_FILE()
 #define BRIDGE_ALL "__AST_BRIDGE_ALL_TOPIC"
 #define CHANNEL_ALL "__AST_CHANNEL_ALL_TOPIC"
 #define ENDPOINT_ALL "__AST_ENDPOINT_ALL_TOPIC"
+
+/*! Global debug flag.  No need for locking */
+int global_debug;
 
 static int unsubscribe(struct stasis_app *app, const char *kind, const char *id, int terminate);
 
@@ -61,6 +63,8 @@ struct stasis_app {
 	void *data;
 	/*! Subscription model for the application */
 	enum stasis_app_subscription_model subscription_model;
+	/*! Whether or not someone wants to see debug messages about this app */
+	int debug;
 	/*! Name of the Stasis application */
 	char name[];
 };
@@ -108,20 +112,19 @@ static void forwards_unsubscribe(struct app_forwards *forwards)
 static struct app_forwards *forwards_create(struct stasis_app *app,
 	const char *id)
 {
-	RAII_VAR(struct app_forwards *, forwards, NULL, ao2_cleanup);
+	struct app_forwards *forwards;
 
 	if (!app || ast_strlen_zero(id)) {
 		return NULL;
 	}
 
-	forwards = ao2_alloc(sizeof(*forwards) + strlen(id) + 1, forwards_dtor);
+	forwards = ao2_t_alloc(sizeof(*forwards) + strlen(id) + 1, forwards_dtor, id);
 	if (!forwards) {
 		return NULL;
 	}
 
-	strcpy(forwards->id, id);
+	strcpy(forwards->id, id); /* SAFE */
 
-	ao2_ref(forwards, +1);
 	return forwards;
 }
 
@@ -331,7 +334,7 @@ static void sub_default_handler(void *data, struct stasis_subscription *sub,
 	struct stasis_message *message)
 {
 	struct stasis_app *app = data;
-	RAII_VAR(struct ast_json *, json, NULL, ast_json_unref);
+	struct ast_json *json;
 
 	if (stasis_subscription_final_message(sub, message)) {
 		ao2_cleanup(app);
@@ -348,6 +351,7 @@ static void sub_default_handler(void *data, struct stasis_subscription *sub,
 	}
 
 	app_send(app, json);
+	ast_json_unref(json);
 }
 
 /*! \brief Typedef for callbacks that get called on channel snapshot updates */
@@ -455,7 +459,7 @@ static struct ast_json *channel_dialplan(
 		"type", "ChannelDialplan",
 		"timestamp", ast_json_timeval(*tv, NULL),
 		"dialplan_app", new_snapshot->appl,
-		"dialplan_app_data", new_snapshot->data,
+		"dialplan_app_data", AST_JSON_UTF8_VALIDATE(new_snapshot->data),
 		"channel", json_channel);
 }
 
@@ -550,11 +554,12 @@ static void sub_channel_update_handler(void *data,
 		stasis_message_timestamp(message);
 
 	for (i = 0; i < ARRAY_LEN(channel_monitors); ++i) {
-		RAII_VAR(struct ast_json *, msg, NULL, ast_json_unref);
+		struct ast_json *msg;
 
 		msg = channel_monitors[i](old_snapshot, new_snapshot, tv);
 		if (msg) {
 			app_send(app, msg);
+			ast_json_unref(msg);
 		}
 	}
 
@@ -582,8 +587,9 @@ static struct ast_json *simple_endpoint_event(
 
 static int message_received_handler(const char *endpoint_id, struct ast_json *json_msg, void *pvt)
 {
-	RAII_VAR(struct ast_endpoint_snapshot *, snapshot, NULL, ao2_cleanup);
+	struct ast_endpoint_snapshot *snapshot;
 	struct ast_json *json_endpoint;
+	struct ast_json *message;
 	struct stasis_app *app = pvt;
 	char *tech;
 	char *resource;
@@ -605,15 +611,20 @@ static int message_received_handler(const char *endpoint_id, struct ast_json *js
 	}
 
 	json_endpoint = ast_endpoint_snapshot_to_json(snapshot, stasis_app_get_sanitizer());
+	ao2_ref(snapshot, -1);
 	if (!json_endpoint) {
 		return -1;
 	}
 
-	app_send(app, ast_json_pack("{s: s, s: o, s: o, s: o}",
+	message = ast_json_pack("{s: s, s: o, s: o, s: o}",
 		"type", "TextMessageReceived",
 		"timestamp", ast_json_timeval(ast_tvnow(), NULL),
 		"endpoint", json_endpoint,
-		"message", ast_json_ref(json_msg)));
+		"message", ast_json_ref(json_msg));
+	if (message) {
+		app_send(app, message);
+		ast_json_unref(message);
+	}
 
 	return 0;
 }
@@ -622,7 +633,6 @@ static void sub_endpoint_update_handler(void *data,
 	struct stasis_subscription *sub,
 	struct stasis_message *message)
 {
-	RAII_VAR(struct ast_json *, json, NULL, ast_json_unref);
 	struct stasis_app *app = data;
 	struct stasis_cache_update *update;
 	struct ast_endpoint_snapshot *new_snapshot;
@@ -639,6 +649,8 @@ static void sub_endpoint_update_handler(void *data,
 	old_snapshot = stasis_message_data(update->old_snapshot);
 
 	if (new_snapshot) {
+		struct ast_json *json;
+
 		tv = stasis_message_timestamp(update->new_snapshot);
 
 		json = simple_endpoint_event("EndpointStateChange", new_snapshot, tv);
@@ -647,6 +659,7 @@ static void sub_endpoint_update_handler(void *data,
 		}
 
 		app_send(app, json);
+		ast_json_unref(json);
 	}
 
 	if (!new_snapshot && old_snapshot) {
@@ -674,7 +687,7 @@ static void sub_bridge_update_handler(void *data,
 	struct stasis_subscription *sub,
 	struct stasis_message *message)
 {
-	RAII_VAR(struct ast_json *, json, NULL, ast_json_unref);
+	struct ast_json *json = NULL;
 	struct stasis_app *app = data;
 	struct stasis_cache_update *update;
 	struct ast_bridge_snapshot *new_snapshot;
@@ -697,10 +710,18 @@ static void sub_bridge_update_handler(void *data,
 		json = simple_bridge_event("BridgeDestroyed", old_snapshot, tv);
 	} else if (!old_snapshot) {
 		json = simple_bridge_event("BridgeCreated", new_snapshot, tv);
+	} else if (new_snapshot && old_snapshot
+		&& strcmp(new_snapshot->video_source_id, old_snapshot->video_source_id)) {
+		json = simple_bridge_event("BridgeVideoSourceChanged", new_snapshot, tv);
+		if (json && !ast_strlen_zero(old_snapshot->video_source_id)) {
+			ast_json_object_set(json, "old_video_source_id",
+				ast_json_string_create(old_snapshot->video_source_id));
+		}
 	}
 
 	if (json) {
 		app_send(app, json);
+		ast_json_unref(json);
 	}
 
 	if (!new_snapshot && old_snapshot) {
@@ -832,6 +853,79 @@ static void bridge_default_handler(void *data, struct stasis_subscription *sub,
 	}
 }
 
+void stasis_app_set_debug(struct stasis_app *app, int debug)
+{
+	if (!app) {
+		return;
+	}
+
+	app->debug = debug;
+}
+
+void stasis_app_set_debug_by_name(const char *app_name, int debug)
+{
+	struct stasis_app *app = stasis_app_get_by_name(app_name);
+
+	if (!app) {
+		return;
+	}
+
+	app->debug = debug;
+	ao2_cleanup(app);
+}
+
+int stasis_app_get_debug(struct stasis_app *app)
+{
+	return (app ? app->debug : 0) || global_debug;
+}
+
+int stasis_app_get_debug_by_name(const char *app_name)
+{
+	int debug_enabled = 0;
+
+	if (global_debug) {
+		debug_enabled = 1;
+	} else {
+		struct stasis_app *app = stasis_app_get_by_name(app_name);
+
+		if (app) {
+			if (app->debug) {
+				debug_enabled = 1;
+			}
+			ao2_ref(app, -1);
+		}
+	}
+	return debug_enabled;
+}
+
+void stasis_app_set_global_debug(int debug)
+{
+	global_debug = debug;
+	if (!global_debug) {
+		struct ao2_container *app_names = stasis_app_get_all();
+		struct ao2_iterator it_app_names;
+		char *app_name;
+		struct stasis_app *app;
+
+		if (!app_names || !ao2_container_count(app_names)) {
+			ao2_cleanup(app_names);
+			return;
+		}
+
+		it_app_names = ao2_iterator_init(app_names, 0);
+		while ((app_name = ao2_iterator_next(&it_app_names))) {
+			if ((app = stasis_app_get_by_name(app_name))) {
+				stasis_app_set_debug(app, 0);
+			}
+
+			ao2_cleanup(app_name);
+			ao2_cleanup(app);
+		}
+		ao2_iterator_cleanup(&it_app_names);
+		ao2_cleanup(app_names);
+	}
+}
+
 struct stasis_app *app_create(const char *name, stasis_app_cb handler, void *data, enum stasis_app_subscription_model subscription_model)
 {
 	RAII_VAR(struct stasis_app *, app, NULL, ao2_cleanup);
@@ -929,40 +1023,46 @@ struct stasis_topic *ast_app_get_topic(struct stasis_app *app)
 void app_send(struct stasis_app *app, struct ast_json *message)
 {
 	stasis_app_cb handler;
-	RAII_VAR(void *, data, NULL, ao2_cleanup);
+	char eid[20];
+	void *data;
+
+	if (ast_json_object_set(message, "asterisk_id", ast_json_string_create(
+			ast_eid_to_str(eid, sizeof(eid), &ast_eid_default)))) {
+		ast_log(AST_LOG_WARNING, "Failed to append EID to outgoing event %s\n",
+			ast_json_string_get(ast_json_object_get(message, "type")));
+	}
 
 	/* Copy off mutable state with lock held */
-	{
-		SCOPED_AO2LOCK(lock, app);
-		handler = app->handler;
-		if (app->data) {
-			ao2_ref(app->data, +1);
-			data = app->data;
-		}
-		/* Name is immutable; no need to copy */
-	}
+	ao2_lock(app);
+	handler = app->handler;
+	data = ao2_bump(app->data);
+	ao2_unlock(app);
+	/* Name is immutable; no need to copy */
 
-	if (!handler) {
+	if (handler) {
+		handler(data, app->name, message);
+	} else {
 		ast_verb(3,
 			"Inactive Stasis app '%s' missed message\n", app->name);
-		return;
 	}
-
-	handler(data, app->name, message);
+	ao2_cleanup(data);
 }
 
 void app_deactivate(struct stasis_app *app)
 {
-	SCOPED_AO2LOCK(lock, app);
+	ao2_lock(app);
+
 	ast_verb(1, "Deactivating Stasis app '%s'\n", app->name);
 	app->handler = NULL;
 	ao2_cleanup(app->data);
 	app->data = NULL;
+
+	ao2_unlock(app);
 }
 
 void app_shutdown(struct stasis_app *app)
 {
-	SCOPED_AO2LOCK(lock, app);
+	ao2_lock(app);
 
 	ast_assert(app_is_finished(app));
 
@@ -972,27 +1072,37 @@ void app_shutdown(struct stasis_app *app)
 	app->bridge_router = NULL;
 	stasis_message_router_unsubscribe(app->endpoint_router);
 	app->endpoint_router = NULL;
+
+	ao2_unlock(app);
 }
 
 int app_is_active(struct stasis_app *app)
 {
-	SCOPED_AO2LOCK(lock, app);
-	return app->handler != NULL;
+	int ret;
+
+	ao2_lock(app);
+	ret = app->handler != NULL;
+	ao2_unlock(app);
+
+	return ret;
 }
 
 int app_is_finished(struct stasis_app *app)
 {
-	SCOPED_AO2LOCK(lock, app);
+	int ret;
 
-	return app->handler == NULL && ao2_container_count(app->forwards) == 0;
+	ao2_lock(app);
+	ret = app->handler == NULL && ao2_container_count(app->forwards) == 0;
+	ao2_unlock(app);
+
+	return ret;
 }
 
 void app_update(struct stasis_app *app, stasis_app_cb handler, void *data)
 {
-	SCOPED_AO2LOCK(lock, app);
-
+	ao2_lock(app);
 	if (app->handler && app->data) {
-		RAII_VAR(struct ast_json *, msg, NULL, ast_json_unref);
+		struct ast_json *msg;
 
 		ast_verb(1, "Replacing Stasis app '%s'\n", app->name);
 
@@ -1001,88 +1111,157 @@ void app_update(struct stasis_app *app, stasis_app_cb handler, void *data)
 			"application", app->name);
 		if (msg) {
 			app_send(app, msg);
+			ast_json_unref(msg);
 		}
 	} else {
 		ast_verb(1, "Activating Stasis app '%s'\n", app->name);
 	}
 
 	app->handler = handler;
-	ao2_cleanup(app->data);
-	if (data) {
-		ao2_ref(data, +1);
-	}
-	app->data = data;
+	ao2_replace(app->data, data);
+	ao2_unlock(app);
 }
 
-const char *app_name(const struct stasis_app *app)
+const char *stasis_app_name(const struct stasis_app *app)
 {
 	return app->name;
 }
 
+static int forwards_filter_by_type(void *obj, void *arg, int flags)
+{
+	struct app_forwards *forward = obj;
+	enum forward_type *forward_type = arg;
+
+	if (forward->forward_type == *forward_type) {
+		return CMP_MATCH;
+	}
+
+	return 0;
+}
+
+void stasis_app_to_cli(const struct stasis_app *app, struct ast_cli_args *a)
+{
+	struct ao2_iterator *channels;
+	struct ao2_iterator *endpoints;
+	struct ao2_iterator *bridges;
+	struct app_forwards *forward;
+	enum forward_type forward_type;
+
+	ast_cli(a->fd, "Name: %s\n"
+		"  Debug: %s\n"
+		"  Subscription Model: %s\n",
+		app->name,
+		app->debug ? "Yes" : "No",
+		app->subscription_model == STASIS_APP_SUBSCRIBE_ALL ?
+			"Global Resource Subscription" :
+			"Application/Explicit Resource Subscription");
+	ast_cli(a->fd, "  Subscriptions: %d\n", ao2_container_count(app->forwards));
+
+	ast_cli(a->fd, "    Channels:\n");
+	forward_type = FORWARD_CHANNEL;
+	channels = ao2_callback(app->forwards, OBJ_MULTIPLE,
+		forwards_filter_by_type, &forward_type);
+	if (channels) {
+		while ((forward = ao2_iterator_next(channels))) {
+			ast_cli(a->fd, "      %s (%d)\n", forward->id, forward->interested);
+			ao2_ref(forward, -1);
+		}
+		ao2_iterator_destroy(channels);
+	}
+
+	ast_cli(a->fd, "    Bridges:\n");
+	forward_type = FORWARD_BRIDGE;
+	bridges = ao2_callback(app->forwards, OBJ_MULTIPLE,
+		forwards_filter_by_type, &forward_type);
+	if (bridges) {
+		while ((forward = ao2_iterator_next(bridges))) {
+			ast_cli(a->fd, "      %s (%d)\n", forward->id, forward->interested);
+			ao2_ref(forward, -1);
+		}
+		ao2_iterator_destroy(bridges);
+	}
+
+	ast_cli(a->fd, "    Endpoints:\n");
+	forward_type = FORWARD_ENDPOINT;
+	endpoints = ao2_callback(app->forwards, OBJ_MULTIPLE,
+		forwards_filter_by_type, &forward_type);
+	if (endpoints) {
+		while ((forward = ao2_iterator_next(endpoints))) {
+			ast_cli(a->fd, "      %s (%d)\n", forward->id, forward->interested);
+			ao2_ref(forward, -1);
+		}
+		ao2_iterator_destroy(endpoints);
+	}
+}
+
 struct ast_json *app_to_json(const struct stasis_app *app)
 {
-	RAII_VAR(struct ast_json *, json, NULL, ast_json_unref);
+	struct ast_json *json;
 	struct ast_json *channels;
 	struct ast_json *bridges;
 	struct ast_json *endpoints;
 	struct ao2_iterator i;
-	void *obj;
+	struct app_forwards *forwards;
 
 	json = ast_json_pack("{s: s, s: [], s: [], s: []}",
 		"name", app->name,
 		"channel_ids", "bridge_ids", "endpoint_ids");
+	if (!json) {
+		return NULL;
+	}
 	channels = ast_json_object_get(json, "channel_ids");
 	bridges = ast_json_object_get(json, "bridge_ids");
 	endpoints = ast_json_object_get(json, "endpoint_ids");
 
 	i = ao2_iterator_init(app->forwards, 0);
-	while ((obj = ao2_iterator_next(&i))) {
-		RAII_VAR(struct app_forwards *, forwards, obj, ao2_cleanup);
-		RAII_VAR(struct ast_json *, id, NULL, ast_json_unref);
-		int append_res = -1;
-
-		id = ast_json_string_create(forwards->id);
+	while ((forwards = ao2_iterator_next(&i))) {
+		struct ast_json *array = NULL;
+		int append_res;
 
 		switch (forwards->forward_type) {
 		case FORWARD_CHANNEL:
-			append_res = ast_json_array_append(channels,
-				ast_json_ref(id));
+			array = channels;
 			break;
 		case FORWARD_BRIDGE:
-			append_res = ast_json_array_append(bridges,
-				ast_json_ref(id));
+			array = bridges;
 			break;
 		case FORWARD_ENDPOINT:
-			append_res = ast_json_array_append(endpoints,
-				ast_json_ref(id));
+			array = endpoints;
 			break;
 		}
+
+		/* If forward_type value is unexpected this will safely return an error. */
+		append_res = ast_json_array_append(array, ast_json_string_create(forwards->id));
+		ao2_ref(forwards, -1);
 
 		if (append_res != 0) {
 			ast_log(LOG_ERROR, "Error building response\n");
 			ao2_iterator_destroy(&i);
+			ast_json_unref(json);
+
 			return NULL;
 		}
 	}
 	ao2_iterator_destroy(&i);
 
-	return ast_json_ref(json);
+	return json;
 }
 
 int app_subscribe_channel(struct stasis_app *app, struct ast_channel *chan)
 {
 	struct app_forwards *forwards;
-	SCOPED_AO2LOCK(lock, app->forwards);
-	int res;
 
 	if (!app) {
 		return -1;
 	}
 
+	ao2_lock(app->forwards);
 	/* If subscribed to all, don't subscribe again */
 	forwards = ao2_find(app->forwards, CHANNEL_ALL, OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (forwards) {
+		ao2_unlock(app->forwards);
 		ao2_ref(forwards, -1);
+
 		return 0;
 	}
 
@@ -1090,16 +1269,21 @@ int app_subscribe_channel(struct stasis_app *app, struct ast_channel *chan)
 		chan ? ast_channel_uniqueid(chan) : CHANNEL_ALL,
 		OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (!forwards) {
+		int res;
+
 		/* Forwards not found, create one */
 		forwards = forwards_create_channel(app, chan);
 		if (!forwards) {
+			ao2_unlock(app->forwards);
+
 			return -1;
 		}
 
-		res = ao2_link_flags(app->forwards, forwards,
-			OBJ_NOLOCK);
+		res = ao2_link_flags(app->forwards, forwards, OBJ_NOLOCK);
 		if (!res) {
+			ao2_unlock(app->forwards);
 			ao2_ref(forwards, -1);
+
 			return -1;
 		}
 	}
@@ -1110,7 +1294,9 @@ int app_subscribe_channel(struct stasis_app *app, struct ast_channel *chan)
 		forwards->interested,
 		app->name);
 
+	ao2_unlock(app->forwards);
 	ao2_ref(forwards, -1);
+
 	return 0;
 }
 
@@ -1121,8 +1307,7 @@ static int subscribe_channel(struct stasis_app *app, void *obj)
 
 static int unsubscribe(struct stasis_app *app, const char *kind, const char *id, int terminate)
 {
-	RAII_VAR(struct app_forwards *, forwards, NULL, ao2_cleanup);
-	SCOPED_AO2LOCK(lock, app->forwards);
+	struct app_forwards *forwards;
 
 	if (!id) {
 		if (!strcmp(kind, "bridge")) {
@@ -1137,8 +1322,10 @@ static int unsubscribe(struct stasis_app *app, const char *kind, const char *id,
 		}
 	}
 
+	ao2_lock(app->forwards);
 	forwards = ao2_find(app->forwards, id, OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (!forwards) {
+		ao2_unlock(app->forwards);
 		ast_debug(3, "App '%s' not subscribed to %s '%s'\n", app->name, kind, id);
 		return -1;
 	}
@@ -1157,6 +1344,8 @@ static int unsubscribe(struct stasis_app *app, const char *kind, const char *id,
 			messaging_app_unsubscribe_endpoint(app->name, id);
 		}
 	}
+	ao2_unlock(app->forwards);
+	ao2_ref(forwards, -1);
 
 	return 0;
 }
@@ -1181,12 +1370,14 @@ int app_unsubscribe_channel_id(struct stasis_app *app, const char *channel_id)
 
 int app_is_subscribed_channel_id(struct stasis_app *app, const char *channel_id)
 {
-	RAII_VAR(struct app_forwards *, forwards, NULL, ao2_cleanup);
+	struct app_forwards *forwards;
 
 	if (ast_strlen_zero(channel_id)) {
 		channel_id = CHANNEL_ALL;
 	}
 	forwards = ao2_find(app->forwards, channel_id, OBJ_SEARCH_KEY);
+	ao2_cleanup(forwards);
+
 	return forwards != NULL;
 }
 
@@ -1206,28 +1397,42 @@ struct stasis_app_event_source channel_event_source = {
 int app_subscribe_bridge(struct stasis_app *app, struct ast_bridge *bridge)
 {
 	struct app_forwards *forwards;
-	SCOPED_AO2LOCK(lock, app->forwards);
 
 	if (!app) {
 		return -1;
 	}
 
+	ao2_lock(app->forwards);
 	/* If subscribed to all, don't subscribe again */
 	forwards = ao2_find(app->forwards, BRIDGE_ALL, OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (forwards) {
+		ao2_unlock(app->forwards);
 		ao2_ref(forwards, -1);
+
 		return 0;
 	}
 
-	forwards = ao2_find(app->forwards, bridge ? bridge->uniqueid : BRIDGE_ALL,
+	forwards = ao2_find(app->forwards,
+		bridge ? bridge->uniqueid : BRIDGE_ALL,
 		OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (!forwards) {
+		int res;
+
 		/* Forwards not found, create one */
 		forwards = forwards_create_bridge(app, bridge);
 		if (!forwards) {
+			ao2_unlock(app->forwards);
+
 			return -1;
 		}
-		ao2_link_flags(app->forwards, forwards, OBJ_NOLOCK);
+
+		res = ao2_link_flags(app->forwards, forwards, OBJ_NOLOCK);
+		if (!res) {
+			ao2_unlock(app->forwards);
+			ao2_ref(forwards, -1);
+
+			return -1;
+		}
 	}
 
 	++forwards->interested;
@@ -1236,7 +1441,9 @@ int app_subscribe_bridge(struct stasis_app *app, struct ast_bridge *bridge)
 		forwards->interested,
 		app->name);
 
+	ao2_unlock(app->forwards);
 	ao2_ref(forwards, -1);
+
 	return 0;
 }
 
@@ -1266,25 +1473,15 @@ int app_unsubscribe_bridge_id(struct stasis_app *app, const char *bridge_id)
 int app_is_subscribed_bridge_id(struct stasis_app *app, const char *bridge_id)
 {
 	struct app_forwards *forwards;
-	SCOPED_AO2LOCK(lock, app->forwards);
-
-	forwards = ao2_find(app->forwards, BRIDGE_ALL, OBJ_SEARCH_KEY | OBJ_NOLOCK);
-	if (forwards) {
-		ao2_ref(forwards, -1);
-		return 1;
-	}
 
 	if (ast_strlen_zero(bridge_id)) {
 		bridge_id = BRIDGE_ALL;
 	}
 
-	forwards = ao2_find(app->forwards, bridge_id, OBJ_SEARCH_KEY | OBJ_NOLOCK);
-	if (forwards) {
-		ao2_ref(forwards, -1);
-		return 1;
-	}
+	forwards = ao2_find(app->forwards, bridge_id, OBJ_SEARCH_KEY);
+	ao2_cleanup(forwards);
 
-	return 0;
+	return forwards != NULL;
 }
 
 static void *bridge_find(const struct stasis_app *app, const char *id)
@@ -1303,16 +1500,18 @@ struct stasis_app_event_source bridge_event_source = {
 int app_subscribe_endpoint(struct stasis_app *app, struct ast_endpoint *endpoint)
 {
 	struct app_forwards *forwards;
-	SCOPED_AO2LOCK(lock, app->forwards);
 
 	if (!app) {
 		return -1;
 	}
 
+	ao2_lock(app->forwards);
 	/* If subscribed to all, don't subscribe again */
 	forwards = ao2_find(app->forwards, ENDPOINT_ALL, OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (forwards) {
+		ao2_unlock(app->forwards);
 		ao2_ref(forwards, -1);
+
 		return 0;
 	}
 
@@ -1320,12 +1519,23 @@ int app_subscribe_endpoint(struct stasis_app *app, struct ast_endpoint *endpoint
 		endpoint ? ast_endpoint_get_id(endpoint) : ENDPOINT_ALL,
 		OBJ_SEARCH_KEY | OBJ_NOLOCK);
 	if (!forwards) {
+		int res;
+
 		/* Forwards not found, create one */
 		forwards = forwards_create_endpoint(app, endpoint);
 		if (!forwards) {
+			ao2_unlock(app->forwards);
+
 			return -1;
 		}
-		ao2_link_flags(app->forwards, forwards, OBJ_NOLOCK);
+
+		res = ao2_link_flags(app->forwards, forwards, OBJ_NOLOCK);
+		if (!res) {
+			ao2_unlock(app->forwards);
+			ao2_ref(forwards, -1);
+
+			return -1;
+		}
 
 		/* Subscribe for messages */
 		messaging_app_subscribe_endpoint(app->name, endpoint, &message_received_handler, app);
@@ -1337,7 +1547,9 @@ int app_subscribe_endpoint(struct stasis_app *app, struct ast_endpoint *endpoint
 		forwards->interested,
 		app->name);
 
+	ao2_unlock(app->forwards);
 	ao2_ref(forwards, -1);
+
 	return 0;
 }
 
@@ -1357,12 +1569,14 @@ int app_unsubscribe_endpoint_id(struct stasis_app *app, const char *endpoint_id)
 
 int app_is_subscribed_endpoint_id(struct stasis_app *app, const char *endpoint_id)
 {
-	RAII_VAR(struct app_forwards *, forwards, NULL, ao2_cleanup);
+	struct app_forwards *forwards;
 
 	if (ast_strlen_zero(endpoint_id)) {
 		endpoint_id = ENDPOINT_ALL;
 	}
 	forwards = ao2_find(app->forwards, endpoint_id, OBJ_SEARCH_KEY);
+	ao2_cleanup(forwards);
+
 	return forwards != NULL;
 }
 
@@ -1386,18 +1600,9 @@ void stasis_app_register_event_sources(void)
 	stasis_app_register_event_source(&endpoint_event_source);
 }
 
-int stasis_app_is_core_event_source(struct stasis_app_event_source *obj)
-{
-	return obj == &endpoint_event_source ||
-		obj == &bridge_event_source ||
-		obj == &channel_event_source;
-}
-
 void stasis_app_unregister_event_sources(void)
 {
 	stasis_app_unregister_event_source(&endpoint_event_source);
 	stasis_app_unregister_event_source(&bridge_event_source);
 	stasis_app_unregister_event_source(&channel_event_source);
 }
-
-

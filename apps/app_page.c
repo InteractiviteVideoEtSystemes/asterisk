@@ -32,8 +32,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/channel.h"
 #include "asterisk/pbx.h"
 #include "asterisk/module.h"
@@ -443,4 +441,3 @@ static int load_module(void)
 }
 
 AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Page Multiple Phones");
-

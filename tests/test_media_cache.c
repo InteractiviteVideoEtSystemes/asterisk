@@ -32,8 +32,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/utils.h"
 #include "asterisk/module.h"
 #include "asterisk/test.h"
@@ -399,7 +397,7 @@ static int load_module(void)
 	if (ast_bucket_scheme_register("httptest", &bucket_test_wizard,
 		&bucket_file_test_wizard, NULL, NULL)) {
 		ast_log(LOG_ERROR, "Failed to register Bucket HTTP test wizard scheme implementation\n");
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	AST_TEST_REGISTER(exists_nominal);

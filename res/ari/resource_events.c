@@ -23,12 +23,15 @@
  * \author David M. Lee, II <dlee@digium.com>
  */
 
-#include "asterisk.h"
+/*** MODULEINFO
+	<support_level>core</support_level>
+ ***/
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "resource_events.h"
 #include "asterisk/astobj2.h"
+#include "asterisk/http_websocket.h"
 #include "asterisk/stasis_app.h"
 #include "asterisk/vector.h"
 
@@ -104,12 +107,23 @@ static void stasis_app_message_handler(
 		        msg_application);
 	} else if (!session->ws_session) {
 		/* If the websocket is NULL, the message goes to the queue */
-		AST_VECTOR_APPEND(&session->message_queue, message);
+		if (!AST_VECTOR_APPEND(&session->message_queue, message)) {
+			ast_json_ref(message);
+		}
 		ast_log(LOG_WARNING,
 				"Queued '%s' message for Stasis app '%s'; websocket is not ready\n",
 				msg_type,
 				msg_application);
 	} else {
+		if (stasis_app_get_debug_by_name(app_name)) {
+			char *str = ast_json_dump_string_format(message, ast_ari_json_format());
+
+			ast_verbose("<--- Sending ARI event to %s --->\n%s\n",
+				ast_sockaddr_stringify(ast_ari_websocket_session_get_remote_addr(session->ws_session)),
+				str);
+			ast_json_free(str);
+		}
+
 		/* We are ready to publish the message */
 		ast_ari_websocket_session_write(session->ws_session, message);
 	}
@@ -423,7 +437,7 @@ static int event_session_alloc(struct ast_tcptls_session_instance *ser,
 		if (register_handler(app, stasis_app_message_handler, session)) {
 			ast_log(LOG_WARNING, "Stasis registration failed for application: '%s'\n", app);
 			return event_session_allocation_error_handler(
-				session, ERROR_TYPE_STASIS_REGISTRATION, ser);			
+				session, ERROR_TYPE_STASIS_REGISTRATION, ser);
 		}
 	}
 

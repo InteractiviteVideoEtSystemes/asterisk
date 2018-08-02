@@ -64,8 +64,6 @@ CREATE TABLE [dbo].[cdr] (
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/config.h"
 #include "asterisk/channel.h"
 #include "asterisk/cdr.h"
@@ -637,4 +635,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "FreeTDS CDR Backend",
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CDR_DRIVER,
+	.requires = "cdr",
 );

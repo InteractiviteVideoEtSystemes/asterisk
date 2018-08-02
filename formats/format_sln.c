@@ -24,10 +24,8 @@
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -36,13 +34,16 @@ ASTERISK_REGISTER_FILE()
 
 static struct ast_frame *generic_read(struct ast_filestream *s, int *whennext, unsigned int buf_size)
 {
-	int res;
-	/* Send a frame from the file to the appropriate channel */
+	size_t res;
 
+	/* Send a frame from the file to the appropriate channel */
 	AST_FRAME_SET_BUFFER(&s->fr, s->buf, AST_FRIENDLY_OFFSET, buf_size);
 	if ((res = fread(s->fr.data.ptr, 1, s->fr.datalen, s->f)) < 1) {
-		if (res)
-			ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+		if (res) {
+			ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+					ast_format_get_name(s->fr.subclass.format), s->fr.datalen, res,
+					strerror(errno));
+		}
 		return NULL;
 	}
 	*whennext = s->fr.samples = res/2;
@@ -53,6 +54,12 @@ static struct ast_frame *generic_read(struct ast_filestream *s, int *whennext, u
 static int slinear_write(struct ast_filestream *fs, struct ast_frame *f)
 {
 	int res;
+
+	/* Don't try to write an interpolated frame */
+	if (f->datalen == 0) {
+		return 0;
+	}
+
 	if ((res = fwrite(f->data.ptr, 1, f->datalen, fs->f)) != f->datalen) {
 			ast_log(LOG_WARNING, "Bad write (%d/%d): %s\n", res, f->datalen, strerror(errno));
 			return -1;
@@ -237,6 +244,19 @@ static struct ast_format_def *slin_list[] = {
 	&slin192_f,
 };
 
+static int unload_module(void)
+{
+	int res = 0;
+	int i = 0;
+
+	for (i = 0; i < ARRAY_LEN(slin_list); i++) {
+		if (ast_format_def_unregister(slin_list[i]->name)) {
+			res = -1;
+		}
+	}
+	return res;
+}
+
 static int load_module(void)
 {
 	int i;
@@ -253,24 +273,12 @@ static int load_module(void)
 
 	for (i = 0; i < ARRAY_LEN(slin_list); i++) {
 		if (ast_format_def_register(slin_list[i])) {
-			return AST_MODULE_LOAD_FAILURE;
+			unload_module();
+			return AST_MODULE_LOAD_DECLINE;
 		}
 	}
 
 	return AST_MODULE_LOAD_SUCCESS;
-}
-
-static int unload_module(void)
-{
-	int res = 0;
-	int i = 0;
-
-	for (i = 0; i < ARRAY_LEN(slin_list); i++) {
-		if (ast_format_def_unregister(slin_list[i]->name)) {
-			res |= AST_MODULE_LOAD_FAILURE;
-		}
-	}
-	return res;
 }
 
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Raw Signed Linear Audio support (SLN) 8khz-192khz",

@@ -298,6 +298,14 @@ struct ast_sorcery_wizard {
 	/*! \brief Callback for retrieving multiple objects using a regex on their id */
 	void (*retrieve_regex)(const struct ast_sorcery *sorcery, void *data, const char *type, struct ao2_container *objects, const char *regex);
 
+	/*! \brief Optional callback for retrieving multiple objects by matching their id with a prefix */
+	void (*retrieve_prefix)(const struct ast_sorcery *sorcery,
+			void *data,
+			const char *type,
+			struct ao2_container *objects,
+			const char *prefix,
+			const size_t prefix_len);
+
 	/*! \brief Optional callback for retrieving an object using fields */
 	void *(*retrieve_fields)(const struct ast_sorcery *sorcery, void *data, const char *type, const struct ast_variable *fields);
 
@@ -392,9 +400,9 @@ int ast_sorcery_wizard_unregister(const struct ast_sorcery_wizard *interface);
  * \retval non-NULL success
  * \retval NULL if allocation failed
  */
-struct ast_sorcery *__ast_sorcery_open(const char *module);
+struct ast_sorcery *__ast_sorcery_open(const char *module, const char *file, int line, const char *func);
 
-#define ast_sorcery_open() __ast_sorcery_open(AST_MODULE)
+#define ast_sorcery_open() __ast_sorcery_open(AST_MODULE, __FILE__, __LINE__, __PRETTY_FUNCTION__)
 
 /*!
  * \brief Retrieves an existing sorcery instance by module name
@@ -695,6 +703,20 @@ int __ast_sorcery_object_register(struct ast_sorcery *sorcery, const char *type,
 	__ast_sorcery_object_register((sorcery), (type), 1, 1, (alloc), (transform), (apply))
 
 /*!
+ * \brief Set the high and low alert water marks of the sorcery object type.
+ * \since 13.10.0
+ *
+ * \param sorcery Pointer to a sorcery structure
+ * \param type Type of object
+ * \param low_water New queue low water mark. (-1 to set as 90% of high_water)
+ * \param high_water New queue high water mark.
+ *
+ * \retval 0 on success.
+ * \retval -1 on error (water marks not changed).
+ */
+int ast_sorcery_object_set_congestion_levels(struct ast_sorcery *sorcery, const char *type, long low_water, long high_water);
+
+/*!
  * \brief Set the copy handler for an object type
  *
  * \param sorcery Pointer to a sorcery structure
@@ -974,8 +996,28 @@ int ast_sorcery_changeset_create(const struct ast_variable *original, const stru
  *
  * \retval non-NULL success
  * \retval NULL failure
+ *
+ * \note The returned object does not support AO2 locking.
  */
 void *ast_sorcery_generic_alloc(size_t size, ao2_destructor_fn destructor);
+
+/*!
+ * \since 14.1.0
+ * \brief Allocate a generic sorcery capable object with locking.
+ *
+ * \details Sorcery objects may be replaced with new allocations during reloads.
+ * If locking is required on sorcery objects it must be shared between the old
+ * object and the new one.  lockobj can be any AO2 object with locking enabled,
+ * but in most cases named locks should be used to provide stable locking.
+ *
+ * \param size Size of the object
+ * \param destructor Optional destructor function
+ * \param lockobj An AO2 object that will provide locking.
+ *
+ * \retval non-NULL success
+ * \retval NULL failure
+ */
+void *ast_sorcery_lockable_alloc(size_t size, ao2_destructor_fn destructor, void *lockobj);
 
 /*!
  * \brief Allocate an object
@@ -1151,6 +1193,7 @@ void *ast_sorcery_retrieve_by_id(const struct ast_sorcery *sorcery, const char *
 
 /*!
  * \brief Retrieve an object or multiple objects using specific fields
+ * \since 13.9.0
  *
  * \param sorcery Pointer to a sorcery structure
  * \param type Type of object to retrieve
@@ -1165,6 +1208,29 @@ void *ast_sorcery_retrieve_by_id(const struct ast_sorcery *sorcery, const char *
  *
  * \note If the AST_RETRIEVE_FLAG_ALL flag is used you may omit fields to retrieve all objects
  *       of the given type.
+ *
+ * \note The fields parameter can contain realtime-style expressions in variable->name.
+ *       All operators defined for ast_strings_match can be used except for regex as
+ *       there's no common support for regex in the realtime backends at this time.
+ *       If multiple variables are in the fields list, all must match for an object to
+ *       be returned.  See ast_strings_match for more information.
+ *
+ * Example:
+ *
+ * The following code can be significantly faster when a realtime backend is in use
+ * because the expression "qualify_frequency > 0" is passed to the database to limit
+ * the number of rows returned.
+ *
+ *  struct ast_variable *var = ast_variable_new("qualify_frequency >", "0", "");
+ *  struct ao2_container *aors;
+ *
+ *  if (!var) {
+ *  	return;
+ *  }
+ *
+ *  aors = ast_sorcery_retrieve_by_fields(ast_sip_get_sorcery(),
+ *      "aor", AST_RETRIEVE_FLAG_MULTIPLE, var);
+ *
  */
 void *ast_sorcery_retrieve_by_fields(const struct ast_sorcery *sorcery, const char *type, unsigned int flags, struct ast_variable *fields);
 
@@ -1181,6 +1247,22 @@ void *ast_sorcery_retrieve_by_fields(const struct ast_sorcery *sorcery, const ch
  * \note The provided regex is treated as extended case sensitive.
  */
 struct ao2_container *ast_sorcery_retrieve_by_regex(const struct ast_sorcery *sorcery, const char *type, const char *regex);
+
+/*!
+ * \brief Retrieve multiple objects whose id begins with the specified prefix
+ * \since 13.19.0
+ *
+ * \param sorcery Pointer to a sorcery structure
+ * \param type Type of object to retrieve
+ * \param prefix Object id prefix
+ * \param prefix_len The length of prefix in bytes
+ *
+ * \retval non-NULL if error occurs
+ * \retval NULL success
+ *
+ * \note The prefix is matched in a case sensitive manner.
+ */
+struct ao2_container *ast_sorcery_retrieve_by_prefix(const struct ast_sorcery *sorcery, const char *type, const char *prefix, const size_t prefix_len);
 
 /*!
  * \brief Update an object
@@ -1222,8 +1304,13 @@ int ast_sorcery_is_stale(const struct ast_sorcery *sorcery, void *object);
  * \brief Decrease the reference count of a sorcery structure
  *
  * \param sorcery Pointer to a sorcery structure
+ *
+ * \note Prior to 16.0.0 this was a function which had to be used.
+ *       Now you can use any variant of ao2_cleanup or ao2_ref to
+ *       release a reference.
  */
-void ast_sorcery_unref(struct ast_sorcery *sorcery);
+#define ast_sorcery_unref(sorcery) \
+	ao2_cleanup(sorcery)
 
 /*!
  * \brief Get the unique identifier of a sorcery object

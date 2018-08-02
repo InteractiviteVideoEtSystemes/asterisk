@@ -1,8 +1,19 @@
 /*
- * sip_cli_commands.c
+ * Asterisk -- An open source telephony toolkit.
  *
- *  Created on: Jan 25, 2013
- *      Author: mjordan
+ * Copyright (C) 2013, Digium, Inc.
+ *
+ * Matt Jordan <mjordan@digium.com>
+ *
+ * See http://www.asterisk.org for more information about
+ * the Asterisk project. Please do not directly contact
+ * any of the maintainers of this project for assistance;
+ * the project provides a web site, mailing lists and IRC
+ * channels for your use.
+ *
+ * This program is free software, distributed under the terms of
+ * the GNU General Public License Version 2. See the LICENSE file
+ * at the top of the source tree.
  */
 
 #include "asterisk.h"
@@ -22,6 +33,7 @@
 #include "asterisk/test.h"
 #include "asterisk/statsd.h"
 #include "asterisk/pbx.h"
+#include "asterisk/stream.h"
 
 /*! \brief Number of buckets for persistent endpoint information */
 #define PERSISTENT_BUCKETS 53
@@ -30,8 +42,6 @@
 struct sip_persistent_endpoint {
 	/*! \brief Asterisk endpoint itself */
 	struct ast_endpoint *endpoint;
-	/*! \brief AORs that we should react to */
-	char *aors;
 };
 
 /*! \brief Container for persistent endpoint information */
@@ -58,249 +68,103 @@ static int persistent_endpoint_cmp(void *obj, void *arg, int flags)
 	return !strcmp(ast_endpoint_get_resource(persistent1->endpoint), id) ? CMP_MATCH | CMP_STOP : 0;
 }
 
-/*! \brief Callback function for changing the state of an endpoint */
-static int persistent_endpoint_update_state(void *obj, void *arg, int flags)
-{
-	struct sip_persistent_endpoint *persistent = obj;
-	struct ast_endpoint *endpoint = persistent->endpoint;
-	struct ast_sip_contact_status *status = arg;
-	struct ao2_container *contacts;
-	struct ast_json *blob;
-	struct ao2_iterator i;
-	struct ast_sip_contact *contact;
-	enum ast_endpoint_state state = AST_ENDPOINT_OFFLINE;
-	char *regcontext;
-
-	if (status) {
-		char rtt[32];
-
-		/* If the status' aor isn't one of the endpoint's, we skip */
-		if (!strstr(persistent->aors, status->aor)) {
-			return 0;
-		}
-
-		snprintf(rtt, sizeof(rtt), "%" PRId64, status->rtt);
-		blob = ast_json_pack("{s: s, s: s, s: s, s: s, s: s}",
-			"contact_status", ast_sip_get_contact_status_label(status->status),
-			"aor", status->aor,
-			"uri", status->uri,
-			"roundtrip_usec", rtt,
-			"endpoint_name", ast_endpoint_get_resource(endpoint));
-		ast_endpoint_blob_publish(endpoint, ast_endpoint_contact_state_type(), blob);
-		ast_json_unref(blob);
-	}
-
-	/* Find all the contacts for this endpoint.  If ANY are available,
-	 * mark the endpoint as ONLINE.
-	 */
-	contacts = ast_sip_location_retrieve_contacts_from_aor_list(persistent->aors);
-	if (contacts) {
-		i = ao2_iterator_init(contacts, 0);
-		while (state == AST_ENDPOINT_OFFLINE && (contact = ao2_iterator_next(&i))) {
-			struct ast_sip_contact_status *contact_status;
-			const char *contact_id = ast_sorcery_object_get_id(contact);
-
-			contact_status = ast_sorcery_retrieve_by_id(ast_sip_get_sorcery(),
-				CONTACT_STATUS, contact_id);
-
-			if (contact_status && contact_status->status != UNAVAILABLE) {
-				state = AST_ENDPOINT_ONLINE;
-			}
-			ao2_cleanup(contact_status);
-			ao2_ref(contact, -1);
-		}
-		ao2_iterator_destroy(&i);
-		ao2_ref(contacts, -1);
-	}
-
-	/* If there was no state change, don't publish anything. */
-	if (ast_endpoint_get_state(endpoint) == state) {
-		return 0;
-	}
-
-	regcontext = ast_sip_get_regcontext();
-
-	if (state == AST_ENDPOINT_ONLINE) {
-		ast_endpoint_set_state(endpoint, AST_ENDPOINT_ONLINE);
-		blob = ast_json_pack("{s: s}", "peer_status", "Reachable");
-
-		if (!ast_strlen_zero(regcontext)) {
-			if (!ast_exists_extension(NULL, regcontext, ast_endpoint_get_resource(endpoint), 1, NULL)) {
-				ast_add_extension(regcontext, 1, ast_endpoint_get_resource(endpoint), 1, NULL, NULL,
-					"Noop", ast_strdup(ast_endpoint_get_resource(endpoint)), ast_free_ptr, "SIP");
-			}
-		}
-
-		ast_verb(1, "Endpoint %s is now Reachable\n", ast_endpoint_get_resource(endpoint));
-	} else {
-		ast_endpoint_set_state(endpoint, AST_ENDPOINT_OFFLINE);
-		blob = ast_json_pack("{s: s}", "peer_status", "Unreachable");
-
-		if (!ast_strlen_zero(regcontext)) {
-			struct pbx_find_info q = { .stacklen = 0 };
-
-			if (pbx_find_extension(NULL, NULL, &q, regcontext, ast_endpoint_get_resource(endpoint), 1, NULL, "", E_MATCH)) {
-				ast_context_remove_extension(regcontext, ast_endpoint_get_resource(endpoint), 1, NULL);
-			}
-		}
-
-		ast_verb(1, "Endpoint %s is now Unreachable\n", ast_endpoint_get_resource(endpoint));
-	}
-
-	ast_free(regcontext);
-
-	ast_endpoint_blob_publish(endpoint, ast_endpoint_state_type(), blob);
-	ast_json_unref(blob);
-	ast_devstate_changed(AST_DEVICE_UNKNOWN, AST_DEVSTATE_CACHABLE, "PJSIP/%s", ast_endpoint_get_resource(endpoint));
-
-	return 0;
-}
-
-/*! \brief Function called when a contact is created */
-static void persistent_endpoint_contact_created_observer(const void *object)
-{
-	const struct ast_sip_contact *contact = object;
-	struct ast_sip_contact_status *contact_status;
-
-	contact_status = ast_sorcery_alloc(ast_sip_get_sorcery(), CONTACT_STATUS,
-		ast_sorcery_object_get_id(contact));
-	if (!contact_status) {
-		ast_log(LOG_ERROR, "Unable to create ast_sip_contact_status for contact %s/%s\n",
-			contact->aor, contact->uri);
-		return;
-	}
-	ast_string_field_set(contact_status, uri, contact->uri);
-
-	contact_status->status = CREATED;
-
-	ast_verb(1, "Contact %s/%s has been created\n",contact->aor, contact->uri);
-
-	ao2_callback(persistent_endpoints, OBJ_NODATA, persistent_endpoint_update_state, contact_status);
-	ao2_cleanup(contact_status);
-}
-
-/*! \brief Function called when a contact is deleted */
-static void persistent_endpoint_contact_deleted_observer(const void *object)
-{
-	const struct ast_sip_contact *contact = object;
-	struct ast_sip_contact_status *contact_status;
-
-	contact_status = ast_sorcery_retrieve_by_id(ast_sip_get_sorcery(), CONTACT_STATUS, ast_sorcery_object_get_id(contact));
-	if (!contact_status) {
-		ast_log(LOG_ERROR, "Unable to create ast_sip_contact_status for contact %s/%s\n",
-			contact->aor, contact->uri);
-		return;
-	}
-
-	ast_verb(1, "Contact %s/%s has been deleted\n", contact->aor, contact->uri);
-	ast_statsd_log_string_va("PJSIP.contacts.states.%s", AST_STATSD_GAUGE,
-		"-1", 1.0, ast_sip_get_contact_status_label(contact_status->status));
-	ast_statsd_log_string_va("PJSIP.contacts.states.%s", AST_STATSD_GAUGE,
-		"+1", 1.0, ast_sip_get_contact_status_label(REMOVED));
-
-	ao2_callback(persistent_endpoints, OBJ_NODATA, persistent_endpoint_update_state, contact_status);
-	ast_sorcery_delete(ast_sip_get_sorcery(), contact_status);
-	ao2_cleanup(contact_status);
-}
-
-/*! \brief Observer for contacts so state can be updated on respective endpoints */
-static const struct ast_sorcery_observer state_contact_observer = {
-	.created = persistent_endpoint_contact_created_observer,
-	.deleted = persistent_endpoint_contact_deleted_observer,
-};
-
-/*! \brief Function called when a contact_status is updated */
-static void persistent_endpoint_contact_status_observer(const void *object)
-{
-	struct ast_sip_contact_status *contact_status = (struct ast_sip_contact_status *)object;
-
-	/* If rtt_start is set (this is the outgoing OPTIONS), ignore. */
-	if (contact_status->rtt_start.tv_sec > 0) {
-		return;
-	}
-
-	if (contact_status->status != contact_status->last_status) {
-		ast_verb(1, "Contact %s/%s is now %s.  RTT: %.3f msec\n", contact_status->aor, contact_status->uri,
-			ast_sip_get_contact_status_label(contact_status->status),
-			contact_status->rtt / 1000.0);
-
-		ast_statsd_log_string_va("PJSIP.contacts.states.%s", AST_STATSD_GAUGE,
-			"-1", 1.0, ast_sip_get_contact_status_label(contact_status->last_status));
-		ast_statsd_log_string_va("PJSIP.contacts.states.%s", AST_STATSD_GAUGE,
-			"+1", 1.0, ast_sip_get_contact_status_label(contact_status->status));
-
-		ast_test_suite_event_notify("AOR_CONTACT_UPDATE",
-			"Contact: %s\r\n"
-				"Status: %s",
-			ast_sorcery_object_get_id(contact_status),
-			ast_sip_get_contact_status_label(contact_status->status));
-
-		ao2_callback(persistent_endpoints, OBJ_NODATA, persistent_endpoint_update_state, contact_status);
-	} else {
-		ast_debug(3, "Contact %s/%s status didn't change: %s, RTT: %.3f msec\n",
-			contact_status->aor, contact_status->uri, ast_sip_get_contact_status_label(contact_status->status),
-			contact_status->rtt / 1000.0);
-	}
-
-	ast_statsd_log_full_va("PJSIP.contacts.%s.rtt", AST_STATSD_TIMER,
-		contact_status->status != AVAILABLE ? -1 : contact_status->rtt / 1000, 1.0, ast_sorcery_object_get_id(contact_status));
-}
-
-/*! \brief Observer for contacts so state can be updated on respective endpoints */
-static const struct ast_sorcery_observer state_contact_status_observer = {
-	.updated = persistent_endpoint_contact_status_observer,
-};
-
 static void endpoint_deleted_observer(const void *object)
 {
 	const struct ast_sip_endpoint *endpoint = object;
 
-	ao2_find(persistent_endpoints, ast_endpoint_get_resource(endpoint->persistent), OBJ_SEARCH_KEY | OBJ_UNLINK | OBJ_NODATA);
+	ao2_find(persistent_endpoints, ast_endpoint_get_resource(endpoint->persistent),
+		OBJ_SEARCH_KEY | OBJ_UNLINK | OBJ_NODATA);
 }
 
 static const struct ast_sorcery_observer endpoint_observers = {
 	.deleted = endpoint_deleted_observer,
 };
 
+static int endpoint_acl_handler(const struct aco_option *opt, struct ast_variable *var, void *obj)
+{
+	struct ast_sip_endpoint *endpoint = obj;
+	int error = 0;
+	int ignore;
+
+	if (ast_strlen_zero(var->value)) return 0;
+
+	if (!strncmp(var->name, "contact_", 8)) {
+		ast_append_acl(var->name + 8, var->value, &endpoint->contact_acl, &error, &ignore);
+	} else {
+		ast_append_acl(var->name, var->value, &endpoint->acl, &error, &ignore);
+	}
+
+	return error;
+}
+
+static int acl_to_str(const void *obj, const intptr_t *args, char **buf)
+{
+	const struct ast_sip_endpoint *endpoint = obj;
+	struct ast_acl_list *acl_list;
+	struct ast_acl *first_acl;
+
+	if (endpoint && !ast_acl_list_is_empty(acl_list=endpoint->acl)) {
+		AST_LIST_LOCK(acl_list);
+		first_acl = AST_LIST_FIRST(acl_list);
+		if (ast_strlen_zero(first_acl->name)) {
+			*buf = "deny/permit";
+		} else {
+			*buf = first_acl->name;
+		}
+		AST_LIST_UNLOCK(acl_list);
+	}
+
+	*buf = ast_strdup(*buf);
+	return 0;
+}
+
+static int contact_acl_to_str(const void *obj, const intptr_t *args, char **buf)
+{
+	const struct ast_sip_endpoint *endpoint = obj;
+	struct ast_acl_list *acl_list;
+	struct ast_acl *first_acl;
+
+	if (endpoint && !ast_acl_list_is_empty(acl_list=endpoint->contact_acl)) {
+		AST_LIST_LOCK(acl_list);
+		first_acl = AST_LIST_FIRST(acl_list);
+		if (ast_strlen_zero(first_acl->name)) {
+			*buf = "deny/permit";
+		} else {
+			*buf = first_acl->name;
+		}
+		AST_LIST_UNLOCK(acl_list);
+	}
+
+	*buf = ast_strdup(*buf);
+	return 0;
+}
+
 static int dtmf_handler(const struct aco_option *opt, struct ast_variable *var, void *obj)
 {
 	struct ast_sip_endpoint *endpoint = obj;
+	int dtmf = ast_sip_str_to_dtmf(var->value);
 
-	if (!strcasecmp(var->value, "rfc4733")) {
-		endpoint->dtmf = AST_SIP_DTMF_RFC_4733;
-	} else if (!strcasecmp(var->value, "inband")) {
-		endpoint->dtmf = AST_SIP_DTMF_INBAND;
-	} else if (!strcasecmp(var->value, "info")) {
-		endpoint->dtmf = AST_SIP_DTMF_INFO;
-        } else if (!strcasecmp(var->value, "auto")) {
-                endpoint->dtmf = AST_SIP_DTMF_AUTO;
-	} else if (!strcasecmp(var->value, "none")) {
-		endpoint->dtmf = AST_SIP_DTMF_NONE;
-	} else {
+	if (dtmf == -1) {
 		return -1;
 	}
 
+	endpoint->dtmf = dtmf;
 	return 0;
 }
 
 static int dtmf_to_str(const void *obj, const intptr_t *args, char **buf)
 {
 	const struct ast_sip_endpoint *endpoint = obj;
+	char dtmf_str[20];
+	int result = -1;
 
-	switch (endpoint->dtmf) {
-	case AST_SIP_DTMF_RFC_4733 :
-		*buf = "rfc4733"; break;
-	case AST_SIP_DTMF_INBAND :
-		*buf = "inband"; break;
-	case AST_SIP_DTMF_INFO :
-		*buf = "info"; break;
-       case AST_SIP_DTMF_AUTO :
-                *buf = "auto"; break;
-	default:
-		*buf = "none";
+	result = ast_sip_dtmf_to_str(endpoint->dtmf, dtmf_str, sizeof(dtmf_str));
+
+	if (result == 0) {
+		*buf = ast_strdup(dtmf_str);
+	} else {
+		*buf = ast_strdup("none");
 	}
-
-	*buf = ast_strdup(*buf);
 	return 0;
 }
 
@@ -410,7 +274,7 @@ int ast_sip_auth_vector_init(struct ast_sip_auth_vector *auths, const char *valu
 		return -1;
 	}
 
-	while ((val = strsep(&auth_names, ","))) {
+	while ((val = ast_strip(strsep(&auth_names, ",")))) {
 		if (ast_strlen_zero(val)) {
 			continue;
 		}
@@ -420,6 +284,8 @@ int ast_sip_auth_vector_init(struct ast_sip_auth_vector *auths, const char *valu
 			goto failure;
 		}
 		if (AST_VECTOR_APPEND(auths, val)) {
+			ast_free(val);
+
 			goto failure;
 		}
 	}
@@ -471,35 +337,144 @@ static int outbound_auths_to_str(const void *obj, const intptr_t *args, char **b
 	return ast_sip_auths_to_str(&endpoint->outbound_auths, buf);
 }
 
+/*!
+ * \internal
+ * \brief Convert identify_by method to string.
+ *
+ * \param method Method value to convert to string
+ *
+ * \return String representation.
+ */
+static const char *sip_endpoint_identifier_type2str(enum ast_sip_endpoint_identifier_type method)
+{
+	const char *str = "<unknown>";
+
+	switch (method) {
+	case AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME:
+		str = "username";
+		break;
+	case AST_SIP_ENDPOINT_IDENTIFY_BY_AUTH_USERNAME:
+		str = "auth_username";
+		break;
+	case AST_SIP_ENDPOINT_IDENTIFY_BY_IP:
+		str = "ip";
+		break;
+	case AST_SIP_ENDPOINT_IDENTIFY_BY_HEADER:
+		str = "header";
+		break;
+	}
+	return str;
+}
+
+/*!
+ * \internal
+ * \brief Convert string to an endpoint identifier token.
+ *
+ * \param str String to convert
+ *
+ * \retval enum ast_sip_endpoint_identifier_type token value on success.
+ * \retval -1 on failure.
+ */
+static int sip_endpoint_identifier_str2type(const char *str)
+{
+	int method;
+
+	if (!strcasecmp(str, "username")) {
+		method = AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME;
+	} else if (!strcasecmp(str, "auth_username")) {
+		method = AST_SIP_ENDPOINT_IDENTIFY_BY_AUTH_USERNAME;
+	} else if (!strcasecmp(str, "ip")) {
+		method = AST_SIP_ENDPOINT_IDENTIFY_BY_IP;
+	} else if (!strcasecmp(str, "header")) {
+		method = AST_SIP_ENDPOINT_IDENTIFY_BY_HEADER;
+	} else {
+		method = -1;
+	}
+	return method;
+}
+
 static int ident_handler(const struct aco_option *opt, struct ast_variable *var, void *obj)
 {
 	struct ast_sip_endpoint *endpoint = obj;
 	char *idents = ast_strdupa(var->value);
 	char *val;
+	int method;
 
-	while ((val = strsep(&idents, ","))) {
-		if (!strcasecmp(val, "username")) {
-			endpoint->ident_method |= AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME;
-		} else {
+	/*
+	 * If there's already something in the vector when we get here,
+	 * it's the default value so we need to clean it out.
+	 */
+	if (AST_VECTOR_SIZE(&endpoint->ident_method_order)) {
+		AST_VECTOR_RESET(&endpoint->ident_method_order, AST_VECTOR_ELEM_CLEANUP_NOOP);
+		endpoint->ident_method = 0;
+	}
+
+	while ((val = ast_strip(strsep(&idents, ",")))) {
+		if (ast_strlen_zero(val)) {
+			continue;
+		}
+
+		method = sip_endpoint_identifier_str2type(val);
+		if (method == -1) {
 			ast_log(LOG_ERROR, "Unrecognized identification method %s specified for endpoint %s\n",
 					val, ast_sorcery_object_get_id(endpoint));
+			AST_VECTOR_RESET(&endpoint->ident_method_order, AST_VECTOR_ELEM_CLEANUP_NOOP);
+			endpoint->ident_method = 0;
 			return -1;
 		}
+		if (endpoint->ident_method & method) {
+			/* We are already indentifying by this method.  No need to do it again. */
+			continue;
+		}
+
+		endpoint->ident_method |= method;
+		AST_VECTOR_APPEND(&endpoint->ident_method_order, method);
 	}
+
 	return 0;
 }
 
 static int ident_to_str(const void *obj, const intptr_t *args, char **buf)
 {
 	const struct ast_sip_endpoint *endpoint = obj;
-	switch (endpoint->ident_method) {
-	case AST_SIP_ENDPOINT_IDENTIFY_BY_USERNAME :
-		*buf = "username"; break;
-	default:
+	int methods;
+	int idx;
+	int buf_used = 0;
+	int buf_size = MAX_OBJECT_FIELD;
+
+	methods = AST_VECTOR_SIZE(&endpoint->ident_method_order);
+	if (!methods) {
 		return 0;
 	}
 
-	*buf = ast_strdup(*buf);
+	*buf = ast_malloc(buf_size);
+	if (!*buf) {
+		return -1;
+	}
+
+	for (idx = 0; idx < methods; ++idx) {
+		enum ast_sip_endpoint_identifier_type method;
+		const char *method_str;
+
+		method = AST_VECTOR_GET(&endpoint->ident_method_order, idx);
+		method_str = sip_endpoint_identifier_type2str(method);
+
+		/* Should never have an "<unknown>" method string */
+		ast_assert(strcmp(method_str, "<unknown>"));
+		if (!strcmp(method_str, "<unknown>")) {
+			continue;
+		}
+
+		buf_used += snprintf(*buf + buf_used, buf_size - buf_used, "%s%s",
+			method_str, idx < methods - 1 ? "," : "");
+		if (buf_size <= buf_used) {
+			/* Need more room than available, truncating. */
+			*(*buf + (buf_size - 1)) = '\0';
+			ast_log(LOG_WARNING, "Truncated identify_by string: %s\n", *buf);
+			break;
+		}
+	}
+
 	return 0;
 }
 
@@ -821,7 +796,9 @@ static int dtls_handler(const struct aco_option *opt,
 {
 	struct ast_sip_endpoint *endpoint = obj;
 	char *name = ast_strdupa(var->name);
-	char *front, *back, *buf = name;
+	char *front = NULL;
+	char *back = NULL;
+	char *buf = name;
 
 	/* strip out underscores in the name */
 	front = strtok_r(buf, "_", &back);
@@ -848,6 +825,13 @@ static int dtlsrekey_to_str(const void *obj, const intptr_t *args, char **buf)
 
 	return ast_asprintf(
 		buf, "%u", endpoint->media.rtp.dtls_cfg.rekey) >=0 ? 0 : -1;
+}
+
+static int dtlsautogeneratecert_to_str(const void *obj, const intptr_t *args, char **buf)
+{
+	const struct ast_sip_endpoint *endpoint = obj;
+	*buf = ast_strdup(AST_YESNO(endpoint->media.rtp.dtls_cfg.ephemeral_cert));
+	return 0;
 }
 
 static int dtlscertfile_to_str(const void *obj, const intptr_t *args, char **buf)
@@ -994,6 +978,37 @@ static int tos_video_to_str(const void *obj, const intptr_t *args, char **buf)
 	return 0;
 }
 
+static int from_user_handler(const struct aco_option *opt,
+	struct ast_variable *var, void *obj)
+{
+	struct ast_sip_endpoint *endpoint = obj;
+	/* Valid non-alphanumeric characters for URI */
+	char *valid_uri_marks = "-._~%!$&'()*+,;=:";
+	const char *val;
+
+	for (val = var->value; *val; val++) {
+		if (!isalpha(*val) && !isdigit(*val) && !strchr(valid_uri_marks, *val)) {
+			ast_log(LOG_ERROR, "Error configuring endpoint '%s' - '%s' field "
+			"contains invalid character '%c'\n",
+			ast_sorcery_object_get_id(endpoint), var->name, *val);
+			return -1;
+		}
+	}
+
+	ast_string_field_set(endpoint, fromuser, var->value);
+
+	return 0;
+}
+
+static int from_user_to_str(const void *obj, const intptr_t *args, char **buf)
+{
+	const struct ast_sip_endpoint *endpoint = obj;
+
+	*buf = ast_strdup(endpoint->fromuser);
+
+	return 0;
+}
+
 static int set_var_handler(const struct aco_option *opt,
 	struct ast_variable *var, void *obj)
 {
@@ -1048,6 +1063,48 @@ static int set_var_to_vl(const void *obj, struct ast_variable **fields)
 	return 0;
 }
 
+static int voicemail_extension_handler(const struct aco_option *opt, struct ast_variable *var, void *obj)
+{
+	struct ast_sip_endpoint *endpoint = obj;
+
+	endpoint->subscription.mwi.voicemail_extension = ast_strdup(var->value);
+
+	return endpoint->subscription.mwi.voicemail_extension ? 0 : -1;
+}
+
+static int voicemail_extension_to_str(const void *obj, const intptr_t *args, char **buf)
+{
+	const struct ast_sip_endpoint *endpoint = obj;
+
+	*buf = ast_strdup(endpoint->subscription.mwi.voicemail_extension);
+
+	return 0;
+}
+
+static int contact_user_handler(const struct aco_option *opt,
+	struct ast_variable *var, void *obj)
+{
+	struct ast_sip_endpoint *endpoint = obj;
+
+	endpoint->contact_user = ast_strdup(var->value);
+	if (!endpoint->contact_user) {
+		return -1;
+	}
+
+	return 0;
+}
+
+static int contact_user_to_str(const void *obj, const intptr_t *args, char **buf)
+{
+	const struct ast_sip_endpoint *endpoint = obj;
+
+	*buf = ast_strdup(endpoint->contact_user);
+	if (!(*buf)) {
+		return -1;
+	}
+
+	return 0;
+}
 
 static void *sip_nat_hook_alloc(const char *name)
 {
@@ -1060,7 +1117,89 @@ static void persistent_endpoint_destroy(void *obj)
 	struct sip_persistent_endpoint *persistent = obj;
 
 	ast_endpoint_shutdown(persistent->endpoint);
-	ast_free(persistent->aors);
+}
+
+int ast_sip_persistent_endpoint_update_state(const char *endpoint_name, enum ast_endpoint_state state)
+{
+	struct sip_persistent_endpoint *persistent;
+	struct ast_json *blob;
+	char *regcontext;
+
+	persistent = ao2_find(persistent_endpoints, endpoint_name, OBJ_SEARCH_KEY);
+	if (!persistent) {
+		return -1;
+	}
+
+	/* If there was no state change, don't publish anything. */
+	if (ast_endpoint_get_state(persistent->endpoint) == state) {
+		ao2_ref(persistent, -1);
+		return 0;
+	}
+
+	regcontext = ast_sip_get_regcontext();
+
+	if (state == AST_ENDPOINT_ONLINE) {
+		ast_endpoint_set_state(persistent->endpoint, AST_ENDPOINT_ONLINE);
+		blob = ast_json_pack("{s: s}", "peer_status", "Reachable");
+
+		if (!ast_strlen_zero(regcontext)) {
+			if (!ast_exists_extension(NULL, regcontext, ast_endpoint_get_resource(persistent->endpoint), 1, NULL)) {
+				ast_add_extension(regcontext, 1, ast_endpoint_get_resource(persistent->endpoint), 1, NULL, NULL,
+					"Noop", ast_strdup(ast_endpoint_get_resource(persistent->endpoint)), ast_free_ptr, "SIP");
+			}
+		}
+
+		ast_verb(2, "Endpoint %s is now Reachable\n", ast_endpoint_get_resource(persistent->endpoint));
+	} else {
+		ast_endpoint_set_state(persistent->endpoint, AST_ENDPOINT_OFFLINE);
+		blob = ast_json_pack("{s: s}", "peer_status", "Unreachable");
+
+		if (!ast_strlen_zero(regcontext)) {
+			struct pbx_find_info q = { .stacklen = 0 };
+
+			if (pbx_find_extension(NULL, NULL, &q, regcontext, ast_endpoint_get_resource(persistent->endpoint), 1, NULL, "", E_MATCH)) {
+				ast_context_remove_extension(regcontext, ast_endpoint_get_resource(persistent->endpoint), 1, NULL);
+			}
+		}
+
+		ast_verb(2, "Endpoint %s is now Unreachable\n", ast_endpoint_get_resource(persistent->endpoint));
+	}
+
+	ast_free(regcontext);
+
+	ast_endpoint_blob_publish(persistent->endpoint, ast_endpoint_state_type(), blob);
+	ast_json_unref(blob);
+	ast_devstate_changed(AST_DEVICE_UNKNOWN, AST_DEVSTATE_CACHABLE, "PJSIP/%s", ast_endpoint_get_resource(persistent->endpoint));
+
+	ao2_ref(persistent, -1);
+
+	return 0;
+}
+
+void ast_sip_persistent_endpoint_publish_contact_state(const char *endpoint_name, const struct ast_sip_contact_status *contact_status)
+{
+	struct sip_persistent_endpoint *persistent;
+	struct ast_json *blob;
+	char rtt[32];
+
+	persistent = ao2_find(persistent_endpoints, endpoint_name, OBJ_SEARCH_KEY);
+	if (!persistent) {
+		return;
+	}
+
+	snprintf(rtt, sizeof(rtt), "%" PRId64, contact_status->rtt);
+	blob = ast_json_pack("{s: s, s: s, s: s, s: s, s: s}",
+		"contact_status", ast_sip_get_contact_status_label(contact_status->status),
+		"aor", contact_status->aor,
+		"uri", contact_status->uri,
+		"roundtrip_usec", rtt,
+		"endpoint_name", ast_endpoint_get_resource(persistent->endpoint));
+	if (blob) {
+		ast_endpoint_blob_publish(persistent->endpoint, ast_endpoint_contact_state_type(), blob);
+		ast_json_unref(blob);
+	}
+
+	ao2_ref(persistent, -1);
 }
 
 /*! \brief Internal function which finds (or creates) persistent endpoint information */
@@ -1069,22 +1208,22 @@ static struct ast_endpoint *persistent_endpoint_find_or_create(const struct ast_
 	RAII_VAR(struct sip_persistent_endpoint *, persistent, NULL, ao2_cleanup);
 	SCOPED_AO2LOCK(lock, persistent_endpoints);
 
-	if (!(persistent = ao2_find(persistent_endpoints, ast_sorcery_object_get_id(endpoint), OBJ_KEY | OBJ_NOLOCK))) {
-		if (!(persistent = ao2_alloc(sizeof(*persistent), persistent_endpoint_destroy))) {
+	persistent = ao2_find(persistent_endpoints, ast_sorcery_object_get_id(endpoint),
+		OBJ_SEARCH_KEY | OBJ_NOLOCK);
+	if (!persistent) {
+		persistent = ao2_alloc_options(sizeof(*persistent), persistent_endpoint_destroy,
+			AO2_ALLOC_OPT_LOCK_NOLOCK);
+		if (!persistent) {
 			return NULL;
 		}
 
-		if (!(persistent->endpoint = ast_endpoint_create("PJSIP", ast_sorcery_object_get_id(endpoint)))) {
+		persistent->endpoint = ast_endpoint_create("PJSIP",
+			ast_sorcery_object_get_id(endpoint));
+		if (!persistent->endpoint) {
 			return NULL;
 		}
 
-		persistent->aors = ast_strdup(endpoint->aors);
-
-		if (ast_strlen_zero(persistent->aors)) {
-			ast_endpoint_set_state(persistent->endpoint, AST_ENDPOINT_UNKNOWN);
-		} else {
-			persistent_endpoint_update_state(persistent, NULL, 0);
-		}
+		ast_endpoint_set_state(persistent->endpoint, AST_ENDPOINT_OFFLINE);
 
 		ao2_link_flags(persistent_endpoints, persistent, OBJ_NOLOCK);
 	}
@@ -1110,6 +1249,39 @@ static int sip_endpoint_apply_handler(const struct ast_sorcery *sorcery, void *o
 		ast_log(LOG_ERROR, "Session timer expires must be greater than minimum session expires time on endpoint '%s'\n",
 			ast_sorcery_object_get_id(endpoint));
 		return -1;
+	}
+
+	if (ast_rtp_dtls_cfg_validate(&endpoint->media.rtp.dtls_cfg)) {
+		return -1;
+	}
+
+	endpoint->media.topology = ast_stream_topology_create_from_format_cap(endpoint->media.codecs);
+	if (!endpoint->media.topology) {
+		return -1;
+	}
+
+	endpoint->media.rtcp_mux |= endpoint->media.bundle;
+
+	/*
+	 * If webrtc has been enabled then enable those attributes, and default
+	 * some, that are needed in order for webrtc to work.
+	 */
+	endpoint->media.bundle |= endpoint->media.webrtc;
+	endpoint->media.rtcp_mux |= endpoint->media.webrtc;
+	endpoint->media.rtp.use_avpf |= endpoint->media.webrtc;
+	endpoint->media.rtp.ice_support |= endpoint->media.webrtc;
+	endpoint->media.rtp.use_received_transport |= endpoint->media.webrtc;
+
+	if (endpoint->media.webrtc) {
+		endpoint->media.rtp.encryption = AST_SIP_MEDIA_ENCRYPT_DTLS;
+		endpoint->media.rtp.dtls_cfg.enabled = 1;
+		endpoint->media.rtp.dtls_cfg.default_setup = AST_RTP_DTLS_SETUP_ACTPASS;
+		endpoint->media.rtp.dtls_cfg.verify = AST_RTP_DTLS_VERIFY_FINGERPRINT;
+
+		if (ast_strlen_zero(endpoint->media.rtp.dtls_cfg.certfile)) {
+			/* If no certificate has been specified, try to automatically create one */
+			endpoint->media.rtp.dtls_cfg.ephemeral_cert = 1;
+		}
 	}
 
 	return 0;
@@ -1309,7 +1481,7 @@ static int ami_show_endpoint(struct mansession *s, const struct message *m)
 		return 0;
 	}
 
-	astman_send_listack(s, m, "Following are Events for each object associated with the the Endpoint",
+	astman_send_listack(s, m, "Following are Events for each object associated with the Endpoint",
 		"start");
 
 	/* the endpoint detail needs to always come first so apply as such */
@@ -1428,235 +1600,6 @@ static struct ao2_container *cli_endpoint_get_container(const char *regex)
 	return s_container;
 }
 
-static int cli_channel_populate_container(void *obj, void *arg, int flags)
-{
-	struct ast_channel_snapshot *snapshot = obj;
-
-	ao2_link(arg, snapshot);
-
-	return 0;
-}
-
-static int cli_channel_iterate(void *container, ao2_callback_fn callback, void *args)
-{
-	const struct ast_sip_endpoint *endpoint = container;
-
-	ast_sip_for_each_channel(endpoint, callback, args);
-
-	return 0;
-}
-
-static int cli_channel_sort(const void *obj, const void *arg, int flags)
-{
-	const struct ast_channel_snapshot *left_obj = obj;
-	const struct ast_channel_snapshot *right_obj = arg;
-	const char *right_key = arg;
-	int cmp;
-
-	switch (flags & OBJ_SEARCH_MASK) {
-	case OBJ_SEARCH_OBJECT:
-		right_key = right_obj->name;
-		/* Fall through */
-	case OBJ_SEARCH_KEY:
-		cmp = strcmp(left_obj->name, right_key);
-		break;
-	case OBJ_SEARCH_PARTIAL_KEY:
-		cmp = strncmp(left_obj->name, right_key, strlen(right_key));
-		break;
-	default:
-		cmp = 0;
-		break;
-	}
-
-	return cmp;
-}
-
-static int cli_channel_compare(void *obj, void *arg, int flags)
-{
-	const struct ast_channel_snapshot *left_obj = obj;
-	const struct ast_channel_snapshot *right_obj = arg;
-	const char *right_key = arg;
-	int cmp = 0;
-
-	switch (flags & OBJ_SEARCH_MASK) {
-	case OBJ_SEARCH_OBJECT:
-		right_key = right_obj->name;
-		/* Fall through */
-	case OBJ_SEARCH_KEY:
-		if (strcmp(left_obj->name, right_key) == 0) {
-			cmp = CMP_MATCH | CMP_STOP;
-		}
-		break;
-	case OBJ_SEARCH_PARTIAL_KEY:
-		if (strncmp(left_obj->name, right_key, strlen(right_key)) == 0) {
-			cmp = CMP_MATCH;
-		}
-		break;
-	default:
-		cmp = 0;
-		break;
-	}
-
-	return cmp;
-}
-
-static int cli_channel_hash(const void *obj, int flags)
-{
-	const struct ast_channel_snapshot *snapshot = obj;
-
-	if (flags & OBJ_SEARCH_OBJECT) {
-		return ast_str_hash(snapshot->name);
-	} else if (flags & OBJ_SEARCH_KEY) {
-		return ast_str_hash(obj);
-	}
-
-	return -1;
-}
-
-static int cli_endpoint_gather_channels(void *obj, void *arg, int flags)
-{
-	struct ast_sip_endpoint *endpoint = obj;
-	struct ao2_container *channels = arg;
-
-	ast_sip_for_each_channel(endpoint, cli_channel_populate_container, channels);
-
-	return 0;
-}
-
-static int cli_filter_channels(void *obj, void *arg, int flags)
-{
-	struct ast_channel_snapshot *channel = obj;
-	regex_t *regexbuf = arg;
-
-	if (!regexec(regexbuf, channel->name, 0, NULL, 0)
-		|| !regexec(regexbuf, channel->appl, 0, NULL, 0)) {
-		return 0;
-	}
-
-	return CMP_MATCH;
-}
-
-static struct ao2_container *cli_channel_get_container(const char *regex)
-{
-	RAII_VAR(struct ao2_container *, parent_container, NULL, ao2_cleanup);
-	struct ao2_container *child_container;
-	regex_t regexbuf;
-
-	parent_container = cli_endpoint_get_container("");
-	if (!parent_container) {
-		return NULL;
-	}
-	child_container = ao2_container_alloc_hash(AO2_ALLOC_OPT_LOCK_NOLOCK, 0, 17,
-		cli_channel_hash, cli_channel_sort, cli_channel_compare);
-	if (!child_container) {
-		return NULL;
-	}
-
-	ao2_callback(parent_container, OBJ_NODATA, cli_endpoint_gather_channels, child_container);
-
-	if (!ast_strlen_zero(regex)) {
-		if (regcomp(&regexbuf, regex, REG_EXTENDED | REG_NOSUB)) {
-			ao2_ref(child_container, -1);
-			return NULL;
-		}
-		ao2_callback(child_container, OBJ_UNLINK | OBJ_MULTIPLE | OBJ_NODATA, cli_filter_channels, &regexbuf);
-		regfree(&regexbuf);
-	}
-
-	return child_container;
-}
-
-static const char *cli_channel_get_id(const void *obj)
-{
-	const struct ast_channel_snapshot *snapshot = obj;
-
-	return snapshot->name;
-}
-
-static void *cli_channel_retrieve_by_id(const char *id)
-{
-	RAII_VAR(struct ao2_container *, container, cli_channel_get_container(""), ao2_cleanup);
-
-	return ao2_find(container, id, OBJ_KEY | OBJ_NOLOCK);
-}
-
-static int cli_channel_print_header(void *obj, void *arg, int flags)
-{
-	struct ast_sip_cli_context *context = arg;
-	int indent = CLI_INDENT_TO_SPACES(context->indent_level);
-	int filler = CLI_LAST_TABSTOP - indent - 13;
-
-	ast_assert(context->output_buffer != NULL);
-
-	ast_str_append(&context->output_buffer, 0,
-		"%*s:  <ChannelId%*.*s>  <State.....>  <Time(sec)>\n",
-		indent, "Channel", filler, filler, CLI_HEADER_FILLER);
-	if (context->recurse) {
-		context->indent_level++;
-		indent = CLI_INDENT_TO_SPACES(context->indent_level);
-		filler = CLI_LAST_TABSTOP - indent - 38;
-		ast_str_append(&context->output_buffer, 0,
-			"%*s: <DialedExten%*.*s>  CLCID: <ConnectedLineCID.......>\n",
-			indent, "Exten", filler, filler, CLI_HEADER_FILLER);
-		context->indent_level--;
-	}
-
-	return 0;
-}
-
-static int cli_channel_print_body(void *obj, void *arg, int flags)
-{
-	const struct ast_channel_snapshot *snapshot = obj;
-	struct ast_sip_cli_context *context = arg;
-	struct timeval current_time;
-	char *print_name = NULL;
-	int print_name_len;
-	int indent;
-	int flexwidth;
-
-	ast_assert(context->output_buffer != NULL);
-
-	gettimeofday(&current_time, NULL);
-
-	print_name_len = strlen(snapshot->name) + strlen(snapshot->appl) + 2;
-	if (!(print_name = alloca(print_name_len))) {
-		return -1;
-	}
-
-	snprintf(print_name, print_name_len, "%s/%s", snapshot->name, snapshot->appl);
-
-	indent = CLI_INDENT_TO_SPACES(context->indent_level);
-	flexwidth = CLI_LAST_TABSTOP - indent;
-
-	ast_str_append(&context->output_buffer, 0, "%*s: %-*.*s %-12.12s  %11ld\n",
-		CLI_INDENT_TO_SPACES(context->indent_level), "Channel",
-		flexwidth, flexwidth,
-		print_name,
-		ast_state2str(snapshot->state),
-		current_time.tv_sec - snapshot->creationtime.tv_sec);
-
-	if (context->recurse) {
-		context->indent_level++;
-		indent = CLI_INDENT_TO_SPACES(context->indent_level);
-		flexwidth = CLI_LAST_TABSTOP - indent - 25;
-
-		ast_str_append(&context->output_buffer, 0,
-			"%*s: %-*.*s  CLCID: \"%s\" <%s>\n",
-			indent, "Exten",
-			flexwidth, flexwidth,
-			snapshot->exten,
-			snapshot->connected_name,
-			snapshot->connected_number
-			);
-		context->indent_level--;
-		if (context->indent_level == 0) {
-			ast_str_append(&context->output_buffer, 0, "\n");
-		}
-	}
-
-	return 0;
-}
-
 static int cli_endpoint_iterate(void *obj, ao2_callback_fn callback, void *args)
 {
 	ao2_callback(obj, OBJ_NODATA, callback, args);
@@ -1728,9 +1671,7 @@ static int cli_endpoint_print_body(void *obj, void *arg, int flags)
 
 	if (number) {
 		print_name_len = strlen(id) + strlen(number) + 2;
-		if (!(print_name = alloca(print_name_len))) {
-			return -1;
-		}
+		print_name = ast_alloca(print_name_len);
 		snprintf(print_name, print_name_len, "%s/%s", id, number);
 	}
 
@@ -1775,21 +1716,6 @@ static int cli_endpoint_print_body(void *obj, void *arg, int flags)
 }
 
 static struct ast_cli_entry cli_commands[] = {
-	AST_CLI_DEFINE(ast_sip_cli_traverse_objects, "List PJSIP Channels",
-		.command = "pjsip list channels",
-		.usage = "Usage: pjsip list channels [ like <pattern> ]\n"
-				"       List the active PJSIP channels\n"
-				"       Optional regular expression pattern is used to filter the list.\n"),
-	AST_CLI_DEFINE(ast_sip_cli_traverse_objects, "Show PJSIP Channels",
-		.command = "pjsip show channels",
-		.usage = "Usage: pjsip show channels [ like <pattern> ]\n"
-				"       List(detailed) the active PJSIP channels\n"
-				"       Optional regular expression pattern is used to filter the list.\n"),
-	AST_CLI_DEFINE(ast_sip_cli_traverse_objects, "Show PJSIP Channel",
-		.command = "pjsip show channel",
-		.usage = "Usage: pjsip show channel\n"
-				 "       List(detailed) the active PJSIP channel\n"),
-
 	AST_CLI_DEFINE(ast_sip_cli_traverse_objects, "List PJSIP Endpoints",
 		.command = "pjsip list endpoints",
 		.usage = "Usage: pjsip list endpoints [ like <pattern> ]\n"
@@ -1809,6 +1735,14 @@ static struct ast_cli_entry cli_commands[] = {
 struct ast_sip_cli_formatter_entry *channel_formatter;
 struct ast_sip_cli_formatter_entry *endpoint_formatter;
 
+static void load_all_endpoints(void)
+{
+	struct ao2_container *endpoints;
+
+	endpoints = ast_sorcery_retrieve_by_fields(sip_sorcery, "endpoint", AST_RETRIEVE_FLAG_MULTIPLE | AST_RETRIEVE_FLAG_ALL, NULL);
+	ao2_cleanup(endpoints);
+}
+
 int ast_res_pjsip_initialize_configuration(void)
 {
 	if (ast_manager_register_xml(AMI_SHOW_ENDPOINTS, EVENT_FLAG_SYSTEM, ami_show_endpoints) ||
@@ -1816,7 +1750,9 @@ int ast_res_pjsip_initialize_configuration(void)
 		return -1;
 	}
 
-	if (!(persistent_endpoints = ao2_container_alloc(PERSISTENT_BUCKETS, persistent_endpoint_hash, persistent_endpoint_cmp))) {
+	persistent_endpoints = ao2_container_alloc_hash(AO2_ALLOC_OPT_LOCK_MUTEX, 0,
+		PERSISTENT_BUCKETS, persistent_endpoint_hash, NULL, persistent_endpoint_cmp);
+	if (!persistent_endpoints) {
 		return -1;
 	}
 
@@ -1871,7 +1807,7 @@ int ast_res_pjsip_initialize_configuration(void)
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "aors", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, aors));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "media_address", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, media.address));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "bind_rtp_to_media_address", "no", OPT_BOOL_T, 1, STRFLDSET(struct ast_sip_endpoint, media.bind_rtp_to_media_address));
-	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "identify_by", "username", ident_handler, ident_to_str, NULL, 0, 0);
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "identify_by", "username,ip", ident_handler, ident_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "direct_media", "yes", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.direct_media.enabled));
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "direct_media_method", "invite", direct_media_method_handler, direct_media_method_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "connected_line_method", "invite", connected_line_method_handler, connected_line_method_to_str, NULL, 0, 0);
@@ -1887,7 +1823,9 @@ int ast_res_pjsip_initialize_configuration(void)
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "rpid_immediate", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, id.rpid_immediate));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "send_diversion", "yes", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, id.send_diversion));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "mailboxes", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, subscription.mwi.mailboxes));
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "voicemail_extension", "", voicemail_extension_handler, voicemail_extension_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "aggregate_mwi", "yes", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, subscription.mwi.aggregate));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "mwi_subscribe_replaces_unsolicited", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, subscription.mwi.subscribe_replaces_unsolicited));
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "media_encryption", "no", media_encryption_handler, media_encryption_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "use_avpf", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.rtp.use_avpf));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "force_avp", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.rtp.force_avp));
@@ -1906,6 +1844,7 @@ int ast_res_pjsip_initialize_configuration(void)
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "t38_udptl_ec", "none", t38udptl_ec_handler, t38udptl_ec_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "t38_udptl_maxdatagram", "0", OPT_UINT_T, 0, FLDSET(struct ast_sip_endpoint, media.t38.maxdatagram));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "fax_detect", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, faxdetect));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "fax_detect_timeout", "0", OPT_UINT_T, 0, FLDSET(struct ast_sip_endpoint, faxdetect_timeout));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "t38_udptl_nat", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.t38.nat));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "t38_udptl_ipv6", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.t38.ipv6));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "tone_zone", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, zone));
@@ -1923,12 +1862,13 @@ int ast_res_pjsip_initialize_configuration(void)
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "cos_video", "0", OPT_UINT_T, 0, FLDSET(struct ast_sip_endpoint, media.cos_video));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "allow_subscribe", "yes", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, subscription.allow));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "sub_min_expiry", "0", OPT_UINT_T, 0, FLDSET(struct ast_sip_endpoint, subscription.minexpiry));
-	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "from_user", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, fromuser));
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "from_user", "", from_user_handler, from_user_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "from_domain", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, fromdomain));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "mwi_from_user", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, subscription.mwi.fromuser));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "rtp_engine", "asterisk", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, media.rtp.engine));
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "dtls_verify", "no", dtls_handler, dtlsverify_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "dtls_rekey", "0", dtls_handler, dtlsrekey_to_str, NULL, 0, 0);
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "dtls_auto_generate_cert", "no", dtls_handler, dtlsautogeneratecert_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "dtls_cert_file", "", dtls_handler, dtlscertfile_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "dtls_private_key", "", dtls_handler, dtlsprivatekey_to_str, NULL, 0, 0);
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "dtls_cipher", "", dtls_handler, dtlscipher_to_str, NULL, 0, 0);
@@ -1943,6 +1883,28 @@ int ast_res_pjsip_initialize_configuration(void)
 	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "set_var", "", set_var_handler, set_var_to_str, set_var_to_vl, 0, 0);
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "message_context", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, message_context));
 	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "accountcode", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, accountcode));
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "deny", "", endpoint_acl_handler, NULL, NULL, 0, 0);
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "permit", "", endpoint_acl_handler, NULL, NULL, 0, 0);
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "acl", "", endpoint_acl_handler, acl_to_str, NULL, 0, 0);
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "contact_deny", "", endpoint_acl_handler, NULL, NULL, 0, 0);
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "contact_permit", "", endpoint_acl_handler, NULL, NULL, 0, 0);
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "contact_acl", "", endpoint_acl_handler, contact_acl_to_str, NULL, 0, 0);
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "subscribe_context", "", OPT_CHAR_ARRAY_T, 0, CHARFLDSET(struct ast_sip_endpoint, subscription.context));
+	ast_sorcery_object_field_register_custom(sip_sorcery, "endpoint", "contact_user", "", contact_user_handler, contact_user_to_str, NULL, 0, 0);
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "preferred_codec_only", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, preferred_codec_only));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "asymmetric_rtp_codec", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, asymmetric_rtp_codec));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "rtcp_mux", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.rtcp_mux));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "allow_overlap", "yes", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, allow_overlap));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "refer_blind_progress", "yes", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, refer_blind_progress));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "notify_early_inuse_ringing", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, notify_early_inuse_ringing));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "max_audio_streams", "1", OPT_UINT_T, 0, FLDSET(struct ast_sip_endpoint, media.max_audio_streams));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "max_video_streams", "1", OPT_UINT_T, 0, FLDSET(struct ast_sip_endpoint, media.max_video_streams));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "bundle", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.bundle));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "webrtc", "no", OPT_YESNO_T, 1, FLDSET(struct ast_sip_endpoint, media.webrtc));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "incoming_mwi_mailbox", "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct ast_sip_endpoint, incoming_mwi_mailbox));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "follow_early_media_fork", "yes", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.rtp.follow_early_media_fork));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "accept_multiple_sdp_answers", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, media.rtp.accept_multiple_sdp_answers));
+	ast_sorcery_object_field_register(sip_sorcery, "endpoint", "suppress_q850_reason_headers", "no", OPT_BOOL_T, 1, FLDSET(struct ast_sip_endpoint, suppress_q850_reason_headers));
 
 	if (ast_sip_initialize_sorcery_transport()) {
 		ast_log(LOG_ERROR, "Failed to register SIP transport support with sorcery\n");
@@ -1958,16 +1920,7 @@ int ast_res_pjsip_initialize_configuration(void)
 		return -1;
 	}
 
-	if (ast_sip_initialize_sorcery_qualify()) {
-		ast_log(LOG_ERROR, "Failed to register SIP qualify support with sorcery\n");
-		ast_sorcery_unref(sip_sorcery);
-		sip_sorcery = NULL;
-		return -1;
-	}
-
 	ast_sorcery_observer_add(sip_sorcery, "endpoint", &endpoint_observers);
-	ast_sorcery_observer_add(sip_sorcery, "contact", &state_contact_observer);
-	ast_sorcery_observer_add(sip_sorcery, CONTACT_STATUS, &state_contact_status_observer);
 
 	if (ast_sip_initialize_sorcery_domain_alias()) {
 		ast_log(LOG_ERROR, "Failed to register SIP domain aliases support with sorcery\n");
@@ -1982,21 +1935,6 @@ int ast_res_pjsip_initialize_configuration(void)
 		sip_sorcery = NULL;
 		return -1;
 	}
-
-	channel_formatter = ao2_alloc(sizeof(struct ast_sip_cli_formatter_entry), NULL);
-	if (!channel_formatter) {
-		ast_log(LOG_ERROR, "Unable to allocate memory for channel_formatter\n");
-		ast_sorcery_unref(sip_sorcery);
-		sip_sorcery = NULL;
-		return -1;
-	}
-	channel_formatter->name = "channel";
-	channel_formatter->print_header = cli_channel_print_header;
-	channel_formatter->print_body = cli_channel_print_body;
-	channel_formatter->get_container = cli_channel_get_container;
-	channel_formatter->iterate = cli_channel_iterate;
-	channel_formatter->retrieve_by_id = cli_channel_retrieve_by_id;
-	channel_formatter->get_id = cli_channel_get_id;
 
 	endpoint_formatter = ao2_alloc(sizeof(struct ast_sip_cli_formatter_entry), NULL);
 	if (!endpoint_formatter) {
@@ -2013,30 +1951,37 @@ int ast_res_pjsip_initialize_configuration(void)
 	endpoint_formatter->retrieve_by_id = cli_endpoint_retrieve_by_id;
 	endpoint_formatter->get_id = ast_sorcery_object_get_id;
 
-	ast_sip_register_cli_formatter(channel_formatter);
 	ast_sip_register_cli_formatter(endpoint_formatter);
 	ast_cli_register_multiple(cli_commands, ARRAY_LEN(cli_commands));
 
 	ast_sorcery_load(sip_sorcery);
+
+	load_all_endpoints();
+
+	ast_sip_location_prune_boot_contacts();
 
 	return 0;
 }
 
 void ast_res_pjsip_destroy_configuration(void)
 {
-	ast_sorcery_observer_remove(sip_sorcery, CONTACT_STATUS, &state_contact_status_observer);
-	ast_sorcery_observer_remove(sip_sorcery, "contact", &state_contact_observer);
+	if (!sip_sorcery) {
+		return;
+	}
+
 	ast_sip_destroy_sorcery_global();
 	ast_sip_destroy_sorcery_location();
 	ast_sip_destroy_sorcery_auth();
 	ast_sip_destroy_sorcery_transport();
+	ast_sorcery_unref(sip_sorcery);
+	sip_sorcery = NULL;
 	ast_manager_unregister(AMI_SHOW_ENDPOINT);
 	ast_manager_unregister(AMI_SHOW_ENDPOINTS);
 	ast_cli_unregister_multiple(cli_commands, ARRAY_LEN(cli_commands));
 	ast_sip_unregister_cli_formatter(endpoint_formatter);
-	ast_sip_unregister_cli_formatter(channel_formatter);
-	ast_sorcery_unref(sip_sorcery);
+	ast_sip_destroy_cli();
 	ao2_cleanup(persistent_endpoints);
+	persistent_endpoints = NULL;
 }
 
 int ast_res_pjsip_reload_configuration(void)
@@ -2050,6 +1995,7 @@ int ast_res_pjsip_reload_configuration(void)
 static void subscription_configuration_destroy(struct ast_sip_endpoint_subscription_configuration *subscription)
 {
 	ast_string_field_free_memory(&subscription->mwi);
+	ast_free(subscription->mwi.voicemail_extension);
 }
 
 static void info_configuration_destroy(struct ast_sip_endpoint_info_configuration *info)
@@ -2059,6 +2005,7 @@ static void info_configuration_destroy(struct ast_sip_endpoint_info_configuratio
 
 static void media_configuration_destroy(struct ast_sip_endpoint_media_configuration *media)
 {
+	ast_rtp_dtls_cfg_free(&media->rtp.dtls_cfg);
 	ast_string_field_free_memory(&media->rtp);
 	ast_string_field_free_memory(media);
 }
@@ -2069,7 +2016,8 @@ static void endpoint_destructor(void* obj)
 
 	ast_string_field_free_memory(endpoint);
 
-	ao2_ref(endpoint->media.codecs, -1);
+	ao2_cleanup(endpoint->media.codecs);
+	ast_stream_topology_free(endpoint->media.topology);
 	subscription_configuration_destroy(&endpoint->subscription);
 	info_configuration_destroy(&endpoint->info);
 	media_configuration_destroy(&endpoint->media);
@@ -2080,6 +2028,10 @@ static void endpoint_destructor(void* obj)
 	endpoint->pickup.named_pickupgroups = ast_unref_namedgroups(endpoint->pickup.named_pickupgroups);
 	ao2_cleanup(endpoint->persistent);
 	ast_variables_destroy(endpoint->channel_vars);
+	AST_VECTOR_FREE(&endpoint->ident_method_order);
+	ast_free(endpoint->contact_user);
+	ast_free_acl_list(endpoint->contact_acl);
+	ast_free_acl_list(endpoint->acl);
 }
 
 static int init_subscription_configuration(struct ast_sip_endpoint_subscription_configuration *subscription)
@@ -2107,6 +2059,7 @@ void *ast_sip_endpoint_alloc(const char *name)
 		ao2_cleanup(endpoint);
 		return NULL;
 	}
+
 	if (!(endpoint->media.codecs = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
 		ao2_cleanup(endpoint);
 		return NULL;
@@ -2124,6 +2077,11 @@ void *ast_sip_endpoint_alloc(const char *name)
 		return NULL;
 	}
 	ast_party_id_init(&endpoint->id.self);
+
+	if (AST_VECTOR_INIT(&endpoint->ident_method_order, 1)) {
+		return NULL;
+	}
+
 	return endpoint;
 }
 

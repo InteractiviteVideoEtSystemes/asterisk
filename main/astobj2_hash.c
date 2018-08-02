@@ -23,8 +23,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/_private.h"
 #include "asterisk/astobj2.h"
 #include "astobj2_private.h"
@@ -166,7 +164,9 @@ static void hash_ao2_node_destructor(void *v_doomed)
 		 * same node.
 		 */
 		my_container = (struct ao2_container_hash *) doomed->common.my_container;
-		ast_assert(is_ao2_object(my_container));
+#ifdef AST_DEVMODE
+		is_ao2_object(my_container);
+#endif
 
 		__adjust_lock(my_container, AO2_LOCK_REQ_WRLOCK, 1);
 
@@ -274,7 +274,7 @@ static enum ao2_container_insert hash_ao2_insert_node(struct ao2_container_hash 
 					break;
 				case AO2_CONTAINER_ALLOC_OPT_DUPS_REPLACE:
 					SWAP(cur->common.obj, node->common.obj);
-					ao2_t_ref(node, -1, "Discard the new node.");
+					ao2_t_ref(node, -1, NULL);
 					return AO2_CONTAINER_INSERT_NODE_OBJ_REPLACED;
 				}
 			}
@@ -307,7 +307,7 @@ static enum ao2_container_insert hash_ao2_insert_node(struct ao2_container_hash 
 					break;
 				case AO2_CONTAINER_ALLOC_OPT_DUPS_REPLACE:
 					SWAP(cur->common.obj, node->common.obj);
-					ao2_t_ref(node, -1, "Discard the new node.");
+					ao2_t_ref(node, -1, NULL);
 					return AO2_CONTAINER_INSERT_NODE_OBJ_REPLACED;
 				}
 			}
@@ -1100,4 +1100,3 @@ struct ao2_container *__ao2_container_alloc_list(unsigned int ao2_options,
 	return __ao2_container_alloc_hash(ao2_options, container_options, 1, NULL,
 		sort_fn, cmp_fn, tag, file, line, func);
 }
-

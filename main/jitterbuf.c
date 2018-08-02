@@ -33,8 +33,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "jitterbuf.h"
 #include "asterisk/utils.h"
 
@@ -358,7 +356,7 @@ static int queue_put(jitterbuf *jb, void *data, const enum jb_frame_type type, l
 	frame->type = type;
 
 	/*
-	 * frames are a circular list, jb-frames points to to the lowest ts,
+	 * frames are a circular list, jb-frames points to the lowest ts,
 	 * jb->frames->prev points to the highest ts
 	 */
 
@@ -845,4 +843,7 @@ enum jb_return_code jb_setconf(jitterbuf *jb, jb_conf *conf)
 	return JB_OK;
 }
 
-
+int jb_is_late(jitterbuf *jb, long ts)
+{
+	return ts + jb->info.current < jb->info.next_voice_ts;
+}

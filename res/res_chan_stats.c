@@ -34,8 +34,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/stasis_channels.h"
 #include "asterisk/stasis_message_router.h"
@@ -150,26 +148,6 @@ static void default_route(void *data, struct stasis_subscription *sub,
 	}
 }
 
-static int load_module(void)
-{
-	/* You can create a message router to route messages by type */
-	router = stasis_message_router_create(
-		ast_channel_topic_all_cached());
-	if (!router) {
-		return AST_MODULE_LOAD_FAILURE;
-	}
-	stasis_message_router_add(router, stasis_cache_update_type(),
-		updates, NULL);
-	stasis_message_router_set_default(router, default_route, NULL);
-
-	/* Or a subscription to receive all of the messages from a topic */
-	sub = stasis_subscribe(ast_channel_topic_all(), statsmaker, NULL);
-	if (!sub) {
-		return AST_MODULE_LOAD_FAILURE;
-	}
-	return AST_MODULE_LOAD_SUCCESS;
-}
-
 static int unload_module(void)
 {
 	stasis_unsubscribe_and_join(sub);
@@ -179,9 +157,30 @@ static int unload_module(void)
 	return 0;
 }
 
+static int load_module(void)
+{
+	/* You can create a message router to route messages by type */
+	router = stasis_message_router_create(
+		ast_channel_topic_all_cached());
+	if (!router) {
+		return AST_MODULE_LOAD_DECLINE;
+	}
+	stasis_message_router_add(router, stasis_cache_update_type(),
+		updates, NULL);
+	stasis_message_router_set_default(router, default_route, NULL);
+
+	/* Or a subscription to receive all of the messages from a topic */
+	sub = stasis_subscribe(ast_channel_topic_all(), statsmaker, NULL);
+	if (!sub) {
+		unload_module();
+		return AST_MODULE_LOAD_DECLINE;
+	}
+	return AST_MODULE_LOAD_SUCCESS;
+}
+
 AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Example of how to use Stasis",
 	.support_level = AST_MODULE_SUPPORT_EXTENDED,
 	.load = load_module,
 	.unload = unload_module,
-	.nonoptreq = "res_statsd"
+	.requires = "res_statsd"
 );

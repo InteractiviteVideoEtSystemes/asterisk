@@ -19,7 +19,6 @@
 /*** MODULEINFO
 	 <depend>pjproject</depend>
 	 <depend>res_pjsip</depend>
-	 <depend>res_pjsip_session</depend>
 	 <support_level>core</support_level>
 ***/
 
@@ -72,13 +71,13 @@ static int handle_incoming_request(struct ast_sip_session *session, struct pjsip
 
 	if (!session->channel) {
 		send_response(session, 481, rdata);
-		return 0;
+		return 1;
 	}
 
 	/* Is this endpoint configured with One Touch Recording? */
 	if (!session->endpoint->info.recording.enabled || ast_strlen_zero(feature)) {
 		send_response(session, 403, rdata);
-		return 0;
+		return 1;
 	}
 
 	ast_channel_lock(session->channel);
@@ -87,7 +86,7 @@ static int handle_incoming_request(struct ast_sip_session *session, struct pjsip
 
 	if (feature_res || ast_strlen_zero(feature_code)) {
 		send_response(session, 403, rdata);
-		return 0;
+		return 1;
 	}
 
 	for (digit = feature_code; *digit; ++digit) {
@@ -97,22 +96,18 @@ static int handle_incoming_request(struct ast_sip_session *session, struct pjsip
 
 	send_response(session, 200, rdata);
 
-	return 0;
+	return 1;
 }
 
 static struct ast_sip_session_supplement info_supplement = {
 	.method = "INFO",
+	.priority = AST_SIP_SUPPLEMENT_PRIORITY_FIRST,
 	.incoming_request = handle_incoming_request,
 };
 
 static int load_module(void)
 {
-	CHECK_PJSIP_SESSION_MODULE_LOADED();
-
-	if (ast_sip_session_register_supplement(&info_supplement)) {
-		ast_log(LOG_ERROR, "Unable to register One Touch Recording supplement\n");
-		return AST_MODULE_LOAD_FAILURE;
-	}
+	ast_sip_session_register_supplement(&info_supplement);
 
 	return AST_MODULE_LOAD_SUCCESS;
 }
@@ -128,4 +123,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP INFO One Touch 
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip,res_pjsip_session",
 );

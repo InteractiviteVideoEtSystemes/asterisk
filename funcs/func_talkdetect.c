@@ -31,8 +31,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/module.h"
 #include "asterisk/channel.h"
 #include "asterisk/pbx.h"
@@ -399,7 +397,7 @@ static int load_module(void)
 
 	res |= ast_custom_function_register(&talk_detect_function);
 
-	return res ? AST_MODULE_LOAD_FAILURE : AST_MODULE_LOAD_SUCCESS;
+	return res ? AST_MODULE_LOAD_DECLINE : AST_MODULE_LOAD_SUCCESS;
 }
 
 AST_MODULE_INFO_STANDARD(ASTERISK_GPL_KEY, "Talk detection dialplan function");

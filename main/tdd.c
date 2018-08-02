@@ -33,8 +33,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <time.h>
 #include <math.h>
 #include <ctype.h>
@@ -363,4 +361,3 @@ int tdd_generate(struct tdd_state *tdd, unsigned char *buf, const char *str)
 	}
 	return bytes;
 }
-

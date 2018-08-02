@@ -54,14 +54,12 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #if defined(__NetBSD__) || defined(__FreeBSD__)
 #include <pthread.h>
-#include <signal.h>
 #else
-#include <sys/signal.h>
+#include <sys/sysmacros.h>
 #endif
+#include <signal.h>
 #include <sys/stat.h>
 #include <math.h>
 
@@ -123,7 +121,6 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/devicestate.h"
 #include "asterisk/paths.h"
 #include "asterisk/ccss.h"
-#include "asterisk/data.h"
 #include "asterisk/features_config.h"
 #include "asterisk/bridge.h"
 #include "asterisk/stasis_channels.h"
@@ -180,6 +177,60 @@ ASTERISK_REGISTER_FILE()
 			<para>This application will Accept the R2 call either with charge or no charge.</para>
 		</description>
 	</application>
+	<info name="CHANNEL" language="en_US" tech="DAHDI">
+		<enumlist>
+			<enum name="dahdi_channel">
+				<para>R/O DAHDI channel related to this channel.</para>
+			</enum>
+			<enum name="dahdi_span">
+				<para>R/O DAHDI span related to this channel.</para>
+			</enum>
+			<enum name="dahdi_type">
+				<para>R/O DAHDI channel type, one of:</para>
+				<enumlist>
+					<enum name="analog" />
+					<enum name="mfc/r2" />
+					<enum name="pri" />
+					<enum name="pseudo" />
+					<enum name="ss7" />
+				</enumlist>
+			</enum>
+			<enum name="keypad_digits">
+				<para>R/O PRI Keypad digits that came in with the SETUP message.</para>
+			</enum>
+			<enum name="reversecharge">
+				<para>R/O PRI Reverse Charging Indication, one of:</para>
+				<enumlist>
+					<enum name="-1"> <para>None</para></enum>
+					<enum name=" 1"> <para>Reverse Charging Requested</para></enum>
+				</enumlist>
+			</enum>
+			<enum name="no_media_path">
+				<para>R/O PRI Nonzero if the channel has no B channel.
+				The channel is either on hold or a call waiting call.</para>
+			</enum>
+			<enum name="buffers">
+				<para>W/O Change the channel's buffer policy (for the current call only)</para>
+				<para>This option takes two arguments:</para>
+				<para>	Number of buffers,</para>
+				<para>	Buffer policy being one of:</para>
+				<para>	    <literal>full</literal></para>
+				<para>	    <literal>immediate</literal></para>
+				<para>	    <literal>half</literal></para>
+			</enum>
+			<enum name="echocan_mode">
+				<para>W/O Change the configuration of the active echo
+				canceller on the channel (if any), for the current call
+				only.</para>
+				<para>Possible values are:</para>
+				<para>	<literal>on</literal>	Normal mode (the echo canceller is actually reinitalized)</para>
+				<para>	<literal>off</literal>	Disabled</para>
+				<para>	<literal>fax</literal>	FAX/data mode (NLP disabled if possible, otherwise
+					completely disabled)</para>
+				<para>	<literal>voice</literal>	Voice mode (returns from FAX mode, reverting the changes that were made)</para>
+			</enum>
+		</enumlist>
+	</info>
 	<manager name="DAHDITransfer" language="en_US">
 		<synopsis>
 			Transfer DAHDI Channel.
@@ -564,15 +615,6 @@ static int pridebugfd = -1;
 static char pridebugfilename[1024] = "";
 #endif
 
-/*! \brief Wait up to 16 seconds for first digit (FXO logic) */
-static int firstdigittimeout = 16000;
-
-/*! \brief How long to wait for following digits (FXO logic) */
-static int gendigittimeout = 8000;
-
-/*! \brief How long to wait for an extra digit, if there is an ambiguous match */
-static int matchdigittimeout = 3000;
-
 /*! \brief Protect the interface list (of dahdi_pvt's) */
 AST_MUTEX_DEFINE_STATIC(iflock);
 
@@ -740,78 +782,6 @@ const char * const subnames[] = {
 	"Callwait",
 	"Threeway"
 };
-
-#define DATA_EXPORT_DAHDI_PVT(MEMBER)					\
-	MEMBER(dahdi_pvt, cid_rxgain, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, rxgain, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, txgain, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, txdrc, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, rxdrc, AST_DATA_DOUBLE)			\
-	MEMBER(dahdi_pvt, adsi, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, answeronpolarityswitch, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, busydetect, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, callreturn, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, callwaiting, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, callwaitingcallerid, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, cancallforward, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, canpark, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, confirmanswer, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, destroy, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, didtdd, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, dialednone, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, dialing, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, digital, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, dnd, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, echobreak, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, echocanbridged, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, echocanon, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, faxhandled, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, usefaxbuffers, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, bufferoverrideinuse, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, firstradio, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, hanguponpolarityswitch, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, hardwaredtmf, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, hidecallerid, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, hidecalleridname, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, ignoredtmf, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, immediate, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, inalarm, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mate, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, outgoing, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, permcallwaiting, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, priindication_oob, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, priexclusive, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, pulse, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, pulsedial, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, restartpending, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, restrictcid, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, threewaycalling, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, transfer, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, use_callerid, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, use_callingpres, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, usedistinctiveringdetection, AST_DATA_BOOLEAN)	\
-	MEMBER(dahdi_pvt, dahditrcallerid, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, transfertobusy, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitor_neon, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitor_fsk, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitor_rpas, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwimonitoractive, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, mwisendactive, AST_DATA_BOOLEAN)			\
-	MEMBER(dahdi_pvt, inservice, AST_DATA_BOOLEAN)				\
-	MEMBER(dahdi_pvt, locallyblocked, AST_DATA_UNSIGNED_INTEGER)		\
-	MEMBER(dahdi_pvt, remotelyblocked, AST_DATA_UNSIGNED_INTEGER)		\
-	MEMBER(dahdi_pvt, manages_span_alarms, AST_DATA_BOOLEAN)		\
-	MEMBER(dahdi_pvt, use_smdi, AST_DATA_BOOLEAN)				\
-	MEMBER(dahdi_pvt, context, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, defcontext, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, description, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, exten, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, language, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, mohinterpret, AST_DATA_STRING)			\
-	MEMBER(dahdi_pvt, mohsuggest, AST_DATA_STRING)				\
-	MEMBER(dahdi_pvt, parkinglot, AST_DATA_STRING)
-
-AST_DATA_STRUCTURE(dahdi_pvt, DATA_EXPORT_DAHDI_PVT);
 
 static struct dahdi_pvt *iflist = NULL;	/*!< Main interface list start */
 static struct dahdi_pvt *ifend = NULL;	/*!< Main interface list end */
@@ -998,6 +968,9 @@ static struct dahdi_chan_conf dahdi_chan_conf_default(void)
 			.buf_no = numbufs,
 			.usefaxbuffers = 0,
 			.cc_params = ast_cc_config_params_init(),
+			.firstdigit_timeout = ANALOG_FIRST_DIGIT_TIMEOUT,
+			.interdigit_timeout = ANALOG_INTER_DIGIT_TIMEOUT,
+			.matchdigit_timeout = ANALOG_MATCH_DIGIT_TIMEOUT,
 		},
 		.timing = {
 			.prewinktime = -1,
@@ -1695,26 +1668,28 @@ static void my_handle_dtmf(void *pvt, struct ast_channel *ast, enum analog_sub a
 				if (strcmp(ast_channel_exten(ast), "fax")) {
 					const char *target_context = S_OR(ast_channel_macrocontext(ast), ast_channel_context(ast));
 
-					/* We need to unlock 'ast' here because ast_exists_extension has the
+					/*
+					 * We need to unlock 'ast' here because ast_exists_extension has the
 					 * potential to start autoservice on the channel. Such action is prone
-					 * to deadlock.
+					 * to deadlock if the channel is locked.
+					 *
+					 * ast_async_goto() has its own restriction on not holding the
+					 * channel lock.
 					 */
 					ast_mutex_unlock(&p->lock);
 					ast_channel_unlock(ast);
 					if (ast_exists_extension(ast, target_context, "fax", 1,
 						S_COR(ast_channel_caller(ast)->id.number.valid, ast_channel_caller(ast)->id.number.str, NULL))) {
-						ast_channel_lock(ast);
-						ast_mutex_lock(&p->lock);
 						ast_verb(3, "Redirecting %s to fax extension\n", ast_channel_name(ast));
 						/* Save the DID/DNIS when we transfer the fax call to a "fax" extension */
 						pbx_builtin_setvar_helper(ast, "FAXEXTEN", ast_channel_exten(ast));
 						if (ast_async_goto(ast, target_context, "fax", 1))
 							ast_log(LOG_WARNING, "Failed to async goto '%s' into fax of '%s'\n", ast_channel_name(ast), target_context);
 					} else {
-						ast_channel_lock(ast);
-						ast_mutex_lock(&p->lock);
 						ast_log(LOG_NOTICE, "Fax detected, but no fax extension\n");
 					}
+					ast_channel_lock(ast);
+					ast_mutex_lock(&p->lock);
 				} else {
 					ast_debug(1, "Already in a fax extension, not redirecting\n");
 				}
@@ -1806,7 +1781,7 @@ static void publish_dahdichannel(struct ast_channel *chan, int span, const char 
  */
 static void dahdi_ami_channel_event(struct dahdi_pvt *p, struct ast_channel *chan)
 {
-	char ch_name[20];
+	char ch_name[23];
 
 	if (p->channel < CHAN_PSEUDO) {
 		/* No B channel */
@@ -2347,7 +2322,6 @@ static void my_pri_ss7_open_media(void *p)
 
 	if (pvt->dsp_features && pvt->dsp) {
 		ast_dsp_set_features(pvt->dsp, pvt->dsp_features);
-		pvt->dsp_features = 0;
 	}
 }
 #endif	/* defined(HAVE_PRI) || defined(HAVE_SS7) */
@@ -3346,6 +3320,19 @@ static int my_have_progressdetect(void *pvt)
 	}
 }
 
+#define gen_pvt_field_callback(type, field) \
+	static type my_get_##field(void *pvt) \
+	{ \
+		struct dahdi_pvt *p = pvt; \
+		return p->field; \
+	}
+
+gen_pvt_field_callback(int, firstdigit_timeout);
+gen_pvt_field_callback(int, interdigit_timeout);
+gen_pvt_field_callback(int, matchdigit_timeout);
+
+#undef gen_pvt_field_callback
+
 struct analog_callback analog_callbacks =
 {
 	.play_tone = my_play_tone,
@@ -3414,6 +3401,9 @@ struct analog_callback analog_callbacks =
 	.answer_polarityswitch = my_answer_polarityswitch,
 	.hangup_polarityswitch = my_hangup_polarityswitch,
 	.have_progressdetect = my_have_progressdetect,
+	.get_firstdigit_timeout = my_get_firstdigit_timeout,
+	.get_matchdigit_timeout = my_get_matchdigit_timeout,
+	.get_interdigit_timeout = my_get_interdigit_timeout,
 };
 
 /*! Round robin search locations. */
@@ -4704,7 +4694,7 @@ static int drc_sample(int sample, float drc)
 	neg = (sample < 0 ? -1 : 1);
 	steep = drc*sample;
 	shallow = neg*(max-max/drc)+(float)sample/drc;
-	if (abs(steep) < abs(shallow)) {
+	if (fabsf(steep) < fabsf(shallow)) {
 		sample = steep;
 	}
 	else {
@@ -7202,26 +7192,28 @@ static void dahdi_handle_dtmf(struct ast_channel *ast, int idx, struct ast_frame
 				if (strcmp(ast_channel_exten(ast), "fax")) {
 					const char *target_context = S_OR(ast_channel_macrocontext(ast), ast_channel_context(ast));
 
-					/* We need to unlock 'ast' here because ast_exists_extension has the
+					/*
+					 * We need to unlock 'ast' here because ast_exists_extension has the
 					 * potential to start autoservice on the channel. Such action is prone
-					 * to deadlock.
+					 * to deadlock if the channel is locked.
+					 *
+					 * ast_async_goto() has its own restriction on not holding the
+					 * channel lock.
 					 */
 					ast_mutex_unlock(&p->lock);
 					ast_channel_unlock(ast);
 					if (ast_exists_extension(ast, target_context, "fax", 1,
 						S_COR(ast_channel_caller(ast)->id.number.valid, ast_channel_caller(ast)->id.number.str, NULL))) {
-						ast_channel_lock(ast);
-						ast_mutex_lock(&p->lock);
 						ast_verb(3, "Redirecting %s to fax extension\n", ast_channel_name(ast));
 						/* Save the DID/DNIS when we transfer the fax call to a "fax" extension */
 						pbx_builtin_setvar_helper(ast, "FAXEXTEN", ast_channel_exten(ast));
 						if (ast_async_goto(ast, target_context, "fax", 1))
 							ast_log(LOG_WARNING, "Failed to async goto '%s' into fax of '%s'\n", ast_channel_name(ast), target_context);
 					} else {
-						ast_channel_lock(ast);
-						ast_mutex_lock(&p->lock);
 						ast_log(LOG_NOTICE, "Fax detected, but no fax extension\n");
 					}
+					ast_channel_lock(ast);
+					ast_mutex_lock(&p->lock);
 				} else {
 					ast_debug(1, "Already in a fax extension, not redirecting\n");
 				}
@@ -8018,7 +8010,7 @@ static struct ast_frame *dahdi_handle_event(struct ast_channel *ast)
 						p->subs[otherindex].needunhold = 1;
 						p->owner = p->subs[SUB_REAL].owner;
 					} else {
-						ast_verb(3, "Dumping incomplete call on on %s\n", ast_channel_name(p->subs[SUB_THREEWAY].owner));
+						ast_verb(3, "Dumping incomplete call on %s\n", ast_channel_name(p->subs[SUB_THREEWAY].owner));
 						swap_subs(p, SUB_THREEWAY, SUB_REAL);
 						ast_channel_softhangup_internal_flag_add(p->subs[SUB_THREEWAY].owner, AST_SOFTHANGUP_DEV);
 						p->owner = p->subs[SUB_REAL].owner;
@@ -8641,6 +8633,15 @@ static struct ast_frame *dahdi_read(struct ast_channel *ast)
 	if (p->dsp && (!p->ignoredtmf || p->callwaitcas || p->busydetect || p->callprogress || p->waitingfordt.tv_sec || p->dialtone_detect) && !idx) {
 		/* Perform busy detection etc on the dahdi line */
 		int mute;
+
+		if ((p->dsp_features & DSP_FEATURE_FAX_DETECT)
+			&& p->faxdetect_timeout
+			&& p->faxdetect_timeout <= ast_channel_get_up_time(ast)) {
+			p->dsp_features &= ~DSP_FEATURE_FAX_DETECT;
+			ast_dsp_set_features(p->dsp, p->dsp_features);
+			ast_debug(1, "Channel driver fax CNG detection timeout on %s\n",
+				ast_channel_name(ast));
+		}
 
 		f = ast_dsp_process(ast, p->dsp, &p->subs[idx].f);
 
@@ -9564,9 +9565,9 @@ static void *analog_ss_thread(void *data)
 				dtmfbuf[len] = '\0';
 				while ((len < AST_MAX_EXTENSION-1) && ast_matchmore_extension(chan, ast_channel_context(chan), dtmfbuf, 1, p->cid_num)) {
 					if (ast_exists_extension(chan, ast_channel_context(chan), dtmfbuf, 1, p->cid_num)) {
-						timeout = matchdigittimeout;
+						timeout = p->matchdigit_timeout;
 					} else {
-						timeout = gendigittimeout;
+						timeout = p->interdigit_timeout;
 					}
 					res = ast_waitfordigit(chan, timeout);
 					if (res < 0) {
@@ -9734,7 +9735,7 @@ static void *analog_ss_thread(void *data)
 	case SIG_FXOGS:
 	case SIG_FXOKS:
 		/* Read the first digit */
-		timeout = firstdigittimeout;
+		timeout = p->firstdigit_timeout;
 		/* If starting a threeway call, never timeout on the first digit so someone
 		   can use flash-hook as a "hold" feature */
 		if (p->subs[SUB_THREEWAY].owner)
@@ -9809,8 +9810,8 @@ static void *analog_ss_thread(void *data)
 					}
 				} else {
 					/* It's a match, but they just typed a digit, and there is an ambiguous match,
-					   so just set the timeout to matchdigittimeout and wait some more */
-					timeout = matchdigittimeout;
+					   so just set the timeout to matchdigit_timeout and wait some more */
+					timeout = p->matchdigit_timeout;
 				}
 			} else if (res == 0) {
 				ast_debug(1, "not enough digits (and no ambiguous match)...\n");
@@ -9830,7 +9831,7 @@ static void *analog_ss_thread(void *data)
 				len = 0;
 				ioctl(p->subs[idx].dfd,DAHDI_CONFDIAG,&len);
 				memset(exten, 0, sizeof(exten));
-				timeout = firstdigittimeout;
+				timeout = p->firstdigit_timeout;
 
 			} else if (!strcmp(exten, pickupexten)) {
 				/* Scan all channels and see if there are any
@@ -9875,7 +9876,7 @@ static void *analog_ss_thread(void *data)
 				}
 				len = 0;
 				memset(exten, 0, sizeof(exten));
-				timeout = firstdigittimeout;
+				timeout = p->firstdigit_timeout;
 			} else if (p->callreturn && !strcmp(exten, "*69")) {
 				res = tone_zone_play_tone(p->subs[idx].dfd, DAHDI_TONE_DIALRECALL);
 				break;
@@ -9947,7 +9948,7 @@ static void *analog_ss_thread(void *data)
 				}
 				len = 0;
 				memset(exten, 0, sizeof(exten));
-				timeout = firstdigittimeout;
+				timeout = p->firstdigit_timeout;
 			} else if (!strcmp(exten, "*0")) {
 				struct ast_channel *nbridge =
 					p->subs[SUB_THREEWAY].owner;
@@ -9995,7 +9996,7 @@ static void *analog_ss_thread(void *data)
 				break;
 			}
 			if (!timeout)
-				timeout = gendigittimeout;
+				timeout = p->interdigit_timeout;
 			if (len && !ast_ignore_pattern(ast_channel_context(chan), exten))
 				tone_zone_play_tone(p->subs[idx].dfd, -1);
 		}
@@ -10044,7 +10045,9 @@ static void *analog_ss_thread(void *data)
 				 * emulation.  The DTMF digits can come so fast that emulation
 				 * can drop some of them.
 				 */
+				ast_channel_lock(chan);
 				ast_set_flag(ast_channel_flags(chan), AST_FLAG_END_DTMF_ONLY);
+				ast_channel_unlock(chan);
 				off_ms = 4000;/* This is a typical OFF time between rings. */
 				for (;;) {
 					struct ast_frame *f;
@@ -10077,7 +10080,9 @@ static void *analog_ss_thread(void *data)
 						ast_channel_state(chan) == AST_STATE_RINGING)
 						break; /* Got ring */
 				}
+				ast_channel_lock(chan);
 				ast_clear_flag(ast_channel_flags(chan), AST_FLAG_END_DTMF_ONLY);
+				ast_channel_unlock(chan);
 				dtmfbuf[k] = '\0';
 				dahdi_setlinear(p->subs[idx].dfd, p->subs[idx].linear);
 				/* Got cid and ring. */
@@ -11915,38 +11920,6 @@ static int sigtype_to_signalling(int sigtype)
 
 /*!
  * \internal
- * \brief Get file name and channel number from (subdir,number)
- *
- * \param subdir name of the subdirectory under /dev/dahdi/
- * \param channel name of device file under /dev/dahdi/<subdir>/
- * \param path buffer to put file name in
- * \param pathlen maximal length of path
- *
- * \retval minor number of dahdi channel.
- * \retval -errno on error.
- */
-static int device2chan(const char *subdir, int channel, char *path, int pathlen)
-{
-	struct stat	stbuf;
-	int		num;
-
-	snprintf(path, pathlen, "/dev/dahdi/%s/%d", subdir, channel);
-	if (stat(path, &stbuf) < 0) {
-		ast_log(LOG_ERROR, "stat(%s) failed: %s\n", path, strerror(errno));
-		return -errno;
-	}
-	if (!S_ISCHR(stbuf.st_mode)) {
-		ast_log(LOG_ERROR, "%s: Not a character device file\n", path);
-		return -EINVAL;
-	}
-	num = minor(stbuf.st_rdev);
-	ast_debug(1, "%s -> %d\n", path, num);
-	return num;
-
-}
-
-/*!
- * \internal
  * \brief Initialize/create a channel interface.
  *
  * \param channel Channel interface number to initialize/create.
@@ -12541,6 +12514,10 @@ static struct dahdi_pvt *mkintf(int channel, const struct dahdi_chan_conf *conf,
 		tmp->callprogress = conf->chan.callprogress;
 		tmp->waitfordialtone = conf->chan.waitfordialtone;
 		tmp->dialtone_detect = conf->chan.dialtone_detect;
+		tmp->faxdetect_timeout = conf->chan.faxdetect_timeout;
+		tmp->firstdigit_timeout = conf->chan.firstdigit_timeout;
+		tmp->interdigit_timeout = conf->chan.interdigit_timeout;
+		tmp->matchdigit_timeout = conf->chan.matchdigit_timeout;
 		tmp->cancallforward = conf->chan.cancallforward;
 		tmp->dtmfrelax = conf->chan.dtmfrelax;
 		tmp->callwaiting = tmp->permcallwaiting;
@@ -14252,7 +14229,7 @@ static char *handle_pri_service_generic(struct ast_cli_entry *e, int cmd, struct
 	int trunkgroup;
 	int x, y, fd = a->fd;
 	int interfaceid = 0;
-	char db_chan_name[20], db_answer[5];
+	char db_chan_name[20], db_answer[15];
 	struct dahdi_pvt *tmp;
 	struct dahdi_pri *pri;
 
@@ -15098,14 +15075,14 @@ retry:
 		ast_mutex_lock(&p->lock);
 		if (p->owner && !p->restartpending) {
 			if (ast_channel_trylock(p->owner)) {
-				if (option_debug > 2)
+				if (DEBUG_ATLEAST(3))
 					ast_verbose("Avoiding deadlock\n");
 				/* Avoid deadlock since you're not supposed to lock iflock or pvt before a channel */
 				ast_mutex_unlock(&p->lock);
 				ast_mutex_unlock(&iflock);
 				goto retry;
 			}
-			if (option_debug > 2)
+			if (DEBUG_ATLEAST(3))
 				ast_verbose("Softhanging up on %s\n", ast_channel_name(p->owner));
 			ast_softhangup_nolock(p->owner, AST_SOFTHANGUP_EXPLICIT);
 			p->restartpending = 1;
@@ -17282,7 +17259,6 @@ static int __unload_module(void)
 	ast_manager_unregister("PRIDebugFileSet");
 	ast_manager_unregister("PRIDebugFileUnset");
 #endif	/* defined(HAVE_PRI) */
-	ast_data_unregister(NULL);
 	ast_channel_unregister(&dahdi_tech);
 
 	/* Hangup all interfaces if they have an owner */
@@ -17361,33 +17337,9 @@ static int unload_module(void)
 	return __unload_module();
 }
 
-static void string_replace(char *str, int char1, int char2)
-{
-	for (; *str; str++) {
-		if (*str == char1) {
-			*str = char2;
-		}
-	}
-}
-
-static char *parse_spanchan(char *chanstr, char **subdir)
-{
-	char *p;
-
-	if ((p = strrchr(chanstr, '!')) == NULL) {
-		*subdir = NULL;
-		return chanstr;
-	}
-	*p++ = '\0';
-	string_replace(chanstr, '!', '/');
-	*subdir = chanstr;
-	return p;
-}
-
 static int build_channels(struct dahdi_chan_conf *conf, const char *value, int reload, int lineno)
 {
 	char *c, *chan;
-	char *subdir;
 	int x, start, finish;
 	struct dahdi_pvt *tmp;
 
@@ -17397,7 +17349,6 @@ static int build_channels(struct dahdi_chan_conf *conf, const char *value, int r
 	}
 
 	c = ast_strdupa(value);
-	c = parse_spanchan(c, &subdir);
 
 	while ((chan = strsep(&c, ","))) {
 		if (sscanf(chan, "%30d-%30d", &start, &finish) == 2) {
@@ -17419,39 +17370,22 @@ static int build_channels(struct dahdi_chan_conf *conf, const char *value, int r
 		}
 
 		for (x = start; x <= finish; x++) {
-			char fn[PATH_MAX];
-			int real_channel = x;
-
-			if (!ast_strlen_zero(subdir)) {
-				real_channel = device2chan(subdir, x, fn, sizeof(fn));
-				if (real_channel < 0) {
-					if (conf->ignore_failed_channels) {
-						ast_log(LOG_WARNING, "Failed configuring %s!%d, (got %d). But moving on to others.\n",
-								subdir, x, real_channel);
-						continue;
-					} else {
-						ast_log(LOG_ERROR, "Failed configuring %s!%d, (got %d).\n",
-								subdir, x, real_channel);
-						return -1;
-					}
-				}
-			}
 			if (conf->wanted_channels_start &&
-				(real_channel < conf->wanted_channels_start ||
-				 real_channel > conf->wanted_channels_end)
+				(x < conf->wanted_channels_start ||
+				 x > conf->wanted_channels_end)
 			   ) {
 				continue;
 			}
-			tmp = mkintf(real_channel, conf, reload);
+			tmp = mkintf(x, conf, reload);
 
 			if (tmp) {
-				ast_verb(3, "%s channel %d, %s signalling\n", reload ? "Reconfigured" : "Registered", real_channel, sig2str(tmp->sig));
+				ast_verb(3, "%s channel %d, %s signalling\n", reload ? "Reconfigured" : "Registered", x, sig2str(tmp->sig));
 			} else {
 				ast_log(LOG_ERROR, "Unable to %s channel '%s'\n",
 						(reload == 1) ? "reconfigure" : "register", value);
 				return -1;
 			}
-			if (real_channel == CHAN_PSEUDO) {
+			if (x == CHAN_PSEUDO) {
 				has_pseudo = 1;
 			}
 		}
@@ -17792,6 +17726,25 @@ static int process_dahdi(struct dahdi_chan_conf *confp, const char *cat, struct 
 				confp->chan.callprogress |= CALLPROGRESS_FAX_OUTGOING;
 			} else if (!strcasecmp(v->value, "both") || ast_true(v->value))
 				confp->chan.callprogress |= CALLPROGRESS_FAX_INCOMING | CALLPROGRESS_FAX_OUTGOING;
+		} else if (!strcasecmp(v->name, "faxdetect_timeout")) {
+			if (sscanf(v->value, "%30u", &confp->chan.faxdetect_timeout) != 1) {
+				confp->chan.faxdetect_timeout = 0;
+			}
+		} else if (!strcasecmp(v->name, "firstdigit_timeout")) {
+			if (sscanf(v->value, "%30d", &confp->chan.firstdigit_timeout) != 1
+				|| confp->chan.firstdigit_timeout <= 0) {
+				confp->chan.firstdigit_timeout = ANALOG_FIRST_DIGIT_TIMEOUT;
+			}
+		} else if (!strcasecmp(v->name, "interdigit_timeout")) {
+			if (sscanf(v->value, "%30d", &confp->chan.interdigit_timeout) != 1
+				|| confp->chan.interdigit_timeout <= 0) {
+				confp->chan.interdigit_timeout = ANALOG_INTER_DIGIT_TIMEOUT;
+			}
+		} else if (!strcasecmp(v->name, "matchdigit_timeout")) {
+			if (sscanf(v->value, "%30d", &confp->chan.matchdigit_timeout) != 1
+				|| confp->chan.matchdigit_timeout <= 0) {
+				confp->chan.matchdigit_timeout = ANALOG_MATCH_DIGIT_TIMEOUT;
+			}
 		} else if (!strcasecmp(v->name, "echocancel")) {
 			process_echocancel(confp, v->value, v->lineno);
 		} else if (!strcasecmp(v->name, "echotraining")) {
@@ -18833,8 +18786,8 @@ static int process_dahdi(struct dahdi_chan_conf *confp, const char *cat, struct 
 				}
 
 				/* This check is only needed to satisfy the compiler that element_count can't cause an out of bounds */
-				if (element_count >= ARRAY_LEN(c)) {
-					element_count = ARRAY_LEN(c) - 1;
+				if (element_count > ARRAY_LEN(c)) {
+					element_count = ARRAY_LEN(c);
 				}
 
 				/* Ring cadences cannot be negative */
@@ -19363,163 +19316,6 @@ static int setup_dahdi(int reload)
 }
 
 /*!
- * \internal
- * \brief Callback used to generate the dahdi status tree.
- * \param[in] search The search pattern tree.
- * \retval NULL on error.
- * \retval non-NULL The generated tree.
- */
-static int dahdi_status_data_provider_get(const struct ast_data_search *search,
-		struct ast_data *data_root)
-{
-	int ctl, res, span;
-	struct ast_data *data_span, *data_alarms;
-	struct dahdi_spaninfo s;
-
-	ctl = open("/dev/dahdi/ctl", O_RDWR);
-	if (ctl < 0) {
-		ast_log(LOG_ERROR, "No DAHDI found. Unable to open /dev/dahdi/ctl: %s\n", strerror(errno));
-		return -1;
-	}
-	for (span = 1; span < DAHDI_MAX_SPANS; ++span) {
-		s.spanno = span;
-		res = ioctl(ctl, DAHDI_SPANSTAT, &s);
-		if (res) {
-			continue;
-		}
-
-		data_span = ast_data_add_node(data_root, "span");
-		if (!data_span) {
-			continue;
-		}
-		ast_data_add_str(data_span, "description", s.desc);
-
-		/* insert the alarms status */
-		data_alarms = ast_data_add_node(data_span, "alarms");
-		if (!data_alarms) {
-			continue;
-		}
-
-		ast_data_add_bool(data_alarms, "BLUE", s.alarms & DAHDI_ALARM_BLUE);
-		ast_data_add_bool(data_alarms, "YELLOW", s.alarms & DAHDI_ALARM_YELLOW);
-		ast_data_add_bool(data_alarms, "RED", s.alarms & DAHDI_ALARM_RED);
-		ast_data_add_bool(data_alarms, "LOOPBACK", s.alarms & DAHDI_ALARM_LOOPBACK);
-		ast_data_add_bool(data_alarms, "RECOVER", s.alarms & DAHDI_ALARM_RECOVER);
-		ast_data_add_bool(data_alarms, "NOTOPEN", s.alarms & DAHDI_ALARM_NOTOPEN);
-
-		ast_data_add_int(data_span, "irqmisses", s.irqmisses);
-		ast_data_add_int(data_span, "bpviol", s.bpvcount);
-		ast_data_add_int(data_span, "crc4", s.crc4count);
-		ast_data_add_str(data_span, "framing",	s.lineconfig & DAHDI_CONFIG_D4 ? "D4" :
-							s.lineconfig & DAHDI_CONFIG_ESF ? "ESF" :
-							s.lineconfig & DAHDI_CONFIG_CCS ? "CCS" :
-							"CAS");
-		ast_data_add_str(data_span, "coding",	s.lineconfig & DAHDI_CONFIG_B8ZS ? "B8ZS" :
-							s.lineconfig & DAHDI_CONFIG_HDB3 ? "HDB3" :
-							s.lineconfig & DAHDI_CONFIG_AMI ? "AMI" :
-							"Unknown");
-		ast_data_add_str(data_span, "options",	s.lineconfig & DAHDI_CONFIG_CRC4 ?
-							s.lineconfig & DAHDI_CONFIG_NOTOPEN ? "CRC4/YEL" : "CRC4" :
-							s.lineconfig & DAHDI_CONFIG_NOTOPEN ? "YEL" : "");
-		ast_data_add_str(data_span, "lbo", lbostr[s.lbo]);
-
-		/* if this span doesn't match remove it. */
-		if (!ast_data_search_match(search, data_span)) {
-			ast_data_remove_node(data_root, data_span);
-		}
-	}
-	close(ctl);
-
-	return 0;
-}
-
-/*!
- * \internal
- * \brief Callback used to generate the dahdi channels tree.
- * \param[in] search The search pattern tree.
- * \retval NULL on error.
- * \retval non-NULL The generated tree.
- */
-static int dahdi_channels_data_provider_get(const struct ast_data_search *search,
-		struct ast_data *data_root)
-{
-	struct dahdi_pvt *tmp;
-	struct ast_data *data_channel;
-
-	ast_mutex_lock(&iflock);
-	for (tmp = iflist; tmp; tmp = tmp->next) {
-		data_channel = ast_data_add_node(data_root, "channel");
-		if (!data_channel) {
-			continue;
-		}
-
-		ast_data_add_structure(dahdi_pvt, data_channel, tmp);
-
-		/* if this channel doesn't match remove it. */
-		if (!ast_data_search_match(search, data_channel)) {
-			ast_data_remove_node(data_root, data_channel);
-		}
-	}
-	ast_mutex_unlock(&iflock);
-
-	return 0;
-}
-
-/*!
- * \internal
- * \brief Callback used to generate the dahdi channels tree.
- * \param[in] search The search pattern tree.
- * \retval NULL on error.
- * \retval non-NULL The generated tree.
- */
-static int dahdi_version_data_provider_get(const struct ast_data_search *search,
-		struct ast_data *data_root)
-{
-	int pseudo_fd = -1;
-	struct dahdi_versioninfo vi = {
-		.version = "Unknown",
-		.echo_canceller = "Unknown"
-	};
-
-	if ((pseudo_fd = open("/dev/dahdi/ctl", O_RDONLY)) < 0) {
-		ast_log(LOG_ERROR, "Failed to open control file to get version.\n");
-		return -1;
-	}
-
-	if (ioctl(pseudo_fd, DAHDI_GETVERSION, &vi)) {
-		ast_log(LOG_ERROR, "Failed to get DAHDI version: %s\n", strerror(errno));
-	}
-
-	close(pseudo_fd);
-
-	ast_data_add_str(data_root, "value", vi.version);
-	ast_data_add_str(data_root, "echocanceller", vi.echo_canceller);
-
-	return 0;
-}
-
-static const struct ast_data_handler dahdi_status_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = dahdi_status_data_provider_get
-};
-
-static const struct ast_data_handler dahdi_channels_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = dahdi_channels_data_provider_get
-};
-
-static const struct ast_data_handler dahdi_version_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = dahdi_version_data_provider_get
-};
-
-static const struct ast_data_entry dahdi_data_providers[] = {
-	AST_DATA_ENTRY("asterisk/channel/dahdi/status", &dahdi_status_data_provider),
-	AST_DATA_ENTRY("asterisk/channel/dahdi/channels", &dahdi_channels_data_provider),
-	AST_DATA_ENTRY("asterisk/channel/dahdi/version", &dahdi_version_data_provider)
-};
-
-/*!
  * \brief Load the module
  *
  * Module loading including tests for configuration or dependencies.
@@ -19537,11 +19333,11 @@ static int load_module(void)
 #endif	/* defined(HAVE_PRI) || defined(HAVE_SS7) */
 
 	if (STASIS_MESSAGE_TYPE_INIT(dahdichannel_type)) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(dahdi_tech.capabilities = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_format_cap_append(dahdi_tech.capabilities, ast_format_slin, 0);
 	ast_format_cap_append(dahdi_tech.capabilities, ast_format_ulaw, 0);
@@ -19549,7 +19345,7 @@ static int load_module(void)
 
 	if (dahdi_native_load(&dahdi_tech)) {
 		ao2_ref(dahdi_tech.capabilities, -1);
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 #ifdef HAVE_PRI
@@ -19567,7 +19363,7 @@ static int load_module(void)
 	if (ast_cc_agent_register(&dahdi_pri_cc_agent_callbacks)
 		|| ast_cc_monitor_register(&dahdi_pri_cc_monitor_callbacks)) {
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 #endif	/* defined(HAVE_PRI_CCSS) */
 	if (sig_pri_load(
@@ -19578,7 +19374,7 @@ static int load_module(void)
 #endif	/* defined(HAVE_PRI_CCSS) */
 		)) {
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 #endif
 #if defined(HAVE_SS7)
@@ -19601,7 +19397,7 @@ static int load_module(void)
 	if (ast_channel_register(&dahdi_tech)) {
 		ast_log(LOG_ERROR, "Unable to register channel class 'DAHDI'\n");
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 #ifdef HAVE_PRI
 	ast_cli_register_multiple(dahdi_pri_cli, ARRAY_LEN(dahdi_pri_cli));
@@ -19615,8 +19411,6 @@ static int load_module(void)
 #endif
 
 	ast_cli_register_multiple(dahdi_cli, ARRAY_LEN(dahdi_cli));
-	/* register all the data providers */
-	ast_data_register_multiple(dahdi_data_providers, ARRAY_LEN(dahdi_data_providers));
 	memset(round_robin, 0, sizeof(round_robin));
 	ast_manager_register_xml("DAHDITransfer", 0, action_transfer);
 	ast_manager_register_xml("DAHDIHangup", 0, action_transferhangup);
@@ -19780,5 +19574,6 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, tdesc,
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CHANNEL_DRIVER,
-	.nonoptreq = "res_smdi",
+	.requires = "ccss",
+	.optional_modules = "res_smdi",
 );

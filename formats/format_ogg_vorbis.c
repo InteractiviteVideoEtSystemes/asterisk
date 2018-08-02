@@ -33,8 +33,7 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
+#include <ogg/ogg.h>
 #include <vorbis/codec.h>
 #include <vorbis/vorbisenc.h>
 #include <vorbis/vorbisfile.h>
@@ -64,13 +63,13 @@ struct ogg_vorbis_desc {	/* format specific parameters */
 	ogg_stream_state os;
 	ogg_page og;
 	ogg_packet op;
-	
+
 	/* structures for handling Vorbis audio data */
 	vorbis_info vi;
 	vorbis_comment vc;
 	vorbis_dsp_state vd;
 	vorbis_block vb;
-	
+
 	/*! \brief Indicates whether this filestream is set up for reading or writing. */
 	int writing;
 
@@ -160,6 +159,7 @@ static int ogg_vorbis_rewrite(struct ast_filestream *s,
 
 	if (vorbis_encode_init_vbr(&tmp->vi, 1, DEFAULT_SAMPLE_RATE, 0.4)) {
 		ast_log(LOG_ERROR, "Unable to initialize Vorbis encoder!\n");
+		vorbis_info_clear(&tmp->vi);
 		return -1;
 	}
 
@@ -182,10 +182,10 @@ static int ogg_vorbis_rewrite(struct ast_filestream *s,
 	while (!tmp->eos) {
 		if (ogg_stream_flush(&tmp->os, &tmp->og) == 0)
 			break;
-		if (!fwrite(tmp->og.header, 1, tmp->og.header_len, s->f)) {
+		if (fwrite(tmp->og.header, 1, tmp->og.header_len, s->f) != tmp->og.header_len) {
 			ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
 		}
-		if (!fwrite(tmp->og.body, 1, tmp->og.body_len, s->f)) {
+		if (fwrite(tmp->og.body, 1, tmp->og.body_len, s->f) != tmp->og.body_len) {
 			ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
 		}
 		if (ogg_page_eos(&tmp->og))
@@ -212,10 +212,10 @@ static void write_stream(struct ogg_vorbis_desc *s, FILE *f)
 				if (ogg_stream_pageout(&s->os, &s->og) == 0) {
 					break;
 				}
-				if (!fwrite(s->og.header, 1, s->og.header_len, f)) {
-				ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
+				if (fwrite(s->og.header, 1, s->og.header_len, f) != s->og.header_len) {
+					ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
 				}
-				if (!fwrite(s->og.body, 1, s->og.body_len, f)) {
+				if (fwrite(s->og.body, 1, s->og.body_len, f) != s->og.body_len) {
 					ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
 				}
 				if (ogg_page_eos(&s->og)) {
@@ -275,6 +275,13 @@ static void ogg_vorbis_close(struct ast_filestream *fs)
 		 * and write out the rest of the data */
 		vorbis_analysis_wrote(&s->vd, 0);
 		write_stream(s, fs->f);
+
+		/* Cleanup */
+		ogg_stream_clear(&s->os);
+		vorbis_block_clear(&s->vb);
+		vorbis_dsp_clear(&s->vd);
+		vorbis_comment_clear(&s->vc);
+		vorbis_info_clear(&s->vi);
 	} else {
 		/* clear OggVorbis_File handle */
 		ov_clear(&s->ov_f);
@@ -364,7 +371,7 @@ static off_t ogg_vorbis_tell(struct ast_filestream *fs)
  * \brief Seek to a specific position in an OGG/Vorbis filestream.
  * \param fs The filestream to take action on.
  * \param sample_offset New position for the filestream, measured in 8KHz samples.
- * \param whence Location to measure 
+ * \param whence Location to measure
  * \return 0 on success, -1 on failure.
  */
 static int ogg_vorbis_seek(struct ast_filestream *fs, off_t sample_offset, int whence)
@@ -425,7 +432,7 @@ static int load_module(void)
 {
 	vorbis_f.format = ast_format_slin;
 	if (ast_format_def_register(&vorbis_f))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

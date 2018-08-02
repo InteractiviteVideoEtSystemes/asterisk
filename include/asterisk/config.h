@@ -307,7 +307,7 @@ const char *ast_variable_retrieve(struct ast_config *config,
 	const char *category, const char *variable);
 
 /*!
- * \brief Gets a variable from a specific category structure
+ * \brief Gets a variable value from a specific category structure by name
  *
  * \param category category structure under which the variable lies
  * \param variable which variable you wish to get the data for
@@ -321,7 +321,7 @@ const char *ast_variable_retrieve(struct ast_config *config,
 const char *ast_variable_find(const struct ast_category *category, const char *variable);
 
 /*!
- * \brief Gets a variable from a variable list
+ * \brief Gets the value of a variable from a variable list by name
  *
  * \param list variable list to search
  * \param variable which variable you wish to get the data for
@@ -335,7 +335,7 @@ const char *ast_variable_find(const struct ast_category *category, const char *v
 const char *ast_variable_find_in_list(const struct ast_variable *list, const char *variable);
 
 /*!
- * \brief Gets the LAST occurrence of a variable from a variable list
+ * \brief Gets the value of the LAST occurrence of a variable from a variable list
  *
  * \param list The ast_variable list to search
  * \param variable The name of the ast_variable you wish to fetch data for
@@ -350,6 +350,21 @@ const char *ast_variable_find_in_list(const struct ast_variable *list, const cha
  * \retval NULL if unable to find it.
  */
 const char *ast_variable_find_last_in_list(const struct ast_variable *list, const char *variable);
+
+/*!
+ * \brief Gets a variable from a variable list by name
+ * \since 13.9.0
+ *
+ * \param list variable list to search
+ * \param variable name you wish to get the data for
+ *
+ * \details
+ * Goes through a given variable list and searches for the given variable
+ *
+ * \retval The variable (not the value) on success
+ * \retval NULL if unable to find it.
+ */
+const struct ast_variable *ast_variable_find_variable_in_list(const struct ast_variable *list, const char *variable_name);
 
 /*!
  * \brief Retrieve a category if it exists
@@ -495,6 +510,17 @@ int ast_unload_realtime(const char *family);
  *
  * \note You should use the constant SENTINEL to terminate arguments, in
  * order to preserve cross-platform compatibility.
+ *
+ * TODO The return value of this function is routinely ignored. Ignoring
+ * the return value means that it's mostly pointless to be calling this.
+ * You'll see some warning messages potentially, but that's it.
+ *
+ * XXX This function is super useful for detecting configuration problems
+ * early, but unfortunately, the latest in configuration management, sorcery,
+ * doesn't work well with this. Users of sorcery are familiar with the fields
+ * they will need to write but don't know if realtime is being used. Sorcery
+ * knows what storage mechanism is being used but has no high-level knowledge
+ * of what sort of data is going to be written.
  */
 int ast_realtime_require_field(const char *family, ...) attribute_sentinel;
 
@@ -758,15 +784,6 @@ int ast_realtime_append_mapping(const char *name, const char *driver, const char
  */
 int register_config_cli(void);
 
-/*!
- * \brief Exposed re-initialization method for core process
- *
- * \details
- * This method is intended for use only with the core re-initialization and is
- * not designed to be called from any user applications.
- */
-int read_config_maps(void);
-
 /*! \brief Create a new base configuration structure */
 struct ast_config *ast_config_new(void);
 
@@ -808,6 +825,18 @@ const char *ast_config_option(struct ast_config *cfg, const char *cat, const cha
 struct ast_category *ast_category_new(const char *name, const char *in_file, int lineno);
 
 /*!
+ * \brief Create a category that is not backed by a file
+ *
+ * \param name name of new category
+ */
+#define ast_category_new_dynamic(name) ast_category_new(name, "", -1)
+
+/*!
+ * \brief Create a nameless category that is not backed by a file
+ */
+#define ast_category_new_anonymous() ast_category_new_dynamic("")
+
+/*!
  * \brief Create a category making it a template
  *
  * \param name name of new template
@@ -818,7 +847,7 @@ struct ast_category *ast_category_new_template(const char *name, const char *in_
 
 /*!
  * \brief Inserts new category
- * 
+ *
  * \param config which config to use
  * \param cat newly created category to insert
  * \param match which category to insert above
@@ -881,12 +910,9 @@ void ast_category_destroy(struct ast_category *cat);
 struct ast_variable *ast_category_detach_variables(struct ast_category *cat);
 void ast_category_rename(struct ast_category *cat, const char *name);
 
-#ifdef MALLOC_DEBUG
 struct ast_variable *_ast_variable_new(const char *name, const char *value, const char *filename, const char *file, const char *function, int lineno);
 #define ast_variable_new(name, value, filename) _ast_variable_new(name, value, filename, __FILE__, __PRETTY_FUNCTION__, __LINE__)
-#else
-struct ast_variable *ast_variable_new(const char *name, const char *value, const char *filename);
-#endif
+
 struct ast_config_include *ast_include_new(struct ast_config *conf, const char *from_file, const char *included_file, int is_exec, const char *exec_file, int from_lineno, char *real_included_file_name, int real_included_file_name_size);
 struct ast_config_include *ast_include_find(struct ast_config *conf, const char *included_file);
 void ast_include_rename(struct ast_config *conf, const char *from_file, const char *to_file);
@@ -959,7 +985,6 @@ int ast_config_text_file_save2(const char *filename, const struct ast_config *cf
  * \return 0 on success or -1 on failure.
  */
 int ast_config_text_file_save(const char *filename, const struct ast_config *cfg, const char *generator);
-int config_text_file_save(const char *filename, const struct ast_config *cfg, const char *generator) __attribute__((deprecated));
 
 struct ast_config *ast_config_internal_load(const char *configfile, struct ast_config *cfg, struct ast_flags flags, const char *suggested_incl_file, const char *who_asked);
 /*!
@@ -1048,6 +1073,11 @@ enum ast_parse_flags {
 	PARSE_UINT16	= 	0x0005,
 #endif
 
+	/* Returns an int processed by ast_app_parse_timelen.
+	 * The first argument is an enum ast_timelen value (required).
+	 */
+	PARSE_TIMELEN	=	0x0006,
+
 	/* Returns a struct ast_sockaddr, with optional default value
 	 * (passed by reference) and port handling (accept, ignore,
 	 * require, forbid). The format is 'ipaddress[:port]'. IPv6 address
@@ -1114,6 +1144,12 @@ enum ast_parse_flags {
  * returns 1, b unchanged
  *    ast_parse_arg("12", PARSE_UINT32|PARSE_IN_RANGE|PARSE_RANGE_DEFAULTS, &a, 1, 10);
  * returns 1, a = 10
+ *     ast_parse_arg("223", PARSE_TIMELEN|PARSE_IN_RANGE, &a, TIMELEN_SECONDS, -1000, 1000);
+ * returns 0, a = 1000
+ *     ast_parse_arg("223", PARSE_TIMELEN|PARSE_IN_RANGE, &a, TIMELEN_SECONDS, -1000, 250000);
+ * returns 0, a = 223000
+ *     ast_parse_arg("223", PARSE_TIMELEN|PARSE_IN_RANGE|PARSE_DEFAULT, &a, TIMELEN_SECONDS, 9999, -1000, 250000);
+ * returns 0, a = 9999
  *    ast_parse_arg("www.foo.biz:44", PARSE_INADDR, &sa);
  * returns 0, sa contains address and port
  *    ast_parse_arg("www.foo.biz", PARSE_INADDR|PARSE_PORT_REQUIRE, &sa);
@@ -1205,6 +1241,66 @@ char *ast_realtime_decode_chunk(char *chunk);
  * \since 1.8
  */
 char *ast_realtime_encode_chunk(struct ast_str **dest, ssize_t maxlen, const char *chunk);
+
+/*!
+ * \brief Tests 2 variable values to see if they match
+ * \since 13.9.0
+ *
+ * \param left Variable to test
+ * \param right Variable to match against with an optional realtime-style operator in the name
+ *
+ * \retval 1 matches
+ * \retval 0 doesn't match
+ *
+ * \details
+ *
+ * The values of the variables are passed to ast_strings_match.
+ * If right->name is suffixed with a space and an operator, that operator
+ * is also passed to ast_strings_match.
+ *
+ * Examples:
+ *
+ * left->name = "id" (ignored)
+ * left->value = "abc"
+ * right->name = "id regex" (id is ignored)
+ * right->value = "a[bdef]c"
+ *
+ * will result in ast_strings_match("abc", "regex", "a[bdef]c") which will return 1.
+ *
+ * left->name = "id" (ignored)
+ * left->value = "abc"
+ * right->name = "id" (ignored)
+ * right->value = "abc"
+ *
+ * will result in ast_strings_match("abc", NULL, "abc") which will return 1.
+ *
+ * See the documentation for ast_strings_match for the valid operators.
+ */
+int ast_variables_match(const struct ast_variable *left, const struct ast_variable *right);
+
+/*!
+ * \brief Tests 2 variable lists to see if they match
+ * \since 13.9.0
+ *
+ * \param left Variable list to test
+ * \param right Variable list with an optional realtime-style operator in the names
+ * \param exact_match If true, all variables in left must match all variables in right
+ *        and vice versa.  This does exact value matches only.  Operators aren't supported.
+ *        Except for order, the left and right lists must be equal.
+ *
+ *        If false, every variable in the right list must match some variable in the left list
+ *        using the operators supplied. Variables in the left list that aren't in the right
+ *        list are ignored for matching purposes.
+ *
+ * \retval 1 matches
+ * \retval 0 doesn't match
+ *
+ * \details
+ * Iterates over the variable lists calling ast_variables_match.  If any match fails
+ * or a variable in the right list isn't in the left list, 0 is returned.
+ */
+int ast_variable_lists_match(const struct ast_variable *left, const struct ast_variable *right,
+	int exact_match);
 
 #if defined(__cplusplus) || defined(c_plusplus)
 }

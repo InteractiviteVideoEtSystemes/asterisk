@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/astobj2.h"
 #include "asterisk/stasis.h"
 #include "asterisk/stasis_system.h"
@@ -115,12 +113,13 @@ STASIS_MESSAGE_TYPE_DEFN(ast_cc_failure_type,
 STASIS_MESSAGE_TYPE_DEFN(ast_cc_monitorfailed_type,
 	.to_ami = cc_monitorfailed_to_ami,
 	);
+STASIS_MESSAGE_TYPE_DEFN(ast_cluster_discovery_type);
 
 void ast_system_publish_registry(const char *channeltype, const char *username, const char *domain, const char *status, const char *cause)
 {
-	RAII_VAR(struct ast_json *, registry, NULL, ast_json_unref);
-	RAII_VAR(struct ast_json_payload *, payload, NULL, ao2_cleanup);
-	RAII_VAR(struct stasis_message *, message, NULL, ao2_cleanup);
+	struct ast_json *registry;
+	struct ast_json_payload *payload;
+	struct stasis_message *message;
 
 	if (!ast_system_registry_type()) {
 		return;
@@ -134,15 +133,20 @@ void ast_system_publish_registry(const char *channeltype, const char *username, 
 		"status", status,
 		"cause", S_OR(cause, ""));
 
-	if (!(payload = ast_json_payload_create(registry))) {
+	payload = ast_json_payload_create(registry);
+	ast_json_unref(registry);
+	if (!payload) {
 		return;
 	}
 
-	if (!(message = stasis_message_create(ast_system_registry_type(), payload))) {
+	message = stasis_message_create(ast_system_registry_type(), payload);
+	ao2_ref(payload, -1);
+	if (!message) {
 		return;
 	}
 
 	stasis_publish(ast_system_topic(), message);
+	ao2_ref(message, -1);
 }
 
 static struct ast_manager_event_blob *system_registry_to_ami(struct stasis_message *message)
@@ -362,6 +366,7 @@ static void stasis_system_cleanup(void)
 	STASIS_MESSAGE_TYPE_CLEANUP(ast_cc_recallcomplete_type);
 	STASIS_MESSAGE_TYPE_CLEANUP(ast_cc_failure_type);
 	STASIS_MESSAGE_TYPE_CLEANUP(ast_cc_monitorfailed_type);
+	STASIS_MESSAGE_TYPE_CLEANUP(ast_cluster_discovery_type);
 }
 
 /*! \brief Initialize the system level items for \ref stasis */
@@ -419,6 +424,10 @@ int ast_stasis_system_init(void)
 	}
 
 	if (STASIS_MESSAGE_TYPE_INIT(ast_cc_monitorfailed_type) != 0) {
+		return -1;
+	}
+
+	if (STASIS_MESSAGE_TYPE_INIT(ast_cluster_discovery_type) != 0) {
 		return -1;
 	}
 

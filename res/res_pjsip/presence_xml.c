@@ -82,43 +82,48 @@ void ast_sip_sanitize_xml(const char *input, char *output, size_t len)
 }
 
 void ast_sip_presence_exten_state_to_str(int state, char **statestring, char **pidfstate,
-			       char **pidfnote, enum ast_sip_pidf_state *local_state)
+			       char **pidfnote, enum ast_sip_pidf_state *local_state,
+			       unsigned int notify_early_inuse_ringing)
 {
 	switch (state) {
 	case AST_EXTENSION_RINGING:
 		*statestring = "early";
 		*local_state = NOTIFY_INUSE;
-		*pidfstate = "busy";
+		*pidfstate = "on-the-phone";
 		*pidfnote = "Ringing";
 		break;
 	case (AST_EXTENSION_INUSE | AST_EXTENSION_RINGING):
-		*statestring = "confirmed";
+		if (notify_early_inuse_ringing) {
+			*statestring = "early";
+		} else {
+			*statestring = "confirmed";
+		}
 		*local_state = NOTIFY_INUSE;
-		*pidfstate = "busy";
+		*pidfstate = "on-the-phone";
 		*pidfnote = "Ringing";
 		break;
 	case AST_EXTENSION_INUSE:
 		*statestring = "confirmed";
 		*local_state = NOTIFY_INUSE;
-		*pidfstate = "busy";
+		*pidfstate = "on-the-phone";
 		*pidfnote = "On the phone";
 		break;
 	case AST_EXTENSION_BUSY:
 		*statestring = "confirmed";
-		*local_state = NOTIFY_CLOSED;
-		*pidfstate = "busy";
+		*local_state = NOTIFY_INUSE;
+		*pidfstate = "on-the-phone";
 		*pidfnote = "On the phone";
 		break;
 	case AST_EXTENSION_UNAVAILABLE:
 		*statestring = "terminated";
 		*local_state = NOTIFY_CLOSED;
-		*pidfstate = "away";
+		*pidfstate = "--";
 		*pidfnote = "Unavailable";
 		break;
 	case AST_EXTENSION_ONHOLD:
 		*statestring = "confirmed";
-		*local_state = NOTIFY_CLOSED;
-		*pidfstate = "busy";
+		*local_state = NOTIFY_INUSE;
+		*pidfstate = "on-the-phone";
 		*pidfnote = "On hold";
 		break;
 	case AST_EXTENSION_NOT_INUSE:

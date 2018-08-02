@@ -44,14 +44,12 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/signal.h>
+#include <signal.h>
 #include <iksemel.h>
 #include <pthread.h>
 
@@ -320,7 +318,6 @@ struct jingle_session {
 	ast_callid callid;                    /*!< Bound session call-id */
 };
 
-static const char desc[] = "Motif Jingle Channel";
 static const char channel_type[] = "Motif";
 
 struct jingle_config {
@@ -544,8 +541,8 @@ static int jingle_endpoint_cmp(void *obj, void *arg, int flags)
 static struct aco_type endpoint_option = {
 	.type = ACO_ITEM,
 	.name = "endpoint",
-	.category_match = ACO_BLACKLIST,
-	.category = "^general$",
+	.category_match = ACO_BLACKLIST_EXACT,
+	.category = "general",
 	.item_alloc = jingle_endpoint_alloc,
 	.item_find = jingle_endpoint_find,
 	.item_offset = offsetof(struct jingle_config, endpoints),
@@ -1904,7 +1901,7 @@ static struct ast_channel *jingle_request(const char *type, struct ast_format_ca
 {
 	RAII_VAR(struct jingle_config *, cfg, ao2_global_obj_ref(globals), ao2_cleanup);
 	RAII_VAR(struct jingle_endpoint *, endpoint, NULL, ao2_cleanup);
-	char *dialed, target[200] = "";
+	char *dialed, target[1024] = "";
 	struct ast_xmpp_buddy *buddy;
 	struct jingle_session *session;
 	struct ast_channel *chan;
@@ -2718,8 +2715,8 @@ static int custom_transport_handler(const struct aco_option *opt, struct ast_var
  * Module loading including tests for configuration or dependencies.
  * This function can return AST_MODULE_LOAD_FAILURE, AST_MODULE_LOAD_DECLINE,
  * or AST_MODULE_LOAD_SUCCESS. If a dependency or environment variable fails
- * tests return AST_MODULE_LOAD_FAILURE. If the module can not load the 
- * configuration file or other non-critical problem return 
+ * tests return AST_MODULE_LOAD_FAILURE. If the module can not load the
+ * configuration file or other non-critical problem return
  * AST_MODULE_LOAD_DECLINE. On success return AST_MODULE_LOAD_SUCCESS.
  */
 static int load_module(void)
@@ -2791,7 +2788,7 @@ end:
 	ao2_cleanup(jingle_tech.capabilities);
 	jingle_tech.capabilities = NULL;
 
-	return AST_MODULE_LOAD_FAILURE;
+	return AST_MODULE_LOAD_DECLINE;
 }
 
 /*! \brief Reload module */
@@ -2824,4 +2821,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Motif Jingle Channel 
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CHANNEL_DRIVER,
+	.requires = "res_xmpp",
 );

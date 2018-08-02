@@ -17,7 +17,7 @@
 /*! \file
  *
  * \brief UserEvent application -- send manager event
- * 
+ *
  * \ingroup applications
  */
 
@@ -26,8 +26,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include "asterisk/pbx.h"
 #include "asterisk/module.h"
@@ -62,6 +60,10 @@ ASTERISK_REGISTER_FILE()
 			<replaceable>eventname</replaceable> under the
 			<literal>eventname</literal> key.</para>
 		</description>
+		<see-also>
+			<ref type="manager">UserEvent</ref>
+			<ref type="managerEvent">UserEvent</ref>
+		</see-also>
 	</application>
  ***/
 

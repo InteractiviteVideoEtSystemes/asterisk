@@ -21,6 +21,9 @@
 
 #include "asterisk/pbx.h"
 
+/*! \brief Forward declaration for ao2_container so full astobj2.h is not required */
+struct ao2_container;
+
 /*!
  * \brief structure used for presence XML bodies
  *
@@ -51,6 +54,8 @@ struct ast_sip_exten_state_data {
 	char remote[PJSIP_MAX_URL_SIZE];
 	/*! Optional subscription */
 	struct ast_sip_subscription *sub;
+	/*! A datastores container to persist datastores */
+	struct ao2_container *datastores;
 	/*! Allocation pool */
 	pj_pool_t *pool;
 };
@@ -65,6 +70,8 @@ struct ast_sip_message_accumulator {
 	int old_msgs;
 	/*! Number of new messages */
 	int new_msgs;
+	/*! Message-Account */
+	char message_account[PJSIP_MAX_URL_SIZE];
 };
 
 #endif /* _RES_PJSIP_BODY_GENERATOR_TYPES_H */

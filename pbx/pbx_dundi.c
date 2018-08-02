@@ -32,18 +32,17 @@
 
 /*** MODULEINFO
 	<depend>zlib</depend>
+	<use type="module">res_crypto</use>
 	<use type="external">crypto</use>
 	<support_level>extended</support_level>
  ***/
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "asterisk/network.h"
 #include <sys/ioctl.h>
 #include <zlib.h>
-#include <sys/signal.h>
+#include <signal.h>
 #include <pthread.h>
 #include <net/if.h>
 
@@ -99,8 +98,8 @@ ASTERISK_REGISTER_FILE()
 			in the DUNDi lookup. If no results were found, the result will be blank.</para>
 		</description>
 	</function>
-			
-		
+
+
 	<function name="DUNDIQUERY" language="en_US">
 		<synopsis>
 			Initiate a DUNDi query.
@@ -562,7 +561,7 @@ static int get_mapping_weight(struct dundi_mapping *map, struct varshead *headp)
 	if (map->weightstr) {
 		if (headp) {
 			pbx_substitute_variables_varshead(headp, map->weightstr, buf, sizeof(buf) - 1);
-		} else {                
+		} else {
 			pbx_substitute_variables_helper(NULL, map->weightstr, buf, sizeof(buf) - 1);
 		}
 
@@ -994,9 +993,9 @@ static int dundi_prop_precache(struct dundi_transaction *trans, struct dundi_ies
 					sizeof(trans->parent->dr[trans->parent->respcount].tech));
 				trans->parent->respcount++;
 				ast_clear_flag_nonstd(trans->parent->hmd, DUNDI_HINT_DONT_ASK);
-			} else if (trans->parent->dr[z].weight > ies->answers[x]->weight) {
+			} else if (trans->parent->dr[z].weight > ntohs(ies->answers[x]->weight)) {
 				/* Update weight if appropriate */
-				trans->parent->dr[z].weight = ies->answers[x]->weight;
+				trans->parent->dr[z].weight = ntohs(ies->answers[x]->weight);
 			}
 		} else
 			ast_log(LOG_NOTICE, "Dropping excessive answers in precache for %s@%s\n",
@@ -1239,7 +1238,6 @@ static int cache_lookup_internal(time_t now, struct dundi_request *req, char *ke
 
 static int cache_lookup(struct dundi_request *req, dundi_eid *peer_eid, uint32_t crc, int *lowexpiration)
 {
-	char key[256];
 	char eid_str[20];
 	char eidroot_str[20];
 	time_t now;
@@ -1247,6 +1245,8 @@ static int cache_lookup(struct dundi_request *req, dundi_eid *peer_eid, uint32_t
 	int res2=0;
 	char eid_str_full[20];
 	char tmp[256]="";
+	/* Enough space for largest value that can be stored in key. */
+	char key[sizeof(eid_str) + sizeof(tmp) + sizeof(req->dcontext) + sizeof(eidroot_str) + sizeof("hint////r")];
 	int x;
 
 	time(&now);
@@ -1764,9 +1764,9 @@ static int handle_command_response(struct dundi_transaction *trans, struct dundi
 									sizeof(trans->parent->dr[trans->parent->respcount].tech));
 								trans->parent->respcount++;
 								ast_clear_flag_nonstd(trans->parent->hmd, DUNDI_HINT_DONT_ASK);
-							} else if (trans->parent->dr[z].weight > ies.answers[x]->weight) {
+							} else if (trans->parent->dr[z].weight > ntohs(ies.answers[x]->weight)) {
 								/* Update weight if appropriate */
-								trans->parent->dr[z].weight = ies.answers[x]->weight;
+								trans->parent->dr[z].weight = ntohs(ies.answers[x]->weight);
 							}
 						} else
 							ast_log(LOG_NOTICE, "Dropping excessive answers to request for %s@%s\n",
@@ -4847,6 +4847,9 @@ static int set_config(char *config_file, struct sockaddr_in* sin, int reload)
 		ast_log(LOG_WARNING, "Unable to get host name!\n");
 	AST_LIST_LOCK(&peers);
 
+	if (ast_eid_is_empty(&ast_eid_default)) {
+		ast_log(LOG_WARNING, "Entity ID is not set.\n");
+	}
 	memcpy(&global_eid, &ast_eid_default, sizeof(global_eid));
 
 	global_storehistory = 0;
@@ -4979,12 +4982,13 @@ static int unload_module(void)
 
 	close(netsocket);
 	io_context_destroy(io);
-	ast_sched_context_destroy(sched);
 
 	mark_mappings();
 	prune_mappings();
 	mark_peers();
 	prune_peers();
+
+	ast_sched_context_destroy(sched);
 
 	return 0;
 }
@@ -5062,6 +5066,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_DEFAULT, "Distributed Universal Nu
 	.load = load_module,
 	.unload = unload_module,
 	.reload = reload,
-	.nonoptreq = "res_crypto",
+	.optional_modules = "res_crypto",
 );
-

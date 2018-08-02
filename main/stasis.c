@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE();
-
 #include "asterisk/astobj2.h"
 #include "asterisk/stasis_internal.h"
 #include "asterisk/stasis.h"
@@ -59,6 +57,7 @@ ASTERISK_REGISTER_FILE();
 			</description>
 			<see-also>
 				<ref type="application">UserEvent</ref>
+				<ref type="managerEvent">UserEvent</ref>
 			</see-also>
 		</managerEventInstance>
 	</managerEvent>
@@ -423,10 +422,10 @@ static void subscription_invoke(struct stasis_subscription *sub,
 {
 	/* Notify that the final message has been received */
 	if (stasis_subscription_final_message(sub, message)) {
-		SCOPED_AO2LOCK(lock, sub);
-
+		ao2_lock(sub);
 		sub->final_message_rxed = 1;
 		ast_cond_signal(&sub->join_cond);
+		ao2_unlock(sub);
 	}
 
 	/* Since sub is mostly immutable, no need to lock sub */
@@ -434,10 +433,10 @@ static void subscription_invoke(struct stasis_subscription *sub,
 
 	/* Notify that the final message has been processed */
 	if (stasis_subscription_final_message(sub, message)) {
-		SCOPED_AO2LOCK(lock, sub);
-
+		ao2_lock(sub);
 		sub->final_message_processed = 1;
 		ast_cond_signal(&sub->join_cond);
+		ao2_unlock(sub);
 	}
 }
 
@@ -455,7 +454,7 @@ struct stasis_subscription *internal_stasis_subscribe(
 	int needs_mailbox,
 	int use_thread_pool)
 {
-	RAII_VAR(struct stasis_subscription *, sub, NULL, ao2_cleanup);
+	struct stasis_subscription *sub;
 
 	if (!topic) {
 		return NULL;
@@ -487,6 +486,8 @@ struct stasis_subscription *internal_stasis_subscribe(
 			sub->mailbox = ast_taskprocessor_get(tps_name, TPS_REF_DEFAULT);
 		}
 		if (!sub->mailbox) {
+			ao2_ref(sub, -1);
+
 			return NULL;
 		}
 		ast_taskprocessor_set_local(sub->mailbox, sub);
@@ -501,11 +502,12 @@ struct stasis_subscription *internal_stasis_subscribe(
 	ast_cond_init(&sub->join_cond, NULL);
 
 	if (topic_add_subscription(topic, sub) != 0) {
+		ao2_ref(sub, -1);
+
 		return NULL;
 	}
 	send_subscription_subscribe(topic, sub);
 
-	ao2_ref(sub, +1);
 	return sub;
 }
 
@@ -536,18 +538,21 @@ struct stasis_subscription *stasis_unsubscribe(struct stasis_subscription *sub)
 {
 	/* The subscription may be the last ref to this topic. Hold
 	 * the topic ref open until after the unlock. */
-	RAII_VAR(struct stasis_topic *, topic,
-		ao2_bump(sub ? sub->topic : NULL), ao2_cleanup);
+	struct stasis_topic *topic;
 
 	if (!sub) {
 		return NULL;
 	}
+
+	topic = ao2_bump(sub->topic);
 
 	/* We have to remove the subscription first, to ensure the unsubscribe
 	 * is the final message */
 	if (topic_remove_subscription(sub->topic, sub) != 0) {
 		ast_log(LOG_ERROR,
 			"Internal error: subscription has invalid topic\n");
+		ao2_cleanup(topic);
+
 		return NULL;
 	}
 
@@ -561,28 +566,46 @@ struct stasis_subscription *stasis_unsubscribe(struct stasis_subscription *sub)
 
 	/* Unsubscribing unrefs the subscription */
 	ao2_cleanup(sub);
+	ao2_cleanup(topic);
+
 	return NULL;
+}
+
+int stasis_subscription_set_congestion_limits(struct stasis_subscription *subscription,
+	long low_water, long high_water)
+{
+	int res = -1;
+
+	if (subscription) {
+		res = ast_taskprocessor_alert_set_levels(subscription->mailbox,
+			low_water, high_water);
+	}
+	return res;
 }
 
 void stasis_subscription_join(struct stasis_subscription *subscription)
 {
 	if (subscription) {
-		SCOPED_AO2LOCK(lock, subscription);
-
+		ao2_lock(subscription);
 		/* Wait until the processed flag has been set */
 		while (!subscription->final_message_processed) {
 			ast_cond_wait(&subscription->join_cond,
 				ao2_object_get_lockaddr(subscription));
 		}
+		ao2_unlock(subscription);
 	}
 }
 
 int stasis_subscription_is_done(struct stasis_subscription *subscription)
 {
 	if (subscription) {
-		SCOPED_AO2LOCK(lock, subscription);
+		int ret;
 
-		return subscription->final_message_rxed;
+		ao2_lock(subscription);
+		ret = subscription->final_message_rxed;
+		ao2_unlock(subscription);
+
+		return ret;
 	}
 
 	/* Null subscription is about as done as you can get */
@@ -610,13 +633,15 @@ int stasis_subscription_is_subscribed(const struct stasis_subscription *sub)
 	if (sub) {
 		size_t i;
 		struct stasis_topic *topic = sub->topic;
-		SCOPED_AO2LOCK(lock_topic, topic);
 
+		ao2_lock(topic);
 		for (i = 0; i < AST_VECTOR_SIZE(&topic->subscribers); ++i) {
 			if (AST_VECTOR_GET(&topic->subscribers, i) == sub) {
+				ao2_unlock(topic);
 				return 1;
 			}
 		}
+		ao2_unlock(topic);
 	}
 
 	return 0;
@@ -657,8 +682,8 @@ int stasis_subscription_final_message(struct stasis_subscription *sub, struct st
 static int topic_add_subscription(struct stasis_topic *topic, struct stasis_subscription *sub)
 {
 	size_t idx;
-	SCOPED_AO2LOCK(lock, topic);
 
+	ao2_lock(topic);
 	/* The reference from the topic to the subscription is shared with
 	 * the owner of the subscription, which will explicitly unsubscribe
 	 * to release it.
@@ -671,6 +696,7 @@ static int topic_add_subscription(struct stasis_topic *topic, struct stasis_subs
 		topic_add_subscription(
 			AST_VECTOR_GET(&topic->upstream_topics, idx), sub);
 	}
+	ao2_unlock(topic);
 
 	return 0;
 }
@@ -678,15 +704,18 @@ static int topic_add_subscription(struct stasis_topic *topic, struct stasis_subs
 static int topic_remove_subscription(struct stasis_topic *topic, struct stasis_subscription *sub)
 {
 	size_t idx;
-	SCOPED_AO2LOCK(lock_topic, topic);
+	int res;
 
+	ao2_lock(topic);
 	for (idx = 0; idx < AST_VECTOR_SIZE(&topic->upstream_topics); ++idx) {
 		topic_remove_subscription(
 			AST_VECTOR_GET(&topic->upstream_topics, idx), sub);
 	}
-
-	return AST_VECTOR_REMOVE_ELEM_UNORDERED(&topic->subscribers, sub,
+	res = AST_VECTOR_REMOVE_ELEM_UNORDERED(&topic->subscribers, sub,
 		AST_VECTOR_ELEM_CLEANUP_NOOP);
+	ao2_unlock(topic);
+
+	return res;
 }
 
 /*!
@@ -897,7 +926,7 @@ struct stasis_forward *stasis_forward_all(struct stasis_topic *from_topic,
 {
 	int res;
 	size_t idx;
-	RAII_VAR(struct stasis_forward *, forward, NULL, ao2_cleanup);
+	struct stasis_forward *forward;
 
 	if (!from_topic || !to_topic) {
 		return NULL;
@@ -910,7 +939,7 @@ struct stasis_forward *stasis_forward_all(struct stasis_topic *from_topic,
 
 	/* Forwards to ourselves are implicit. */
 	if (to_topic == from_topic) {
-		return ao2_bump(forward);
+		return forward;
 	}
 
 	forward->from_topic = ao2_bump(from_topic);
@@ -921,6 +950,7 @@ struct stasis_forward *stasis_forward_all(struct stasis_topic *from_topic,
 	if (res != 0) {
 		ao2_unlock(from_topic);
 		ao2_unlock(to_topic);
+		ao2_ref(forward, -1);
 		return NULL;
 	}
 
@@ -930,7 +960,7 @@ struct stasis_forward *stasis_forward_all(struct stasis_topic *from_topic,
 	ao2_unlock(from_topic);
 	ao2_unlock(to_topic);
 
-	return ao2_bump(forward);
+	return forward;
 }
 
 static void subscription_change_dtor(void *obj)
@@ -1166,10 +1196,25 @@ struct stasis_topic *stasis_topic_pool_get_topic(struct stasis_topic_pool *pool,
 	return topic_pool_entry->topic;
 }
 
+int stasis_topic_pool_topic_exists(const struct stasis_topic_pool *pool, const char *topic_name)
+{
+	struct topic_pool_entry *topic_pool_entry;
+
+	topic_pool_entry = ao2_find(pool->pool_container, topic_name, OBJ_SEARCH_KEY);
+	if (!topic_pool_entry) {
+		return 0;
+	}
+
+	ao2_ref(topic_pool_entry, -1);
+	return 1;
+}
+
 void stasis_log_bad_type_access(const char *name)
 {
 #ifdef AST_DEVMODE
-	ast_log(LOG_ERROR, "Use of %s() before init/after destruction\n", name);
+	if (!stasis_message_type_declined(name)) {
+		ast_log(LOG_ERROR, "Use of %s() before init/after destruction\n", name);
+	}
 #endif
 }
 
@@ -1202,25 +1247,25 @@ static void multi_object_blob_dtor(void *obj)
 struct ast_multi_object_blob *ast_multi_object_blob_create(struct ast_json *blob)
 {
 	int type;
-	RAII_VAR(struct ast_multi_object_blob *, multi,
-			ao2_alloc(sizeof(*multi), multi_object_blob_dtor),
-			ao2_cleanup);
+	struct ast_multi_object_blob *multi;
 
 	ast_assert(blob != NULL);
 
+	multi = ao2_alloc(sizeof(*multi), multi_object_blob_dtor);
 	if (!multi) {
 		return NULL;
 	}
 
 	for (type = 0; type < STASIS_UMOS_MAX; ++type) {
 		if (AST_VECTOR_INIT(&multi->snapshots[type], 0)) {
+			ao2_ref(multi, -1);
+
 			return NULL;
 		}
 	}
 
 	multi->blob = ast_json_ref(blob);
 
-	ao2_ref(multi, +1);
 	return multi;
 }
 
@@ -1228,19 +1273,18 @@ struct ast_multi_object_blob *ast_multi_object_blob_create(struct ast_json *blob
 void ast_multi_object_blob_add(struct ast_multi_object_blob *multi,
 	enum stasis_user_multi_object_snapshot_type type, void *object)
 {
-	if (!multi || !object) {
-		return;
+	if (!multi || !object || AST_VECTOR_APPEND(&multi->snapshots[type], object)) {
+		ao2_cleanup(object);
 	}
-	AST_VECTOR_APPEND(&multi->snapshots[type],object);
 }
 
 /*! \brief Publish single channel user event (for app_userevent compatibility) */
 void ast_multi_object_blob_single_channel_publish(struct ast_channel *chan,
 	struct stasis_message_type *type, struct ast_json *blob)
 {
-	RAII_VAR(struct stasis_message *, message, NULL, ao2_cleanup);
-	RAII_VAR(struct ast_channel_snapshot *, channel_snapshot, NULL, ao2_cleanup);
-	RAII_VAR(struct ast_multi_object_blob *, multi, NULL, ao2_cleanup);
+	struct stasis_message *message;
+	struct ast_channel_snapshot *channel_snapshot;
+	struct ast_multi_object_blob *multi;
 
 	if (!type) {
 		return;
@@ -1252,13 +1296,20 @@ void ast_multi_object_blob_single_channel_publish(struct ast_channel *chan,
 	}
 
 	channel_snapshot = ast_channel_snapshot_create(chan);
-	ao2_ref(channel_snapshot, +1);
+	if (!channel_snapshot) {
+		ao2_ref(multi, -1);
+		return;
+	}
+
+	/* this call steals the channel_snapshot reference */
 	ast_multi_object_blob_add(multi, STASIS_UMOS_CHANNEL, channel_snapshot);
 
 	message = stasis_message_create(type, multi);
+	ao2_ref(multi, -1);
 	if (message) {
 		/* app_userevent still publishes to channel */
 		stasis_publish(ast_channel_topic(chan), message);
+		ao2_ref(message, -1);
 	}
 }
 
@@ -1267,7 +1318,7 @@ static struct ast_json *multi_user_event_to_json(
 	struct stasis_message *message,
 	const struct stasis_message_sanitizer *sanitize)
 {
-	RAII_VAR(struct ast_json *, out, NULL, ast_json_unref);
+	struct ast_json *out;
 	struct ast_multi_object_blob *multi = stasis_message_data(message);
 	struct ast_json *blob = multi->blob;
 	const struct timeval *tv = stasis_message_timestamp(message);
@@ -1309,7 +1360,8 @@ static struct ast_json *multi_user_event_to_json(
 			}
 		}
 	}
-	return ast_json_ref(out);
+
+	return out;
 }
 
 /*! \internal \brief convert multi object blob to ami string */
@@ -1331,7 +1383,7 @@ static struct ast_str *multi_object_blob_to_ami(void *obj)
 
 	for (type = 0; type < STASIS_UMOS_MAX; ++type) {
 		for (i = 0; i < AST_VECTOR_SIZE(&multi->snapshots[type]); ++i) {
-			char *name = "";
+			char *name = NULL;
 			void *snapshot = AST_VECTOR_GET(&multi->snapshots[type], i);
 			ami_snapshot = NULL;
 
@@ -1341,11 +1393,11 @@ static struct ast_str *multi_object_blob_to_ami(void *obj)
 
 			switch (type) {
 			case STASIS_UMOS_CHANNEL:
-				ami_snapshot = ast_manager_build_channel_state_string_prefix(snapshot, name);
+				ami_snapshot = ast_manager_build_channel_state_string_prefix(snapshot, name ?: "");
 				break;
 
 			case STASIS_UMOS_BRIDGE:
-				ami_snapshot = ast_manager_build_bridge_state_string_prefix(snapshot, name);
+				ami_snapshot = ast_manager_build_bridge_state_string_prefix(snapshot, name ?: "");
 				break;
 
 			case STASIS_UMOS_ENDPOINT:
@@ -1356,6 +1408,7 @@ static struct ast_str *multi_object_blob_to_ami(void *obj)
 				ast_str_append(&ami_str, 0, "%s", ast_str_buffer(ami_snapshot));
 				ast_free(ami_snapshot);
 			}
+			ast_free(name);
 		}
 	}
 
@@ -1422,8 +1475,8 @@ static struct aco_type threadpool_option = {
 	.type = ACO_GLOBAL,
 	.name = "threadpool",
 	.item_offset = offsetof(struct stasis_config, threadpool_options),
-	.category = "^threadpool$",
-	.category_match = ACO_WHITELIST,
+	.category = "threadpool",
+	.category_match = ACO_WHITELIST_EXACT,
 };
 
 static struct aco_type *threadpool_options[] = ACO_TYPES(&threadpool_option);
@@ -1433,8 +1486,8 @@ static struct aco_type declined_option = {
 	.type = ACO_GLOBAL,
 	.name = "declined_message_types",
 	.item_offset = offsetof(struct stasis_config, declined_message_types),
-	.category_match = ACO_WHITELIST,
-	.category = "^declined_message_types$",
+	.category_match = ACO_WHITELIST_EXACT,
+	.category = "declined_message_types",
 };
 
 struct aco_type *declined_options[] = ACO_TYPES(&declined_option);
@@ -1501,17 +1554,19 @@ static void *stasis_config_alloc(void)
 
 int stasis_message_type_declined(const char *name)
 {
-	RAII_VAR(struct stasis_config *, cfg, ao2_global_obj_ref(globals), ao2_cleanup);
+	struct stasis_config *cfg = ao2_global_obj_ref(globals);
 	char *name_in_declined;
 	int res;
 
 	if (!cfg || !cfg->declined_message_types) {
+		ao2_cleanup(cfg);
 		return 0;
 	}
 
 	name_in_declined = ao2_find(cfg->declined_message_types->declined, name, OBJ_SEARCH_KEY);
 	res = name_in_declined ? 1 : 0;
 	ao2_cleanup(name_in_declined);
+	ao2_ref(cfg, -1);
 	if (res) {
 		ast_log(LOG_NOTICE, "Declining to allocate Stasis message type '%s' due to configuration\n", name);
 	}
@@ -1557,7 +1612,7 @@ static void stasis_cleanup(void)
 
 int stasis_init(void)
 {
-	RAII_VAR(struct stasis_config *, cfg, NULL, ao2_cleanup);
+	struct stasis_config *cfg;
 	int cache_init;
 	struct ast_threadpool_options threadpool_opts = { 0, };
 
@@ -1593,11 +1648,14 @@ int stasis_init(void)
 		if (aco_set_defaults(&threadpool_option, "threadpool", default_cfg->threadpool_options)) {
 			ast_log(LOG_ERROR, "Failed to initialize defaults on Stasis configuration object\n");
 			ao2_ref(default_cfg, -1);
+
 			return -1;
 		}
 
 		if (aco_set_defaults(&declined_option, "declined_message_types", default_cfg->declined_message_types)) {
 			ast_log(LOG_ERROR, "Failed to load stasis.conf and failed to initialize defaults.\n");
+			ao2_ref(default_cfg, -1);
+
 			return -1;
 		}
 
@@ -1608,6 +1666,7 @@ int stasis_init(void)
 		cfg = ao2_global_obj_ref(globals);
 		if (!cfg) {
 			ast_log(LOG_ERROR, "Failed to obtain Stasis configuration object\n");
+
 			return -1;
 		}
 	}
@@ -1618,8 +1677,10 @@ int stasis_init(void)
 	threadpool_opts.max_size = cfg->threadpool_options->max_size;
 	threadpool_opts.idle_timeout = cfg->threadpool_options->idle_timeout_sec;
 	pool = ast_threadpool_create("stasis-core", NULL, &threadpool_opts);
+	ao2_ref(cfg, -1);
 	if (!pool) {
 		ast_log(LOG_ERROR, "Failed to create 'stasis-core' threadpool\n");
+
 		return -1;
 	}
 
@@ -1637,4 +1698,3 @@ int stasis_init(void)
 
 	return 0;
 }
-

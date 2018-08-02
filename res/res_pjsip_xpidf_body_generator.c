@@ -20,7 +20,6 @@
 	<depend>pjproject</depend>
 	<depend>res_pjsip</depend>
 	<depend>res_pjsip_pubsub</depend>
-	<depend>res_pjsip_exten_state</depend>
 	<support_level>core</support_level>
  ***/
 
@@ -63,7 +62,7 @@ static int xpidf_generate_body_content(void *body, void *data)
 	pj_xml_node *msnsubstatus;
 
 	ast_sip_presence_exten_state_to_str(state_data->exten_state, &statestring,
-			&pidfstate, &pidfnote, &local_state);
+			&pidfstate, &pidfnote, &local_state, 0);
 
 	ast_sip_presence_xml_find_node_attr(state_data->pool, pres, "atom", "id",
 			&atom, &attr);
@@ -149,8 +148,6 @@ static void unregister_all(void)
 
 static int load_module(void)
 {
-	CHECK_PJSIP_PUBSUB_MODULE_LOADED();
-
 	if (ast_sip_pubsub_register_body_generator(&xpidf_body_generator)) {
 		goto fail;
 	}
@@ -177,4 +174,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP Extension State
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_CHANNEL_DEPEND,
+	.requires = "res_pjsip,res_pjsip_pubsub",
 );

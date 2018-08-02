@@ -16,11 +16,11 @@
  * at the top of the source tree.
  */
 
-/*! 
+/*!
  * \file
  * \author Russell Bryant <russell@digium.com>
  *
- * \brief DAHDI timing interface 
+ * \brief DAHDI timing interface
  */
 
 /*** MODULEINFO
@@ -29,8 +29,6 @@
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE();
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -156,7 +154,7 @@ static enum ast_timer_event dahdi_timer_get_event(void *data)
 		return AST_TIMING_EVENT_CONTINUOUS;
 	case DAHDI_EVENT_TIMER_EXPIRED:
 	default:
-		return AST_TIMING_EVENT_EXPIRED;	
+		return AST_TIMING_EVENT_EXPIRED;
 	}
 }
 
@@ -178,7 +176,7 @@ static int dahdi_test_timer(void)
 {
 	int fd;
 	int x = 160;
-	
+
 	fd = open("/dev/dahdi/timer", O_RDWR);
 
 	if (fd < 0) {

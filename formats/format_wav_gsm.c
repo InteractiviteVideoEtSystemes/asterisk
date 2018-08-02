@@ -19,7 +19,7 @@
 /*! \file
  *
  * \brief Save GSM in the proprietary Microsoft format.
- * 
+ *
  * Microsoft WAV format (Proprietary GSM)
  * \arg File name extension: WAV,wav49  (Upper case WAV, lower case is another format)
  * This format can be played on Windows systems, used for
@@ -30,10 +30,8 @@
 /*** MODULEINFO
 	<support_level>core</support_level>
  ***/
- 
-#include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
+#include "asterisk.h"
 
 #include "asterisk/mod_format.h"
 #include "asterisk/module.h"
@@ -421,11 +419,14 @@ static struct ast_frame *wav_read(struct ast_filestream *s, int *whennext)
 	} else {
 		/* read and convert */
 		unsigned char msdata[MSGSM_FRAME_SIZE];
-		int res;
-		
+		size_t res;
+
 		if ((res = fread(msdata, 1, MSGSM_FRAME_SIZE, s->f)) != MSGSM_FRAME_SIZE) {
-			if (res && (res != 1))
-				ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", res, strerror(errno));
+			if (res && res != 1) {
+				ast_log(LOG_WARNING, "Short read of %s data (expected %d bytes, read %zu): %s\n",
+						ast_format_get_name(s->fr.subclass.format), MSGSM_FRAME_SIZE, res,
+						strerror(errno));
+			}
 			return NULL;
 		}
 		/* Convert from MS format to two real GSM frames */
@@ -513,7 +514,7 @@ static int wav_seek(struct ast_filestream *fs, off_t sample_offset, int whence)
 		int i;
 		fseek(fs->f, 0, SEEK_END);
 		for (i=0; i< (offset - max) / MSGSM_FRAME_SIZE; i++) {
-			if (!fwrite(msgsm_silence, 1, MSGSM_FRAME_SIZE, fs->f)) {
+			if (fwrite(msgsm_silence, 1, MSGSM_FRAME_SIZE, fs->f) != MSGSM_FRAME_SIZE) {
 				ast_log(LOG_WARNING, "fwrite() failed: %s\n", strerror(errno));
 			}
 		}
@@ -570,7 +571,7 @@ static int load_module(void)
 {
 	wav49_f.format = ast_format_gsm;
 	if (ast_format_def_register(&wav49_f))
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	return AST_MODULE_LOAD_SUCCESS;
 }
 

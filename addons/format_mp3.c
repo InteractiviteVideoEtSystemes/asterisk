@@ -34,8 +34,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include "mp3/mpg123.h"
 #include "mp3/mpglib.h"
 
@@ -120,9 +118,11 @@ static int mp3_squeue(struct ast_filestream *s)
 
 	res = ftell(s->f);
 	p->sbuflen = fread(p->sbuf, 1, MP3_SCACHE, s->f);
-	if(p->sbuflen < 0) {
-		ast_log(LOG_WARNING, "Short read (%d) (%s)!\n", p->sbuflen, strerror(errno));
-		return -1;
+	if (p->sbuflen < MP3_SCACHE) {
+		if (ferror(s->f)) {
+			ast_log(LOG_WARNING, "Error while reading MP3 file: %s\n", strerror(errno));
+			return -1;
+		}
 	}
 	res = decodeMP3(&p->mp,p->sbuf,p->sbuflen,p->dbuf,MP3_DCACHE,&p->dbuflen);
 	if(res != MP3_OK)
@@ -327,4 +327,3 @@ static int unload_module(void)
 }
 
 AST_MODULE_INFO_STANDARD_EXTENDED(ASTERISK_GPL_KEY, "MP3 format [Any rate but 8000hz mono is optimal]");
-

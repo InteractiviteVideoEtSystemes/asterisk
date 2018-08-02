@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <time.h>
 #include <math.h>
 #include <ctype.h>
@@ -503,7 +501,7 @@ int callerid_feed_jp(struct callerid_state *cid, unsigned char *ubuf, int len, s
 						case 0x06: /* short dial number */
 						case 0x07: /* reserved */
 						default:   /* reserved */
-							if (option_debug > 1)
+							if (DEBUG_ATLEAST(2))
 								ast_log(LOG_NOTICE, "did info:#1=%X\n", (unsigned)cid->rawdata[x]);
 							break ;
 						}
@@ -1209,7 +1207,16 @@ static const struct ast_value_translation redirecting_reason_types[] = {
 	{ AST_REDIRECTING_REASON_OUT_OF_ORDER,   "out_of_order", "Called DTE Out-Of-Order" },
 	{ AST_REDIRECTING_REASON_AWAY,           "away",         "Callee is Away" },
 	{ AST_REDIRECTING_REASON_CALL_FWD_DTE,   "cf_dte",       "Call Forwarding By The Called DTE" },
-	{ AST_REDIRECTING_REASON_SEND_TO_VM,     "send_to_vm",   "Call is being redirected to user's voicemail"},
+	{ AST_REDIRECTING_REASON_SEND_TO_VM,     "send_to_vm",   "Call is being redirected to user's voicemail" },
+
+	/* Convenience SIP aliases.  Alias descriptions are not used. */
+	{ AST_REDIRECTING_REASON_USER_BUSY,      "user-busy" },
+	{ AST_REDIRECTING_REASON_NO_ANSWER,      "no-answer" },
+	{ AST_REDIRECTING_REASON_UNCONDITIONAL,  "unconditional" },
+	{ AST_REDIRECTING_REASON_TIME_OF_DAY,    "time-of-day" },
+	{ AST_REDIRECTING_REASON_DO_NOT_DISTURB, "do-not-disturb" },
+	{ AST_REDIRECTING_REASON_FOLLOW_ME,      "follow-me" },
+	{ AST_REDIRECTING_REASON_OUT_OF_ORDER,   "out-of-service" },
 /* *INDENT-ON* */
 };
 
@@ -1232,7 +1239,7 @@ const char *ast_redirecting_reason_describe(int data)
 
 	for (index = 0; index < ARRAY_LEN(redirecting_reason_types); ++index) {
 		if (redirecting_reason_types[index].value == data) {
-			return redirecting_reason_types[index].description;
+			return redirecting_reason_types[index].description ?: "Redirecting reason alias-bug";
 		}
 	}
 

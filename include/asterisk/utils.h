@@ -423,13 +423,12 @@ int ast_careful_fwrite(FILE *f, int fd, const char *s, size_t len, int timeoutms
  * Thread management support (should be moved to lock.h or a different header)
  */
 
-#define AST_STACKSIZE (((sizeof(void *) * 8 * 8) - 16) * 1024)
+#define AST_STACKSIZE     (((sizeof(void *) * 8 * 8) - 16) * 1024)
+#define AST_STACKSIZE_LOW (((sizeof(void *) * 8 * 2) - 16) * 1024)
 
-#if defined(LOW_MEMORY)
-#define AST_BACKGROUND_STACKSIZE (((sizeof(void *) * 8 * 2) - 16) * 1024)
-#else
-#define AST_BACKGROUND_STACKSIZE AST_STACKSIZE
-#endif
+int ast_background_stacksize(void);
+
+#define AST_BACKGROUND_STACKSIZE ast_background_stacksize()
 
 void ast_register_thread(char *name);
 void ast_unregister_thread(void *id);
@@ -483,281 +482,6 @@ long int ast_random(void);
  * \since 12
  */
 #define ast_random_double() (((double)ast_random()) / RAND_MAX)
-
-/*!
- * \brief DEBUG_CHAOS returns failure randomly
- *
- * DEBUG_CHAOS_RETURN(failure); can be used to fake
- * failure of functions such as memory allocation,
- * for the purposes of testing failure handling.
- */
-#ifdef DEBUG_CHAOS
-#ifndef DEBUG_CHAOS_ALLOC_CHANCE
-#define DEBUG_CHAOS_ALLOC_CHANCE 100000
-#endif
-/* Could #define DEBUG_CHAOS_ENABLE ast_fully_booted */
-#ifndef DEBUG_CHAOS_ENABLE
-#define DEBUG_CHAOS_ENABLE 1
-#endif
-#define DEBUG_CHAOS_RETURN(CHANCE, FAILURE) \
-	do { \
-		if ((DEBUG_CHAOS_ENABLE) && (ast_random() % CHANCE == 0)) { \
-			return FAILURE; \
-		} \
-	} while (0)
-#else
-#define DEBUG_CHAOS_RETURN(c,f)
-#endif
-
-
-#ifndef __AST_DEBUG_MALLOC
-#define ast_std_malloc malloc
-#define ast_std_calloc calloc
-#define ast_std_realloc realloc
-#define ast_std_free free
-
-/*!
- * \brief free() wrapper
- *
- * ast_free_ptr should be used when a function pointer for free() needs to be passed
- * as the argument to a function. Otherwise, astmm will cause seg faults.
- */
-#define ast_free free
-#define ast_free_ptr ast_free
-
-#if defined(AST_IN_CORE)
-#define MALLOC_FAILURE_MSG \
-	ast_log_safe(LOG_ERROR, "Memory Allocation Failure in function %s at line %d of %s\n", func, lineno, file)
-#else
-#define MALLOC_FAILURE_MSG \
-	ast_log(LOG_ERROR, "Memory Allocation Failure in function %s at line %d of %s\n", func, lineno, file)
-#endif
-
-/*!
- * \brief A wrapper for malloc()
- *
- * ast_malloc() is a wrapper for malloc() that will generate an Asterisk log
- * message in the case that the allocation fails.
- *
- * The argument and return value are the same as malloc()
- */
-#define ast_malloc(len) \
-	_ast_malloc((len), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-
-AST_INLINE_API(
-void * attribute_malloc _ast_malloc(size_t len, const char *file, int lineno, const char *func),
-{
-	void *p;
-
-	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, NULL);
-
-	if (!(p = malloc(len))) {
-		MALLOC_FAILURE_MSG;
-	}
-
-	return p;
-}
-)
-
-/*!
- * \brief A wrapper for calloc()
- *
- * ast_calloc() is a wrapper for calloc() that will generate an Asterisk log
- * message in the case that the allocation fails.
- *
- * The arguments and return value are the same as calloc()
- */
-#define ast_calloc(num, len) \
-	_ast_calloc((num), (len), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-
-AST_INLINE_API(
-void * attribute_malloc _ast_calloc(size_t num, size_t len, const char *file, int lineno, const char *func),
-{
-	void *p;
-
-	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, NULL);
-
-	if (!(p = calloc(num, len))) {
-		MALLOC_FAILURE_MSG;
-	}
-
-	return p;
-}
-)
-
-/*!
- * \brief A wrapper for calloc() for use in cache pools
- *
- * ast_calloc_cache() is a wrapper for calloc() that will generate an Asterisk log
- * message in the case that the allocation fails. When memory debugging is in use,
- * the memory allocated by this function will be marked as 'cache' so it can be
- * distinguished from normal memory allocations.
- *
- * The arguments and return value are the same as calloc()
- */
-#define ast_calloc_cache(num, len) \
-	_ast_calloc((num), (len), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-
-/*!
- * \brief A wrapper for realloc()
- *
- * ast_realloc() is a wrapper for realloc() that will generate an Asterisk log
- * message in the case that the allocation fails.
- *
- * The arguments and return value are the same as realloc()
- */
-#define ast_realloc(p, len) \
-	_ast_realloc((p), (len), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-
-AST_INLINE_API(
-void * attribute_malloc _ast_realloc(void *p, size_t len, const char *file, int lineno, const char *func),
-{
-	void *newp;
-
-	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, NULL);
-
-	if (!(newp = realloc(p, len))) {
-		MALLOC_FAILURE_MSG;
-	}
-
-	return newp;
-}
-)
-
-/*!
- * \brief A wrapper for strdup()
- *
- * ast_strdup() is a wrapper for strdup() that will generate an Asterisk log
- * message in the case that the allocation fails.
- *
- * ast_strdup(), unlike strdup(), can safely accept a NULL argument. If a NULL
- * argument is provided, ast_strdup will return NULL without generating any
- * kind of error log message.
- *
- * The argument and return value are the same as strdup()
- */
-#define ast_strdup(str) \
-	_ast_strdup((str), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-
-AST_INLINE_API(
-char * attribute_malloc _ast_strdup(const char *str, const char *file, int lineno, const char *func),
-{
-	char *newstr = NULL;
-
-	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, NULL);
-
-	if (str) {
-		if (!(newstr = strdup(str))) {
-			MALLOC_FAILURE_MSG;
-		}
-	}
-
-	return newstr;
-}
-)
-
-/*!
- * \brief A wrapper for strndup()
- *
- * ast_strndup() is a wrapper for strndup() that will generate an Asterisk log
- * message in the case that the allocation fails.
- *
- * ast_strndup(), unlike strndup(), can safely accept a NULL argument for the
- * string to duplicate. If a NULL argument is provided, ast_strdup will return
- * NULL without generating any kind of error log message.
- *
- * The arguments and return value are the same as strndup()
- */
-#define ast_strndup(str, len) \
-	_ast_strndup((str), (len), __FILE__, __LINE__, __PRETTY_FUNCTION__)
-
-AST_INLINE_API(
-char * attribute_malloc _ast_strndup(const char *str, size_t len, const char *file, int lineno, const char *func),
-{
-	char *newstr = NULL;
-
-	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, NULL);
-
-	if (str) {
-		if (!(newstr = strndup(str, len))) {
-			MALLOC_FAILURE_MSG;
-		}
-	}
-
-	return newstr;
-}
-)
-
-/*!
- * \brief A wrapper for asprintf()
- *
- * ast_asprintf() is a wrapper for asprintf() that will generate an Asterisk log
- * message in the case that the allocation fails.
- *
- * The arguments and return value are the same as asprintf()
- */
-#define ast_asprintf(ret, fmt, ...) \
-	_ast_asprintf((ret), __FILE__, __LINE__, __PRETTY_FUNCTION__, fmt, __VA_ARGS__)
-
-int __attribute__((format(printf, 5, 6)))
-	_ast_asprintf(char **ret, const char *file, int lineno, const char *func, const char *fmt, ...);
-
-/*!
- * \brief A wrapper for vasprintf()
- *
- * ast_vasprintf() is a wrapper for vasprintf() that will generate an Asterisk log
- * message in the case that the allocation fails.
- *
- * The arguments and return value are the same as vasprintf()
- */
-#define ast_vasprintf(ret, fmt, ap) \
-	_ast_vasprintf((ret), __FILE__, __LINE__, __PRETTY_FUNCTION__, (fmt), (ap))
-
-AST_INLINE_API(
-__attribute__((format(printf, 5, 0)))
-int _ast_vasprintf(char **ret, const char *file, int lineno, const char *func, const char *fmt, va_list ap),
-{
-	int res;
-
-	DEBUG_CHAOS_RETURN(DEBUG_CHAOS_ALLOC_CHANCE, -1);
-
-	if ((res = vasprintf(ret, fmt, ap)) == -1) {
-		MALLOC_FAILURE_MSG;
-	}
-
-	return res;
-}
-)
-
-#endif /* AST_DEBUG_MALLOC */
-
-/*!
-  \brief call __builtin_alloca to ensure we get gcc builtin semantics
-  \param size The size of the buffer we want allocated
-
-  This macro will attempt to allocate memory from the stack.  If it fails
-  you won't get a NULL returned, but a SEGFAULT if you're lucky.
-*/
-#define ast_alloca(size) __builtin_alloca(size)
-
-#if !defined(ast_strdupa) && defined(__GNUC__)
-/*!
- * \brief duplicate a string in memory from the stack
- * \param s The string to duplicate
- *
- * This macro will duplicate the given string.  It returns a pointer to the stack
- * allocatted memory for the new string.
- */
-#define ast_strdupa(s)                                                    \
-	(__extension__                                                    \
-	({                                                                \
-		const char *__old = (s);                                  \
-		size_t __len = strlen(__old) + 1;                         \
-		char *__new = __builtin_alloca(__len);                    \
-		memcpy (__new, __old, __len);                             \
-		__new;                                                    \
-	}))
-#endif
 
 /*!
  * \brief Disable PMTU discovery on a socket
@@ -843,10 +567,24 @@ struct ast_http_digest {
  */
 int ast_parse_digest(const char *digest, struct ast_http_digest *d, int request, int pedantic);
 
+#ifdef DO_CRASH
+#define DO_CRASH_NORETURN attribute_noreturn
+#else
+#define DO_CRASH_NORETURN
+#endif
+
+void DO_CRASH_NORETURN __ast_assert_failed(int condition, const char *condition_str,
+	const char *file, int line, const char *function);
 
 #ifdef AST_DEVMODE
-void __ast_assert_failed(int condition, const char *condition_str, const char *file, int line, const char *function);
 #define ast_assert(a) _ast_assert(a, # a, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+#define ast_assert_return(a, ...) \
+({ \
+	if (__builtin_expect(!(a), 1)) { \
+		_ast_assert(0, # a, __FILE__, __LINE__, __PRETTY_FUNCTION__); \
+		return __VA_ARGS__; \
+	}\
+})
 static void force_inline _ast_assert(int condition, const char *condition_str, const char *file, int line, const char *function)
 {
 	if (__builtin_expect(!condition, 1)) {
@@ -855,6 +593,12 @@ static void force_inline _ast_assert(int condition, const char *condition_str, c
 }
 #else
 #define ast_assert(a)
+#define ast_assert_return(a, ...) \
+({ \
+	if (__builtin_expect(!(a), 1)) { \
+		return __VA_ARGS__; \
+	}\
+})
 #endif
 
 /*!
@@ -864,7 +608,7 @@ static void force_inline _ast_assert(int condition, const char *condition_str, c
  *
  * \return Nothing
  */
-void ast_do_crash(void);
+void DO_CRASH_NORETURN ast_do_crash(void);
 
 #include "asterisk/strings.h"
 
@@ -968,6 +712,14 @@ int ast_str_to_eid(struct ast_eid *eid, const char *s);
 int ast_eid_cmp(const struct ast_eid *eid1, const struct ast_eid *eid2);
 
 /*!
+ * \brief Check if EID is empty
+ *
+ * \return 1 if the EID is empty, zero otherwise
+ * \since 13.12.0
+ */
+int ast_eid_is_empty(const struct ast_eid *eid);
+
+/*!
  * \brief Get current thread ID
  * \return the ID if platform is supported, else -1
  */
@@ -1066,7 +818,7 @@ static inline void _raii_cleanup_block(_raii_cleanup_block_t *b) { (*b)(); }
  */
 char *ast_crypt(const char *key, const char *salt);
 
-/*
+/*!
  * \brief Asterisk wrapper around crypt(3) for encrypting passwords.
  *
  * This function will generate a random salt and encrypt the given password.
@@ -1079,7 +831,7 @@ char *ast_crypt(const char *key, const char *salt);
  */
 char *ast_crypt_encrypt(const char *key);
 
-/*
+/*!
  * \brief Asterisk wrapper around crypt(3) for validating passwords.
  *
  * \param key User's password to validate.
@@ -1089,7 +841,7 @@ char *ast_crypt_encrypt(const char *key);
  */
 int ast_crypt_validate(const char *key, const char *expected);
 
-/*
+/*!
  * \brief Test that a file exists and is readable by the effective user.
  * \since 13.7.0
  *
@@ -1099,7 +851,7 @@ int ast_crypt_validate(const char *key, const char *expected);
  */
 int ast_file_is_readable(const char *filename);
 
-/*
+/*!
  * \brief Compare 2 major.minor.patch.extra version strings.
  * \since 13.7.0
  *
@@ -1111,5 +863,72 @@ int ast_file_is_readable(const char *filename);
  * \return >0 if version 1 > version 2.
  */
 int ast_compare_versions(const char *version1, const char *version2);
+
+/*!
+ * \brief Test that an OS supports IPv6 Networking.
+ * \since 13.14.0
+ *
+ * \return True (non-zero) if the IPv6 supported.
+ * \return False (zero) if the OS doesn't support IPv6.
+ */
+int ast_check_ipv6(void);
+
+enum ast_fd_flag_operation {
+	AST_FD_FLAG_SET,
+	AST_FD_FLAG_CLEAR,
+};
+
+/*!
+ * \brief Set flags on the given file descriptor
+ * \since 13.19
+ *
+ * If getting or setting flags of the given file descriptor fails, logs an
+ * error message.
+ *
+ * \param fd File descriptor to set flags on
+ * \param flags The flag(s) to set
+ *
+ * \return -1 on error
+ * \return 0 if successful
+ */
+#define ast_fd_set_flags(fd, flags) \
+	__ast_fd_set_flags((fd), (flags), AST_FD_FLAG_SET, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+/*!
+ * \brief Clear flags on the given file descriptor
+ * \since 13.19
+ *
+ * If getting or setting flags of the given file descriptor fails, logs an
+ * error message.
+ *
+ * \param fd File descriptor to clear flags on
+ * \param flags The flag(s) to clear
+ *
+ * \return -1 on error
+ * \return 0 if successful
+ */
+#define ast_fd_clear_flags(fd, flags) \
+	__ast_fd_set_flags((fd), (flags), AST_FD_FLAG_CLEAR, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+
+int __ast_fd_set_flags(int fd, int flags, enum ast_fd_flag_operation op,
+	const char *file, int lineno, const char *function);
+
+/*!
+ * \brief Set the current thread's user interface status.
+ *
+ * \param is_user_interface Non-zero to mark the thread as a user interface.
+ *
+ * \return 0 if successfuly marked current thread.
+ * \return Non-zero if marking current thread failed.
+ */
+int ast_thread_user_interface_set(int is_user_interface);
+
+/*!
+ * \brief Indicates whether the current thread is a user interface
+ *
+ * \return True (non-zero) if thread is a user interface.
+ * \return False (zero) if thread is not a user interface.
+ */
+int ast_thread_is_user_interface(void);
 
 #endif /* _ASTERISK_UTILS_H */

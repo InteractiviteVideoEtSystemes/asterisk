@@ -59,7 +59,8 @@ struct ast_ari_response;
 typedef void (*stasis_rest_callback)(
 	struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *path_vars,
-	struct ast_variable *headers, struct ast_ari_response *response);
+	struct ast_variable *headers, struct ast_json *body,
+	struct ast_ari_response *response);
 
 /*!
  * \brief Handler for a single RESTful path segment.
@@ -95,6 +96,8 @@ struct ast_ari_response {
 	/*! HTTP response code.
 	 * See http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html */
 	int response_code;
+	/*! File descriptor for whatever file we want to respond with */
+	int fd;
 	/*! Corresponding text for the response code */
 	const char *response_text; /* Shouldn't http.c handle this? */
 	/*! Flag to indicate that no further response is needed */
@@ -134,7 +137,7 @@ int ast_ari_remove_handler(struct stasis_rest_handlers *handler);
 void ast_ari_invoke(struct ast_tcptls_session_instance *ser,
 	const char *uri, enum ast_http_method method,
 	struct ast_variable *get_params, struct ast_variable *headers,
-	struct ast_ari_response *response);
+	struct ast_json *body, struct ast_ari_response *response);
 
 /*!
  * \internal
@@ -144,10 +147,11 @@ void ast_ari_invoke(struct ast_tcptls_session_instance *ser,
  * for unit testing.
  *
  * \param uri Requested URI, relative to the docs path.
+ * \param prefix prefix that prefixes all http requests
  * \param headers HTTP headers.
  * \param[out] response RESTful HTTP response.
  */
-void ast_ari_get_docs(const char *uri, struct ast_variable *headers, struct ast_ari_response *response);
+void ast_ari_get_docs(const char *uri, const char *prefix, struct ast_variable *headers, struct ast_ari_response *response);
 
 /*! \brief Abstraction for reading/writing JSON to a WebSocket */
 struct ast_ari_websocket_session;
@@ -196,6 +200,15 @@ int ast_ari_websocket_session_write(struct ast_ari_websocket_session *session,
  */
 const char *ast_ari_websocket_session_id(
 	const struct ast_ari_websocket_session *session);
+
+/*!
+ * \brief Get the remote address from an ARI WebSocket.
+ *
+ * \param session Session to write to.
+ * \return ast_sockaddr (does not have to be freed)
+ */
+struct ast_sockaddr *ast_ari_websocket_session_get_remote_addr(
+	struct ast_ari_websocket_session *session);
 
 /*!
  * \brief The stock message to return when out of memory.

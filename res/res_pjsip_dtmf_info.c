@@ -19,7 +19,6 @@
 /*** MODULEINFO
 	<depend>pjproject</depend>
 	<depend>res_pjsip</depend>
-	<depend>res_pjsip_session</depend>
 	<support_level>core</support_level>
  ***/
 
@@ -82,14 +81,13 @@ static char get_event(const char *c)
 static int dtmf_info_incoming_request(struct ast_sip_session *session, struct pjsip_rx_data *rdata)
 {
 	pjsip_msg_body *body = rdata->msg_info.msg->body;
-	char buf[body ? body->len : 0];
+	char buf[body ? body->len + 1 : 1];
 	char *cur = buf;
 	char *line;
-
 	char event = '\0';
 	unsigned int duration = 100;
-
 	char is_dtmf;
+	int res;
 
 	if (!session->channel) {
 		return 0;
@@ -104,10 +102,15 @@ static int dtmf_info_incoming_request(struct ast_sip_session *session, struct pj
 	if (!body || !body->len) {
 		/* need to return 200 OK on empty body */
 		send_response(session, rdata, 200);
-		return 0;
+		return 1;
 	}
 
-	body->print_body(body, buf, body->len);
+	res = body->print_body(body, buf, body->len);
+	if (res < 0) {
+		send_response(session, rdata, 500);
+		return 1;
+	}
+	buf[res] = '\0';
 
 	if (is_dtmf) {
 		/* directly use what is in the message body */
@@ -146,18 +149,17 @@ static int dtmf_info_incoming_request(struct ast_sip_session *session, struct pj
 	}
 
 	send_response(session, rdata, event ? 200 : 500);
-	return event ? 0 : -1;
+	return 1;
 }
 
 static struct ast_sip_session_supplement dtmf_info_supplement = {
 	.method = "INFO",
+	.priority = AST_SIP_SUPPLEMENT_PRIORITY_FIRST,
 	.incoming_request = dtmf_info_incoming_request,
 };
 
 static int load_module(void)
 {
-	CHECK_PJSIP_SESSION_MODULE_LOADED();
-
 	ast_sip_session_register_supplement(&dtmf_info_supplement);
 	return AST_MODULE_LOAD_SUCCESS;
 }
@@ -173,4 +175,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PJSIP DTMF INFO Suppo
 	.load = load_module,
 	.unload = unload_module,
 	.load_pri = AST_MODPRI_APP_DEPEND,
+	.requires = "res_pjsip,res_pjsip_session",
 );

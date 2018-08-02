@@ -1,7 +1,7 @@
 /*
  * Asterisk -- An open source telephony toolkit.
  *
- * Copyright (C) 1999-2010, Digium, Inc.
+ * Copyright (C) 1999 - 2017, Digium, Inc.
  *
  * Manuel Guesdon <mguesdon@oxymium.net> - PostgreSQL RealTime Driver Author/Adaptor
  * Mark Spencer <markster@digium.com>  - Asterisk Author
@@ -29,8 +29,6 @@
 
 #include "asterisk.h"
 
-ASTERISK_REGISTER_FILE()
-
 #include <libpq-fe.h>			/* PostgreSQL */
 
 #include "asterisk/file.h"
@@ -54,6 +52,7 @@ AST_THREADSTORAGE(semibuf_buf);
 static PGconn *pgsqlConn = NULL;
 static int version;
 #define has_schema_support	(version > 70300 ? 1 : 0)
+#define USE_BACKSLASH_AS_STRING	(version >= 90100 ? 1 : 0)
 
 #define MAX_DB_OPTION_SIZE 64
 
@@ -270,6 +269,7 @@ static struct tables *find_table(const char *database, const char *orig_tablenam
 	}
 
 	if (database == NULL) {
+		AST_LIST_UNLOCK(&psql_tables);
 		return NULL;
 	}
 
@@ -384,6 +384,9 @@ static struct columns *find_column(struct tables *t, const char *colname)
 	return NULL;
 }
 
+#define IS_SQL_LIKE_CLAUSE(x) ((x) && ast_ends_with(x, " LIKE"))
+#define ESCAPE_CLAUSE (USE_BACKSLASH_AS_STRING ? " ESCAPE '\\'" : " ESCAPE '\\\\'")
+
 static struct ast_variable *realtime_pgsql(const char *database, const char *tablename, const struct ast_variable *fields)
 {
 	RAII_VAR(PGresult *, result, NULL, PQclear);
@@ -393,6 +396,7 @@ static struct ast_variable *realtime_pgsql(const char *database, const char *tab
 	char *stringp;
 	char *chunk;
 	char *op;
+	char *escape = "";
 	const struct ast_variable *field = fields;
 	struct ast_variable *var = NULL, *prev = NULL;
 
@@ -407,6 +411,16 @@ static struct ast_variable *realtime_pgsql(const char *database, const char *tab
 		return NULL;
 	}
 
+	/*
+	 * Must connect to the server before anything else as ESCAPE_STRING()
+	 * uses pgsqlConn
+	 */
+	ast_mutex_lock(&pgsql_lock);
+	if (!pgsql_reconnect(database)) {
+		ast_mutex_unlock(&pgsql_lock);
+		return NULL;
+	}
+
 	/* Get the first parameter and first value in our list of passed paramater/value pairs */
 	if (!field) {
 		ast_log(LOG_WARNING,
@@ -415,38 +429,51 @@ static struct ast_variable *realtime_pgsql(const char *database, const char *tab
 			PQfinish(pgsqlConn);
 			pgsqlConn = NULL;
 		}
+		ast_mutex_unlock(&pgsql_lock);
 		return NULL;
 	}
 
 	/* Create the first part of the query using the first parameter/value pairs we just extracted
 	   If there is only 1 set, then we have our query. Otherwise, loop thru the list and concat */
-	op = strchr(field->name, ' ') ? "" : " =";
+	if (!strchr(field->name, ' ')) {
+		op = " =";
+	} else {
+		op = "";
+		if (IS_SQL_LIKE_CLAUSE(field->name)) {
+			escape = ESCAPE_CLAUSE;
+		}
+	}
 
 	ESCAPE_STRING(escapebuf, field->value);
 	if (pgresult) {
 		ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+		ast_mutex_unlock(&pgsql_lock);
 		return NULL;
 	}
 
-	ast_str_set(&sql, 0, "SELECT * FROM %s WHERE %s%s '%s'", tablename, field->name, op, ast_str_buffer(escapebuf));
+	ast_str_set(&sql, 0, "SELECT * FROM %s WHERE %s%s '%s'%s", tablename, field->name, op, ast_str_buffer(escapebuf), escape);
 	while ((field = field->next)) {
-		if (!strchr(field->name, ' '))
+		escape = "";
+		if (!strchr(field->name, ' ')) {
 			op = " =";
-		else
+		} else {
 			op = "";
+			if (IS_SQL_LIKE_CLAUSE(field->name)) {
+				escape = ESCAPE_CLAUSE;
+			}
+		}
 
 		ESCAPE_STRING(escapebuf, field->value);
 		if (pgresult) {
 			ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+			ast_mutex_unlock(&pgsql_lock);
 			return NULL;
 		}
 
-		ast_str_append(&sql, 0, " AND %s%s '%s'", field->name, op, ast_str_buffer(escapebuf));
+		ast_str_append(&sql, 0, " AND %s%s '%s'%s", field->name, op, ast_str_buffer(escapebuf), escape);
 	}
 
 	/* We now have our complete statement; Lets connect to the server and execute it. */
-	ast_mutex_lock(&pgsql_lock);
-
         if (pgsql_exec(database, tablename, ast_str_buffer(sql), &result) != 0) {
 		ast_mutex_unlock(&pgsql_lock);
 		return NULL;
@@ -507,6 +534,7 @@ static struct ast_config *realtime_multi_pgsql(const char *database, const char 
 	char *stringp;
 	char *chunk;
 	char *op;
+	char *escape = "";
 	struct ast_variable *var = NULL;
 	struct ast_config *cfg = NULL;
 	struct ast_category *cat = NULL;
@@ -525,6 +553,16 @@ static struct ast_config *realtime_multi_pgsql(const char *database, const char 
 	if (!(cfg = ast_config_new()))
 		return NULL;
 
+	/*
+	 * Must connect to the server before anything else as ESCAPE_STRING()
+	 * uses pgsqlConn
+	 */
+	ast_mutex_lock(&pgsql_lock);
+	if (!pgsql_reconnect(database)) {
+		ast_mutex_unlock(&pgsql_lock);
+		return NULL;
+	}
+
 	/* Get the first parameter and first value in our list of passed paramater/value pairs */
 	if (!field) {
 		ast_log(LOG_WARNING,
@@ -533,6 +571,7 @@ static struct ast_config *realtime_multi_pgsql(const char *database, const char 
 			PQfinish(pgsqlConn);
 			pgsqlConn = NULL;
 		}
+		ast_mutex_unlock(&pgsql_lock);
 		ast_config_destroy(cfg);
 		return NULL;
 	}
@@ -545,43 +584,53 @@ static struct ast_config *realtime_multi_pgsql(const char *database, const char 
 	/* Create the first part of the query using the first parameter/value pairs we just extracted
 	   If there is only 1 set, then we have our query. Otherwise, loop thru the list and concat */
 
-	if (!strchr(field->name, ' '))
+	if (!strchr(field->name, ' ')) {
 		op = " =";
-	else
+		escape = "";
+	} else {
 		op = "";
+		if (IS_SQL_LIKE_CLAUSE(field->name)) {
+			escape = ESCAPE_CLAUSE;
+		}
+	}
 
 	ESCAPE_STRING(escapebuf, field->value);
 	if (pgresult) {
 		ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+		ast_mutex_unlock(&pgsql_lock);
 		ast_config_destroy(cfg);
 		return NULL;
 	}
 
-	ast_str_set(&sql, 0, "SELECT * FROM %s WHERE %s%s '%s'", table, field->name, op, ast_str_buffer(escapebuf));
+	ast_str_set(&sql, 0, "SELECT * FROM %s WHERE %s%s '%s'%s", table, field->name, op, ast_str_buffer(escapebuf), escape);
 	while ((field = field->next)) {
-		if (!strchr(field->name, ' '))
+		escape = "";
+		if (!strchr(field->name, ' ')) {
 			op = " =";
-		else
+			escape = "";
+		} else {
 			op = "";
+			if (IS_SQL_LIKE_CLAUSE(field->name)) {
+				escape = ESCAPE_CLAUSE;
+			}
+		}
 
 		ESCAPE_STRING(escapebuf, field->value);
 		if (pgresult) {
 			ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+			ast_mutex_unlock(&pgsql_lock);
 			ast_config_destroy(cfg);
 			return NULL;
 		}
 
-		ast_str_append(&sql, 0, " AND %s%s '%s'", field->name, op, ast_str_buffer(escapebuf));
+		ast_str_append(&sql, 0, " AND %s%s '%s'%s", field->name, op, ast_str_buffer(escapebuf), escape);
 	}
 
 	if (initfield) {
 		ast_str_append(&sql, 0, " ORDER BY %s", initfield);
 	}
 
-
 	/* We now have our complete statement; Lets connect to the server and execute it. */
-	ast_mutex_lock(&pgsql_lock);
-
 	if (pgsql_exec(database, table, ast_str_buffer(sql), &result) != 0) {
 		ast_mutex_unlock(&pgsql_lock);
 		ast_config_destroy(cfg);
@@ -622,8 +671,10 @@ static struct ast_config *realtime_multi_pgsql(const char *database, const char 
 
 		for (rowIndex = 0; rowIndex < num_rows; rowIndex++) {
 			var = NULL;
-			if (!(cat = ast_category_new("","",99999)))
+			cat = ast_category_new_anonymous();
+			if (!cat) {
 				continue;
+			}
 			for (i = 0; i < numFields; i++) {
 				stringp = PQgetvalue(result, rowIndex, i);
 				while (stringp) {
@@ -676,6 +727,17 @@ static int update_pgsql(const char *database, const char *tablename, const char 
 		return -1;
 	}
 
+	/*
+	 * Must connect to the server before anything else as ESCAPE_STRING()
+	 * uses pgsqlConn
+	 */
+	ast_mutex_lock(&pgsql_lock);
+	if (!pgsql_reconnect(database)) {
+		ast_mutex_unlock(&pgsql_lock);
+		release_table(table);
+		return -1;
+	}
+
 	/* Get the first parameter and first value in our list of passed paramater/value pairs */
 	if (!field) {
 		ast_log(LOG_WARNING,
@@ -684,6 +746,7 @@ static int update_pgsql(const char *database, const char *tablename, const char 
 			PQfinish(pgsqlConn);
 			pgsqlConn = NULL;
 		}
+		ast_mutex_unlock(&pgsql_lock);
 		release_table(table);
 		return -1;
 	}
@@ -697,6 +760,7 @@ static int update_pgsql(const char *database, const char *tablename, const char 
 
 	if (!column) {
 		ast_log(LOG_ERROR, "PostgreSQL RealTime: Updating on column '%s', but that column does not exist within the table '%s'!\n", field->name, tablename);
+		ast_mutex_unlock(&pgsql_lock);
 		release_table(table);
 		return -1;
 	}
@@ -707,6 +771,7 @@ static int update_pgsql(const char *database, const char *tablename, const char 
 	ESCAPE_STRING(escapebuf, field->value);
 	if (pgresult) {
 		ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+		ast_mutex_unlock(&pgsql_lock);
 		release_table(table);
 		return -1;
 	}
@@ -721,6 +786,7 @@ static int update_pgsql(const char *database, const char *tablename, const char 
 		ESCAPE_STRING(escapebuf, field->value);
 		if (pgresult) {
 			ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+			ast_mutex_unlock(&pgsql_lock);
 			release_table(table);
 			return -1;
 		}
@@ -732,6 +798,7 @@ static int update_pgsql(const char *database, const char *tablename, const char 
 	ESCAPE_STRING(escapebuf, lookup);
 	if (pgresult) {
 		ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", lookup);
+		ast_mutex_unlock(&pgsql_lock);
 		return -1;
 	}
 
@@ -740,8 +807,6 @@ static int update_pgsql(const char *database, const char *tablename, const char 
 	ast_debug(1, "PostgreSQL RealTime: Update SQL: %s\n", ast_str_buffer(sql));
 
 	/* We now have our complete statement; Lets connect to the server and execute it. */
-	ast_mutex_lock(&pgsql_lock);
-
 	if (pgsql_exec(database, tablename, ast_str_buffer(sql), &result) != 0) {
 		ast_mutex_unlock(&pgsql_lock);
 		return -1;
@@ -808,12 +873,24 @@ static int update2_pgsql(const char *database, const char *tablename, const stru
 		return -1;
 	}
 
+	/*
+	 * Must connect to the server before anything else as ESCAPE_STRING()
+	 * uses pgsqlConn
+	 */
+	ast_mutex_lock(&pgsql_lock);
+	if (!pgsql_reconnect(database)) {
+		ast_mutex_unlock(&pgsql_lock);
+		release_table(table);
+		return -1;
+	}
+
 	ast_str_set(&sql, 0, "UPDATE %s SET", tablename);
 	ast_str_set(&where, 0, " WHERE");
 
 	for (field = lookup_fields; field; field = field->next) {
 		if (!find_column(table, field->name)) {
 			ast_log(LOG_ERROR, "Attempted to update based on criteria column '%s' (%s@%s), but that column does not exist!\n", field->name, tablename, database);
+			ast_mutex_unlock(&pgsql_lock);
 			release_table(table);
 			return -1;
 		}
@@ -821,6 +898,7 @@ static int update2_pgsql(const char *database, const char *tablename, const stru
 		ESCAPE_STRING(escapebuf, field->value);
 		if (pgresult) {
 			ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+			ast_mutex_unlock(&pgsql_lock);
 			release_table(table);
 			return -1;
 		}
@@ -835,6 +913,7 @@ static int update2_pgsql(const char *database, const char *tablename, const stru
 			PQfinish(pgsqlConn);
 			pgsqlConn = NULL;
 		}
+		ast_mutex_unlock(&pgsql_lock);
 		release_table(table);
 		return -1;
 	}
@@ -851,6 +930,7 @@ static int update2_pgsql(const char *database, const char *tablename, const stru
 		ESCAPE_STRING(escapebuf, field->value);
 		if (pgresult) {
 			ast_log(LOG_ERROR, "PostgreSQL RealTime: detected invalid input: '%s'\n", field->value);
+			ast_mutex_unlock(&pgsql_lock);
 			release_table(table);
 			return -1;
 		}
@@ -864,7 +944,7 @@ static int update2_pgsql(const char *database, const char *tablename, const stru
 
 	ast_debug(1, "PostgreSQL RealTime: Update SQL: %s\n", ast_str_buffer(sql));
 
-	/* We now have our complete statement; connect to the server and execute it. */
+	/* We now have our complete statement; Lets connect to the server and execute it. */
         if (pgsql_exec(database, tablename, ast_str_buffer(sql), &result) != 0) {
 		ast_mutex_unlock(&pgsql_lock);
 	        return -1;
@@ -909,6 +989,16 @@ static int store_pgsql(const char *database, const char *table, const struct ast
 		return -1;
 	}
 
+	/*
+	 * Must connect to the server before anything else as ESCAPE_STRING()
+	 * uses pgsqlConn
+	 */
+	ast_mutex_lock(&pgsql_lock);
+	if (!pgsql_reconnect(database)) {
+		ast_mutex_unlock(&pgsql_lock);
+		return -1;
+	}
+
 	/* Get the first parameter and first value in our list of passed paramater/value pairs */
 	if (!field) {
 		ast_log(LOG_WARNING,
@@ -917,12 +1007,6 @@ static int store_pgsql(const char *database, const char *table, const struct ast
 			PQfinish(pgsqlConn);
 			pgsqlConn = NULL;
 		}
-		return -1;
-	}
-
-	/* Must connect to the server before anything else, as the escape function requires the connection handle.. */
-	ast_mutex_lock(&pgsql_lock);
-	if (!pgsql_reconnect(database)) {
 		ast_mutex_unlock(&pgsql_lock);
 		return -1;
 	}
@@ -943,6 +1027,7 @@ static int store_pgsql(const char *database, const char *table, const struct ast
 
 	ast_debug(1, "PostgreSQL RealTime: Insert SQL: %s\n", ast_str_buffer(sql1));
 
+	/* We now have our complete statement; Lets connect to the server and execute it. */
         if (pgsql_exec(database, table, ast_str_buffer(sql1), &result) != 0) {
 		ast_mutex_unlock(&pgsql_lock);
 	        return -1;
@@ -951,7 +1036,7 @@ static int store_pgsql(const char *database, const char *table, const struct ast
 	numrows = atoi(PQcmdTuples(result));
 	ast_mutex_unlock(&pgsql_lock);
 
-	ast_debug(1, "PostgreSQL RealTime: row inserted on table: %s.", table);
+	ast_debug(1, "PostgreSQL RealTime: row inserted on table: %s.\n", table);
 
 	/* From http://dev.pgsql.com/doc/pgsql/en/pgsql-affected-rows.html
 	 * An integer greater than zero indicates the number of rows affected
@@ -986,27 +1071,27 @@ static int destroy_pgsql(const char *database, const char *table, const char *ke
 		return -1;
 	}
 
-	/* Get the first parameter and first value in our list of passed paramater/value pairs */
-	/*newparam = va_arg(ap, const char *);
-	newval = va_arg(ap, const char *);
-	if (!newparam || !newval) {*/
-	if (ast_strlen_zero(keyfield) || ast_strlen_zero(lookup))  {
-		ast_log(LOG_WARNING,
-				"PostgreSQL RealTime: Realtime destroy requires at least 1 parameter and 1 value to search on.\n");
-		if (pgsqlConn) {
-			PQfinish(pgsqlConn);
-			pgsqlConn = NULL;
-		};
-		return -1;
-	}
-
-	/* Must connect to the server before anything else, as the escape function requires the connection handle.. */
+	/*
+	 * Must connect to the server before anything else as ESCAPE_STRING()
+	 * uses pgsqlConn
+	 */
 	ast_mutex_lock(&pgsql_lock);
 	if (!pgsql_reconnect(database)) {
 		ast_mutex_unlock(&pgsql_lock);
 		return -1;
 	}
 
+	/* Get the first parameter and first value in our list of passed paramater/value pairs */
+	if (ast_strlen_zero(keyfield) || ast_strlen_zero(lookup))  {
+		ast_log(LOG_WARNING,
+				"PostgreSQL RealTime: Realtime destroy requires at least 1 parameter and 1 value to search on.\n");
+		if (pgsqlConn) {
+			PQfinish(pgsqlConn);
+			pgsqlConn = NULL;
+		}
+		ast_mutex_unlock(&pgsql_lock);
+		return -1;
+	}
 
 	/* Create the first part of the query using the first parameter/value pairs we just extracted
 	   If there is only 1 set, then we have our query. Otherwise, loop thru the list and concat */
@@ -1022,10 +1107,11 @@ static int destroy_pgsql(const char *database, const char *table, const char *ke
 
 	ast_debug(1, "PostgreSQL RealTime: Delete SQL: %s\n", ast_str_buffer(sql));
 
-        if (pgsql_exec(database, table, ast_str_buffer(sql), &result) != 0) {
+	/* We now have our complete statement; Lets connect to the server and execute it. */
+	if (pgsql_exec(database, table, ast_str_buffer(sql), &result) != 0) {
 		ast_mutex_unlock(&pgsql_lock);
-	        return -1;
-        }
+		return -1;
+	}
 
 	numrows = atoi(PQcmdTuples(result));
 	ast_mutex_unlock(&pgsql_lock);
@@ -1103,9 +1189,10 @@ static struct ast_config *config_pgsql(const char *database, const char *table,
 			}
 
 			if (strcmp(last, field_category) || last_cat_metric != atoi(field_cat_metric)) {
-				cur_cat = ast_category_new(field_category, "", 99999);
-				if (!cur_cat)
+				cur_cat = ast_category_new_dynamic(field_category);
+				if (!cur_cat) {
 					break;
+				}
 				ast_copy_string(last, field_category, sizeof(last));
 				last_cat_metric = atoi(field_cat_metric);
 				ast_category_append(cfg, cur_cat);
@@ -1128,7 +1215,8 @@ static int require_pgsql(const char *database, const char *tablename, va_list ap
 	struct columns *column;
 	struct tables *table;
 	char *elm;
-	int type, size, res = 0;
+	int type, res = 0;
+	unsigned int size;
 
 	/*
 	 * Ignore database from the extconfig.conf since it was
@@ -1144,7 +1232,7 @@ static int require_pgsql(const char *database, const char *tablename, va_list ap
 
 	while ((elm = va_arg(ap, char *))) {
 		type = va_arg(ap, require_type);
-		size = va_arg(ap, int);
+		size = va_arg(ap, unsigned int);
 		AST_LIST_TRAVERSE(&table->columns, column, list) {
 			if (strcmp(column->name, elm) == 0) {
 				/* Char can hold anything, as long as it is large enough */
@@ -1198,16 +1286,17 @@ static int require_pgsql(const char *database, const char *tablename, va_list ap
 		if (!column) {
 			if (requirements == RQ_WARN) {
 				ast_log(LOG_WARNING, "Table %s requires a column '%s' of size '%d', but no such column exists.\n", tablename, elm, size);
+				res = -1;
 			} else {
 				struct ast_str *sql = ast_str_create(100);
-				char fieldtype[15];
+				char fieldtype[10];
 				PGresult *result;
 
 				if (requirements == RQ_CREATECHAR || type == RQ_CHAR) {
 					/* Size is minimum length; make it at least 50% greater,
 					 * just to be sure, because PostgreSQL doesn't support
 					 * resizing columns. */
-					snprintf(fieldtype, sizeof(fieldtype), "CHAR(%d)",
+					snprintf(fieldtype, sizeof(fieldtype), "CHAR(%u)",
 						size < 15 ? size * 2 :
 						(size * 3 / 2 > 255) ? 255 : size * 3 / 2);
 				} else if (type == RQ_INTEGER1 || type == RQ_UINTEGER1 || type == RQ_INTEGER2) {
@@ -1237,7 +1326,8 @@ static int require_pgsql(const char *database, const char *tablename, va_list ap
 				ast_debug(1, "About to run ALTER query on table '%s' to add column '%s'\n", tablename, elm);
 
 			        if (pgsql_exec(database, tablename, ast_str_buffer(sql), &result) != 0) {
-						ast_mutex_unlock(&pgsql_lock);
+					ast_mutex_unlock(&pgsql_lock);
+					release_table(table);
 				        return -1;
 			        }
 
@@ -1351,6 +1441,9 @@ static int parse_config(int is_reload)
 
 	config = ast_config_load(RES_CONFIG_PGSQL_CONF, config_flags);
 	if (config == CONFIG_STATUS_FILEUNCHANGED) {
+		if (is_reload && pgsqlConn && PQstatus(pgsqlConn) != CONNECTION_OK) {
+			ast_log(LOG_WARNING,  "PostgreSQL RealTime: Not connected\n");
+		}
 		return 0;
 	}
 
@@ -1361,6 +1454,7 @@ static int parse_config(int is_reload)
 
 	ast_mutex_lock(&pgsql_lock);
 
+	/* XXX: Why would we do this before we're ready to establish a new connection? */
 	if (pgsqlConn) {
 		PQfinish(pgsqlConn);
 		pgsqlConn = NULL;
@@ -1434,16 +1528,16 @@ static int parse_config(int is_reload)
 
 	ast_config_destroy(config);
 
-	if (option_debug) {
+	if (DEBUG_ATLEAST(1)) {
 		if (!ast_strlen_zero(dbhost)) {
-			ast_debug(1, "PostgreSQL RealTime Host: %s\n", dbhost);
-			ast_debug(1, "PostgreSQL RealTime Port: %i\n", dbport);
+			ast_log(LOG_DEBUG, "PostgreSQL RealTime Host: %s\n", dbhost);
+			ast_log(LOG_DEBUG, "PostgreSQL RealTime Port: %i\n", dbport);
 		} else {
-			ast_debug(1, "PostgreSQL RealTime Socket: %s\n", dbsock);
+			ast_log(LOG_DEBUG, "PostgreSQL RealTime Socket: %s\n", dbsock);
 		}
-		ast_debug(1, "PostgreSQL RealTime User: %s\n", dbuser);
-		ast_debug(1, "PostgreSQL RealTime Password: %s\n", dbpass);
-		ast_debug(1, "PostgreSQL RealTime DBName: %s\n", dbname);
+		ast_log(LOG_DEBUG, "PostgreSQL RealTime User: %s\n", dbuser);
+		ast_log(LOG_DEBUG, "PostgreSQL RealTime Password: %s\n", dbpass);
+		ast_log(LOG_DEBUG, "PostgreSQL RealTime DBName: %s\n", dbname);
 	}
 
 	if (!pgsql_reconnect(NULL)) {
@@ -1468,13 +1562,18 @@ static int pgsql_reconnect(const char *database)
 
 	/* mutex lock should have been locked before calling this function. */
 
-	if (pgsqlConn && PQstatus(pgsqlConn) != CONNECTION_OK) {
+	if (pgsqlConn) {
+		if (PQstatus(pgsqlConn) == CONNECTION_OK) {
+			/* We're good? */
+			return 1;
+		}
+
 		PQfinish(pgsqlConn);
 		pgsqlConn = NULL;
 	}
 
 	/* DB password can legitimately be 0-length */
-	if ((!pgsqlConn) && (!ast_strlen_zero(dbhost) || !ast_strlen_zero(dbsock)) && !ast_strlen_zero(dbuser) && !ast_strlen_zero(my_database)) {
+	if ((!ast_strlen_zero(dbhost) || !ast_strlen_zero(dbsock)) && !ast_strlen_zero(dbuser) && !ast_strlen_zero(my_database)) {
 		struct ast_str *conn_info = ast_str_create(128);
 
 		if (!conn_info) {
@@ -1571,8 +1670,10 @@ static char *handle_cli_realtime_pgsql_cache(struct ast_cli_entry *e, int cmd, s
 
 static char *handle_cli_realtime_pgsql_status(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
-	char status[256], credentials[100] = "";
-	int ctimesec = time(NULL) - connect_time;
+	char connection_info[256];
+	char credentials[100] = "";
+	char buf[376]; /* 256+100+"Connected to "+" for "+NULL */
+	int is_connected = 0, ctimesec = time(NULL) - connect_time;
 
 	switch (cmd) {
 	case CLI_INIT:
@@ -1588,36 +1689,26 @@ static char *handle_cli_realtime_pgsql_status(struct ast_cli_entry *e, int cmd, 
 	if (a->argc != 4)
 		return CLI_SHOWUSAGE;
 
-	if (pgsqlConn && PQstatus(pgsqlConn) == CONNECTION_OK) {
-		if (!ast_strlen_zero(dbhost))
-			snprintf(status, sizeof(status), "Connected to %s@%s, port %d", dbname, dbhost, dbport);
-		else if (!ast_strlen_zero(dbsock))
-			snprintf(status, sizeof(status), "Connected to %s on socket file %s", dbname, dbsock);
-		else
-			snprintf(status, sizeof(status), "Connected to %s@%s", dbname, dbhost);
+	if (!ast_strlen_zero(dbhost))
+		snprintf(connection_info, sizeof(connection_info), "%s@%s, port %d", dbname, dbhost, dbport);
+	else if (!ast_strlen_zero(dbsock))
+		snprintf(connection_info, sizeof(connection_info), "%s on socket file %s", dbname, dbsock);
+	else
+		snprintf(connection_info, sizeof(connection_info), "%s@%s", dbname, dbhost);
 
-		if (!ast_strlen_zero(dbuser))
-			snprintf(credentials, sizeof(credentials), " with username %s", dbuser);
+	if (!ast_strlen_zero(dbuser))
+		snprintf(credentials, sizeof(credentials), " with username %s", dbuser);
 
-		if (ctimesec > 31536000)
-			ast_cli(a->fd, "%s%s for %d years, %d days, %d hours, %d minutes, %d seconds.\n",
-					status, credentials, ctimesec / 31536000, (ctimesec % 31536000) / 86400,
-					(ctimesec % 86400) / 3600, (ctimesec % 3600) / 60, ctimesec % 60);
-		else if (ctimesec > 86400)
-			ast_cli(a->fd, "%s%s for %d days, %d hours, %d minutes, %d seconds.\n", status,
-					credentials, ctimesec / 86400, (ctimesec % 86400) / 3600, (ctimesec % 3600) / 60,
-					ctimesec % 60);
-		else if (ctimesec > 3600)
-			ast_cli(a->fd, "%s%s for %d hours, %d minutes, %d seconds.\n", status, credentials,
-					ctimesec / 3600, (ctimesec % 3600) / 60, ctimesec % 60);
-		else if (ctimesec > 60)
-			ast_cli(a->fd, "%s%s for %d minutes, %d seconds.\n", status, credentials, ctimesec / 60,
-					ctimesec % 60);
-		else
-			ast_cli(a->fd, "%s%s for %d seconds.\n", status, credentials, ctimesec);
+	ast_mutex_lock(&pgsql_lock);
+	is_connected = (pgsqlConn && PQstatus(pgsqlConn) == CONNECTION_OK);
+	ast_mutex_unlock(&pgsql_lock);
 
+	if (is_connected) {
+		snprintf(buf, sizeof(buf), "Connected to %s%s for ", connection_info, credentials);
+		ast_cli_print_timestr_fromseconds(a->fd, ctimesec, buf);
 		return CLI_SUCCESS;
 	} else {
+		ast_cli(a->fd, "Unable to connect %s%s\n", connection_info, credentials);
 		return CLI_FAILURE;
 	}
 }
@@ -1629,4 +1720,5 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "PostgreSQL RealTime C
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_REALTIME_DRIVER,
+	.requires = "extconfig",
 );

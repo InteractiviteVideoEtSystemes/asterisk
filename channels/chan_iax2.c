@@ -52,13 +52,12 @@
  */
 
 /*** MODULEINFO
+	<use type="module">res_crypto</use>
 	<use type="external">crypto</use>
 	<support_level>core</support_level>
  ***/
 
 #include "asterisk.h"
-
-ASTERISK_REGISTER_FILE()
 
 #include <sys/mman.h>
 #include <dirent.h>
@@ -68,7 +67,6 @@ ASTERISK_REGISTER_FILE()
 #include <netinet/in_systm.h>
 #include <netinet/ip.h>
 #include <sys/time.h>
-#include <sys/signal.h>
 #include <signal.h>
 #include <strings.h>
 #include <netdb.h>
@@ -102,14 +100,12 @@ ASTERISK_REGISTER_FILE()
 #include "asterisk/localtime.h"
 #include "asterisk/dnsmgr.h"
 #include "asterisk/devicestate.h"
-#include "asterisk/netsock.h"
 #include "asterisk/stringfields.h"
 #include "asterisk/linkedlists.h"
 #include "asterisk/astobj2.h"
 #include "asterisk/timing.h"
 #include "asterisk/taskprocessor.h"
 #include "asterisk/test.h"
-#include "asterisk/data.h"
 #include "asterisk/security_events.h"
 #include "asterisk/stasis_endpoints.h"
 #include "asterisk/bridge.h"
@@ -126,6 +122,7 @@ ASTERISK_REGISTER_FILE()
 #include "iax2/include/provision.h"
 #include "iax2/include/codec_pref.h"
 #include "iax2/include/format_compatibility.h"
+#include "iax2/include/netsock.h"
 
 #include "jitterbuf.h"
 
@@ -213,6 +210,25 @@ ASTERISK_REGISTER_FILE()
 			<para>Gets or sets a variable that is sent to a remote IAX2 peer during call setup.</para>
 		</description>
 	</function>
+	<info name="CHANNEL" language="en_US" tech="IAX">
+		<enumlist>
+			<enum name="osptoken">
+				<para>R/O Get the peer's osptoken.</para>
+			</enum>
+			<enum name="peerip">
+				<para>R/O Get the peer's ip address.</para>
+			</enum>
+			<enum name="peername">
+				<para>R/O Get the peer's username.</para>
+			</enum>
+			<enum name="secure_signaling">
+				<para>R/O Get the if the IAX channel is secured.</para>
+			</enum>
+			<enum name="secure_media">
+				<para>R/O Get the if the IAX channel is secured.</para>
+			</enum>
+		</enumlist>
+	</info>
 	<manager name="IAXpeers" language="en_US">
 		<synopsis>
 			List IAX peers.
@@ -1414,6 +1430,11 @@ static int iax2_is_control_frame_allowed(int subtype)
 		/* Intended only for the sending machine's local channel structure. */
 	case AST_CONTROL_MASQUERADE_NOTIFY:
 		/* Intended only for masquerades when calling ast_indicate_data(). */
+	case AST_CONTROL_STREAM_TOPOLOGY_REQUEST_CHANGE:
+		/* Intended only for internal stream topology manipulation. */
+	case AST_CONTROL_STREAM_TOPOLOGY_CHANGED:
+		/* Intended only for internal stream topology change notification. */
+	case AST_CONTROL_STREAM_TOPOLOGY_SOURCE_CHANGED:
 	case AST_CONTROL_STREAM_STOP:
 	case AST_CONTROL_STREAM_SUSPEND:
 	case AST_CONTROL_STREAM_RESTART:
@@ -1927,19 +1948,6 @@ static int iax2_parse_allow_disallow(struct iax2_codec_pref *pref, iax2_format *
 
 	ao2_ref(cap, -1);
 
-	return res;
-}
-
-static int iax2_data_add_codecs(struct ast_data *root, const char *node_name, iax2_format formats)
-{
-	int res;
-	struct ast_format_cap *cap = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
-	if (!cap) {
-		return -1;
-	}
-	iax2_format_compatibility_bitfield2cap(formats, cap);
-	res = ast_data_add_codecs(root, node_name, cap);
-	ao2_ref(cap, -1);
 	return res;
 }
 
@@ -7134,7 +7142,7 @@ static char *complete_iax2_unregister(const char *line, const char *word, int po
 	if (pos == 2) {
 		struct ao2_iterator i = ao2_iterator_init(peers, 0);
 		while ((p = ao2_iterator_next(&i))) {
-			if (!strncasecmp(p->name, word, wordlen) && 
+			if (!strncasecmp(p->name, word, wordlen) &&
 				++which > state && p->expire > -1) {
 				res = ast_strdup(p->name);
 				peer_unref(p);
@@ -7979,7 +7987,7 @@ static int check_access(int callno, struct ast_sockaddr *addr, struct iax_ies *i
 		  * Set authmethods to the last known authmethod used by the system
 		  * Set a fake secret, it's not looked at, just required to attempt authentication.
 		  * Set authrej so the AUTHREP is rejected without even looking at its contents */
-		iaxs[callno]->authmethods = last_authmethod ? last_authmethod : (IAX_AUTH_MD5 | IAX_AUTH_PLAINTEXT);
+		iaxs[callno]->authmethods = last_authmethod ? last_authmethod : IAX_AUTH_MD5;
 		ast_string_field_set(iaxs[callno], secret, "badsecret");
 		iaxs[callno]->authrej = 1;
 		if (!ast_strlen_zero(iaxs[callno]->username)) {
@@ -8539,7 +8547,7 @@ static int try_transfer(struct chan_iax2_pvt *pvt, struct iax_ies *ies)
 {
 	int newcall = 0;
 	struct iax_ie_data ied;
-	struct ast_sockaddr new;
+	struct ast_sockaddr new = { {0,} };
 
 	memset(&ied, 0, sizeof(ied));
 	if (!ast_sockaddr_isnull(&ies->apparent_addr)) {
@@ -9174,7 +9182,7 @@ static int registry_authrequest(int callno)
 	 * peer does not exist, and vice-versa.
 	 * Therefore, we use whatever the last peer used (which may vary over the
 	 * course of a server, which should leak minimal information). */
-	sentauthmethod = p ? p->authmethods : last_authmethod ? last_authmethod : (IAX_AUTH_MD5 | IAX_AUTH_PLAINTEXT);
+	sentauthmethod = p ? p->authmethods : last_authmethod ? last_authmethod : IAX_AUTH_MD5;
 	if (!p) {
 		iaxs[callno]->authmethods = sentauthmethod;
 	}
@@ -12544,6 +12552,8 @@ static struct ast_channel *iax2_request(const char *type, struct ast_format_cap 
 
 static void *network_thread(void *ignore)
 {
+	int res;
+
 	if (timer) {
 		ast_io_add(io, ast_timer_fd(timer), timing_read, AST_IO_IN | AST_IO_PRI, NULL);
 	}
@@ -12553,7 +12563,11 @@ static void *network_thread(void *ignore)
 		/* Wake up once a second just in case SIGURG was sent while
 		 * we weren't in poll(), to make sure we don't hang when trying
 		 * to unload. */
-		if (ast_io_wait(io, 1000) <= 0) {
+		res = ast_io_wait(io, 1000);
+		/* Timeout(=0), and EINTR is not a thread exit condition. We do
+		 * not want to exit the thread loop on these conditions. */
+		if (res < 0 && errno != -EINTR) {
+			ast_log(LOG_ERROR, "IAX2 network thread unexpected exit: %s\n", strerror(errno));
 			break;
 		}
 	}
@@ -12852,6 +12866,9 @@ static struct iax2_peer *build_peer(const char *name, struct ast_variable *v, st
 				}
 			} else if (!strcasecmp(v->name, "auth")) {
 				peer->authmethods = get_auth_methods(v->value);
+				if (peer->authmethods & IAX_AUTH_PLAINTEXT) {
+					ast_log(LOG_WARNING, "Auth method for peer '%s' is set to deprecated 'plaintext' at line %d of iax.conf\n", peer->name, v->lineno);
+				}
 			} else if (!strcasecmp(v->name, "encryption")) {
 				peer->encmethods |= get_encrypt_methods(v->value);
 				if (!peer->encmethods) {
@@ -12890,7 +12907,13 @@ static struct iax2_peer *build_peer(const char *name, struct ast_variable *v, st
 					/* Non-dynamic.  Make sure we become that way if we're not */
 					AST_SCHED_DEL(sched, peer->expire);
 					ast_clear_flag64(peer, IAX_DYNAMIC);
-					peer->addr.ss.ss_family = AST_AF_UNSPEC;
+					if (peer->dnsmgr) {
+						// Make sure we refresh dnsmgr if we're using it
+						ast_dnsmgr_refresh(peer->dnsmgr);
+					} else {
+						// Or just invalidate the address
+						peer->addr.ss.ss_family = AST_AF_UNSPEC;
+					}
 					if (ast_dnsmgr_lookup(v->value, &peer->addr, &peer->dnsmgr, srvlookup ? "_iax._udp" : NULL)) {
 						return peer_unref(peer);
 					}
@@ -13022,7 +13045,7 @@ static struct iax2_peer *build_peer(const char *name, struct ast_variable *v, st
 			}
 		}
 		if (!peer->authmethods)
-			peer->authmethods = IAX_AUTH_MD5 | IAX_AUTH_PLAINTEXT;
+			peer->authmethods = IAX_AUTH_MD5;
 		ast_clear_flag64(peer, IAX_DELME);
 	}
 
@@ -13040,7 +13063,7 @@ static struct iax2_peer *build_peer(const char *name, struct ast_variable *v, st
 		ast_free_acl_list(oldacl);
 	}
 
-	if (!ast_strlen_zero(peer->mailbox)) {
+	if (!ast_strlen_zero(peer->mailbox) && !peer->mwi_event_sub) {
 		struct stasis_topic *mailbox_specific_topic;
 
 		mailbox_specific_topic = ast_mwi_topic(peer->mailbox);
@@ -13171,6 +13194,9 @@ static struct iax2_user *build_user(const char *name, struct ast_variable *v, st
 				}
 			} else if (!strcasecmp(v->name, "auth")) {
 				user->authmethods = get_auth_methods(v->value);
+				if (user->authmethods & IAX_AUTH_PLAINTEXT) {
+					ast_log(LOG_WARNING, "Auth method for user '%s' is set to deprecated 'plaintext' at line %d of iax.conf\n", user->name, v->lineno);
+				}
 			} else if (!strcasecmp(v->name, "encryption")) {
 				user->encmethods |= get_encrypt_methods(v->value);
 				if (!user->encmethods) {
@@ -13303,13 +13329,13 @@ static struct iax2_user *build_user(const char *name, struct ast_variable *v, st
 		}
 		if (!user->authmethods) {
 			if (!ast_strlen_zero(user->secret)) {
-				user->authmethods = IAX_AUTH_MD5 | IAX_AUTH_PLAINTEXT;
+				user->authmethods = IAX_AUTH_MD5;
 				if (!ast_strlen_zero(user->inkeys))
 					user->authmethods |= IAX_AUTH_RSA;
 			} else if (!ast_strlen_zero(user->inkeys)) {
 				user->authmethods = IAX_AUTH_RSA;
 			} else {
-				user->authmethods = IAX_AUTH_MD5 | IAX_AUTH_PLAINTEXT;
+				user->authmethods = IAX_AUTH_MD5;
 			}
 		}
 		ast_clear_flag64(user, IAX_DELME);
@@ -14284,7 +14310,7 @@ static int iax2_matchmore(struct ast_channel *chan, const char *context, const c
 static int iax2_exec(struct ast_channel *chan, const char *context, const char *exten, int priority, const char *callerid, const char *data)
 {
 	char odata[256];
-	char req[256];
+	char req[sizeof(odata) + AST_MAX_CONTEXT + AST_MAX_EXTENSION + sizeof("IAX2//@")];
 	char *ncontext;
 	struct iax2_dpcache *dp = NULL;
 	struct ast_app *dial = NULL;
@@ -14523,129 +14549,6 @@ static struct ast_cli_entry cli_iax2[] = {
 #endif /* IAXTESTS */
 };
 
-#ifdef TEST_FRAMEWORK
-AST_TEST_DEFINE(test_iax2_peers_get)
-{
-	struct ast_data_query query = {
-		.path = "/asterisk/channel/iax2/peers",
-		.search = "peers/peer/name=test_peer_data_provider"
-	};
-	struct ast_data *node;
-	struct iax2_peer *peer;
-
-	switch (cmd) {
-		case TEST_INIT:
-			info->name = "iax2_peers_get_data_test";
-			info->category = "/main/data/iax2/peers/";
-			info->summary = "IAX2 peers data providers unit test";
-			info->description =
-				"Tests whether the IAX2 peers data provider implementation works as expected.";
-			return AST_TEST_NOT_RUN;
-		case TEST_EXECUTE:
-			break;
-	}
-
-	/* build a test peer */
-	peer = build_peer("test_peer_data_provider", NULL, NULL, 0);
-	if (!peer) {
-		return AST_TEST_FAIL;
-	}
-	peer->expiry= 1010;
-	ao2_link(peers, peer);
-
-	node = ast_data_get(&query);
-	if (!node) {
-		ao2_unlink(peers, peer);
-		peer_unref(peer);
-		return AST_TEST_FAIL;
-	}
-
-	/* check returned data node. */
-	if (strcmp(ast_data_retrieve_string(node, "peer/name"), "test_peer_data_provider")) {
-		ao2_unlink(peers, peer);
-		peer_unref(peer);
-		ast_data_free(node);
-		return AST_TEST_FAIL;
-	}
-
-	if (ast_data_retrieve_int(node, "peer/expiry") != 1010) {
-		ao2_unlink(peers, peer);
-		peer_unref(peer);
-		ast_data_free(node);
-		return AST_TEST_FAIL;
-	}
-
-	/* release resources */
-	ast_data_free(node);
-
-	ao2_unlink(peers, peer);
-	peer_unref(peer);
-
-	return AST_TEST_PASS;
-}
-
-AST_TEST_DEFINE(test_iax2_users_get)
-{
-	struct ast_data_query query = {
-		.path = "/asterisk/channel/iax2/users",
-		.search = "users/user/name=test_user_data_provider"
-	};
-	struct ast_data *node;
-	struct iax2_user *user;
-
-	switch (cmd) {
-		case TEST_INIT:
-			info->name = "iax2_users_get_data_test";
-			info->category = "/main/data/iax2/users/";
-			info->summary = "IAX2 users data providers unit test";
-			info->description =
-				"Tests whether the IAX2 users data provider implementation works as expected.";
-			return AST_TEST_NOT_RUN;
-		case TEST_EXECUTE:
-			break;
-	}
-
-	user = build_user("test_user_data_provider", NULL, NULL, 0);
-	if (!user) {
-		ast_test_status_update(test, "Failed to build a test user\n");
-		return AST_TEST_FAIL;
-	}
-	user->amaflags = 1010;
-	ao2_link(users, user);
-
-	node = ast_data_get(&query);
-	if (!node) {
-		ast_test_status_update(test, "The data query to find our test user failed\n");
-		ao2_unlink(users, user);
-		user_unref(user);
-		return AST_TEST_FAIL;
-	}
-
-	if (strcmp(ast_data_retrieve_string(node, "user/name"), "test_user_data_provider")) {
-		ast_test_status_update(test, "Our data results did not return the test user created in the previous step.\n");
-		ao2_unlink(users, user);
-		user_unref(user);
-		ast_data_free(node);
-		return AST_TEST_FAIL;
-	}
-
-	if (ast_data_retrieve_int(node, "user/amaflags/value") != 1010) {
-		ast_test_status_update(test, "The amaflags field in our test user was '%d' not the expected value '1010'\n", ast_data_retrieve_int(node, "user/amaflags/value"));
-		ao2_unlink(users, user);
-		user_unref(user);
-		ast_data_free(node);
-		return AST_TEST_FAIL;
-	}
-
-	ast_data_free(node);
-
-	ao2_unlink(users, user);
-	user_unref(user);
-
-	return AST_TEST_PASS;
-}
-#endif
-
 static void cleanup_thread_list(void *head)
 {
 	AST_LIST_HEAD(iax2_thread_list, iax2_thread);
@@ -14711,11 +14614,6 @@ static int __unload_module(void)
 	ast_manager_unregister( "IAXnetstats" );
 	ast_manager_unregister( "IAXregistry" );
 	ast_unregister_application(papp);
-#ifdef TEST_FRAMEWORK
-	AST_TEST_UNREGISTER(test_iax2_peers_get);
-	AST_TEST_UNREGISTER(test_iax2_users_get);
-#endif
-	ast_data_unregister(NULL);
 	ast_cli_unregister_multiple(cli_iax2, ARRAY_LEN(cli_iax2));
 	ast_unregister_switch(&iax2_switch);
 	ast_channel_unregister(&iax2_tech);
@@ -14854,193 +14752,8 @@ container_fail:
 	if (calltoken_ignores) {
 		ao2_ref(calltoken_ignores, -1);
 	}
-	return AST_MODULE_LOAD_FAILURE;
+	return -1;
 }
-
-
-#define DATA_EXPORT_IAX2_PEER(MEMBER)				\
-	MEMBER(iax2_peer, name, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, username, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, secret, AST_DATA_PASSWORD)		\
-	MEMBER(iax2_peer, dbsecret, AST_DATA_PASSWORD)		\
-	MEMBER(iax2_peer, outkey, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, regexten, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, context, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, peercontext, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, mailbox, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, mohinterpret, AST_DATA_STRING)	\
-	MEMBER(iax2_peer, mohsuggest, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, inkeys, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, cid_num, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, cid_name, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, zonetag, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, parkinglot, AST_DATA_STRING)		\
-	MEMBER(iax2_peer, expiry, AST_DATA_SECONDS)		\
-	MEMBER(iax2_peer, callno, AST_DATA_INTEGER)		\
-	MEMBER(iax2_peer, lastms, AST_DATA_MILLISECONDS)	\
-	MEMBER(iax2_peer, maxms, AST_DATA_MILLISECONDS)		\
-	MEMBER(iax2_peer, pokefreqok, AST_DATA_MILLISECONDS)	\
-	MEMBER(iax2_peer, pokefreqnotok, AST_DATA_MILLISECONDS)	\
-	MEMBER(iax2_peer, historicms, AST_DATA_INTEGER)		\
-	MEMBER(iax2_peer, smoothing, AST_DATA_BOOLEAN)		\
-        MEMBER(iax2_peer, maxcallno, AST_DATA_INTEGER)
-
-AST_DATA_STRUCTURE(iax2_peer, DATA_EXPORT_IAX2_PEER);
-
-static int peers_data_provider_get(const struct ast_data_search *search,
-	struct ast_data *data_root)
-{
-	struct ast_data *data_peer;
-	struct iax2_peer *peer;
-	struct ao2_iterator i;
-	char status[20];
-	struct ast_str *encmethods = ast_str_alloca(256);
-
-	i = ao2_iterator_init(peers, 0);
-	while ((peer = ao2_iterator_next(&i))) {
-		data_peer = ast_data_add_node(data_root, "peer");
-		if (!data_peer) {
-			peer_unref(peer);
-			continue;
-		}
-
-		ast_data_add_structure(iax2_peer, data_peer, peer);
-
-		iax2_data_add_codecs(data_peer, "codecs", peer->capability);
-
-		peer_status(peer, status, sizeof(status));
-		ast_data_add_str(data_peer, "status", status);
-
-		ast_data_add_str(data_peer, "host", ast_sockaddr_stringify_host(&peer->addr));
-
-		ast_data_add_str(data_peer, "mask", ast_sockaddr_stringify_addr(&peer->mask));
-
-		ast_data_add_int(data_peer, "port", ast_sockaddr_port(&peer->addr));
-
-		ast_data_add_bool(data_peer, "trunk", ast_test_flag64(peer, IAX_TRUNK));
-
-		ast_data_add_bool(data_peer, "dynamic", ast_test_flag64(peer, IAX_DYNAMIC));
-
-		encmethods_to_str(peer->encmethods, &encmethods);
-		ast_data_add_str(data_peer, "encryption", peer->encmethods ? ast_str_buffer(encmethods) : "no");
-
-		peer_unref(peer);
-
-		if (!ast_data_search_match(search, data_peer)) {
-			ast_data_remove_node(data_root, data_peer);
-		}
-	}
-	ao2_iterator_destroy(&i);
-
-	return 0;
-}
-
-#define DATA_EXPORT_IAX2_USER(MEMBER)					\
-        MEMBER(iax2_user, name, AST_DATA_STRING)			\
-        MEMBER(iax2_user, dbsecret, AST_DATA_PASSWORD)			\
-        MEMBER(iax2_user, accountcode, AST_DATA_STRING)			\
-        MEMBER(iax2_user, mohinterpret, AST_DATA_STRING)		\
-        MEMBER(iax2_user, mohsuggest, AST_DATA_STRING)			\
-        MEMBER(iax2_user, inkeys, AST_DATA_STRING)			\
-        MEMBER(iax2_user, language, AST_DATA_STRING)			\
-        MEMBER(iax2_user, cid_num, AST_DATA_STRING)			\
-        MEMBER(iax2_user, cid_name, AST_DATA_STRING)			\
-        MEMBER(iax2_user, parkinglot, AST_DATA_STRING)			\
-        MEMBER(iax2_user, maxauthreq, AST_DATA_INTEGER)			\
-        MEMBER(iax2_user, curauthreq, AST_DATA_INTEGER)
-
-AST_DATA_STRUCTURE(iax2_user, DATA_EXPORT_IAX2_USER);
-
-static int users_data_provider_get(const struct ast_data_search *search,
-	struct ast_data *data_root)
-{
-	struct ast_data *data_user, *data_authmethods, *data_enum_node;
-	struct iax2_user *user;
-	struct ao2_iterator i;
-	struct ast_str *auth;
-	char *pstr = "";
-
-	if (!(auth = ast_str_create(90))) {
-		ast_log(LOG_ERROR, "Unable to create temporary string for storing 'secret'\n");
-		return 0;
-	}
-
-	i = ao2_iterator_init(users, 0);
-	for (; (user = ao2_iterator_next(&i)); user_unref(user)) {
-		data_user = ast_data_add_node(data_root, "user");
-		if (!data_user) {
-			continue;
-		}
-
-		ast_data_add_structure(iax2_user, data_user, user);
-
-		iax2_data_add_codecs(data_user, "codecs", user->capability);
-
-		if (!ast_strlen_zero(user->secret)) {
-			ast_str_set(&auth, 0, "%s", user->secret);
-		} else if (!ast_strlen_zero(user->inkeys)) {
-			ast_str_set(&auth, 0, "Key: %s", user->inkeys);
-		} else {
-			ast_str_set(&auth, 0, "no secret");
-		}
-		ast_data_add_password(data_user, "secret", ast_str_buffer(auth));
-
-		ast_data_add_str(data_user, "context", user->contexts ? user->contexts->context : DEFAULT_CONTEXT);
-
-		/* authmethods */
-		data_authmethods = ast_data_add_node(data_user, "authmethods");
-		if (!data_authmethods) {
-			ast_data_remove_node(data_root, data_user);
-			continue;
-		}
-		ast_data_add_bool(data_authmethods, "rsa", user->authmethods & IAX_AUTH_RSA);
-		ast_data_add_bool(data_authmethods, "md5", user->authmethods & IAX_AUTH_MD5);
-		ast_data_add_bool(data_authmethods, "plaintext", user->authmethods & IAX_AUTH_PLAINTEXT);
-
-		/* amaflags */
-		data_enum_node = ast_data_add_node(data_user, "amaflags");
-		if (!data_enum_node) {
-			ast_data_remove_node(data_root, data_user);
-			continue;
-		}
-		ast_data_add_int(data_enum_node, "value", user->amaflags);
-		ast_data_add_str(data_enum_node, "text", ast_channel_amaflags2string(user->amaflags));
-
-		ast_data_add_bool(data_user, "access-control", ast_acl_list_is_empty(user->acl) ? 0 : 1);
-
-		if (ast_test_flag64(user, IAX_CODEC_NOCAP)) {
-			pstr = "REQ only";
-		} else if (ast_test_flag64(user, IAX_CODEC_NOPREFS)) {
-			pstr = "disabled";
-		} else {
-			pstr = ast_test_flag64(user, IAX_CODEC_USER_FIRST) ? "caller" : "host";
-		}
-		ast_data_add_str(data_user, "codec-preferences", pstr);
-
-		if (!ast_data_search_match(search, data_user)) {
-			ast_data_remove_node(data_root, data_user);
-		}
-	}
-	ao2_iterator_destroy(&i);
-
-	ast_free(auth);
-	return 0;
-}
-
-static const struct ast_data_handler peers_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = peers_data_provider_get
-};
-
-static const struct ast_data_handler users_data_provider = {
-	.version = AST_DATA_HANDLER_VERSION,
-	.get = users_data_provider_get
-};
-
-static const struct ast_data_entry iax2_data_providers[] = {
-	AST_DATA_ENTRY("asterisk/channel/iax2/peers", &peers_data_provider),
-	AST_DATA_ENTRY("asterisk/channel/iax2/users", &users_data_provider),
-};
 
 /*!
  * \brief Load the module
@@ -15059,12 +14772,14 @@ static int load_module(void)
 	struct iax2_registry *reg = NULL;
 
 	if (!(iax2_tech.capabilities = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT))) {
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_format_cap_append_by_type(iax2_tech.capabilities, AST_MEDIA_TYPE_UNKNOWN);
 
 	if (load_objects()) {
-		return AST_MODULE_LOAD_FAILURE;
+		ao2_ref(iax2_tech.capabilities, -1);
+		iax2_tech.capabilities = NULL;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	memset(iaxs, 0, sizeof(iaxs));
@@ -15075,28 +14790,36 @@ static int load_module(void)
 
 	if (!(sched = ast_sched_context_create())) {
 		ast_log(LOG_ERROR, "Failed to create scheduler thread\n");
-		return AST_MODULE_LOAD_FAILURE;
+		ao2_ref(iax2_tech.capabilities, -1);
+		iax2_tech.capabilities = NULL;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (ast_sched_start_thread(sched)) {
 		ast_sched_context_destroy(sched);
+		ao2_ref(iax2_tech.capabilities, -1);
+		iax2_tech.capabilities = NULL;
 		sched = NULL;
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(io = io_context_create())) {
 		ast_log(LOG_ERROR, "Failed to create I/O context\n");
 		ast_sched_context_destroy(sched);
+		ao2_ref(iax2_tech.capabilities, -1);
+		iax2_tech.capabilities = NULL;
 		sched = NULL;
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (!(netsock = ast_netsock_list_alloc())) {
 		ast_log(LOG_ERROR, "Failed to create netsock list\n");
 		io_context_destroy(io);
 		ast_sched_context_destroy(sched);
+		ao2_ref(iax2_tech.capabilities, -1);
+		iax2_tech.capabilities = NULL;
 		sched = NULL;
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_netsock_init(netsock);
 
@@ -15105,8 +14828,10 @@ static int load_module(void)
 		ast_log(LOG_ERROR, "Could not allocate outsock list.\n");
 		io_context_destroy(io);
 		ast_sched_context_destroy(sched);
+		ao2_ref(iax2_tech.capabilities, -1);
+		iax2_tech.capabilities = NULL;
 		sched = NULL;
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 	ast_netsock_init(outsock);
 
@@ -15125,16 +14850,10 @@ static int load_module(void)
 			ast_timer_close(timer);
 			timer = NULL;
 		}
+		__unload_module();
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
-#ifdef TEST_FRAMEWORK
-	AST_TEST_REGISTER(test_iax2_peers_get);
-	AST_TEST_REGISTER(test_iax2_users_get);
-#endif
-
-	/* Register AstData providers */
-	ast_data_register_multiple(iax2_data_providers, ARRAY_LEN(iax2_data_providers));
 	ast_cli_register_multiple(cli_iax2, ARRAY_LEN(cli_iax2));
 
 	ast_register_application_xml(papp, iax2_prov_app);
@@ -15150,7 +14869,7 @@ static int load_module(void)
  	if (ast_channel_register(&iax2_tech)) {
 		ast_log(LOG_ERROR, "Unable to register channel class %s\n", "IAX2");
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	}
 
 	if (ast_register_switch(&iax2_switch)) {
@@ -15160,7 +14879,7 @@ static int load_module(void)
 	if (start_network_thread()) {
 		ast_log(LOG_ERROR, "Unable to start network thread\n");
 		__unload_module();
-		return AST_MODULE_LOAD_FAILURE;
+		return AST_MODULE_LOAD_DECLINE;
 	} else {
 		ast_verb(2, "IAX Ready and Listening\n");
 	}
@@ -15190,5 +14909,6 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_LOAD_ORDER, "Inter Asterisk eXchan
 	.unload = unload_module,
 	.reload = reload,
 	.load_pri = AST_MODPRI_CHANNEL_DRIVER,
-	.nonoptreq = "res_crypto",
+	.requires = "dnsmgr",
+	.optional_modules = "res_crypto",
 );

@@ -15,12 +15,9 @@ import sqlalchemy as sa
 
 
 def upgrade():
-    op.alter_column('ps_aors', 'qualify_timeout', type_=sa.Decimal)
-    op.alter_column('ps_contacts', 'qualify_timeout', type_=sa.Decimal)
-    pass
-
+    op.alter_column('ps_aors', 'qualify_timeout', type_=sa.Float)
+    op.alter_column('ps_contacts', 'qualify_timeout', type_=sa.Float)
 
 def downgrade():
     op.alter_column('ps_aors', 'qualify_timeout', type_=sa.Integer)
     op.alter_column('ps_contacts', 'qualify_timeout', type_=sa.Integer)
-    pass
