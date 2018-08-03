@@ -89,7 +89,6 @@ hardware, see http://www.asterisk.org
 Summary: Asterisk core package without any "extras".
 Group: Utilities/System
 Provides: asterisk%{astapi}-core
-#Obsoletes: asterisk-core
 Conflicts: asterisk14-core
 Conflicts: asterisk16-core
 Conflicts: asterisk18-core
@@ -128,6 +127,17 @@ Requires: %{name}-core = %{version}-%{release}
 %description alsa
 Alsa channel driver for Asterisk
 %endif
+
+#
+# Sound subpackages
+#
+
+%package sounds
+Summary: Asterisk sound files
+Group: Utilities/System
+
+%description sounds
+All sound files to be packaged with asterisk
 
 #
 #  snmp subpackage
@@ -983,6 +993,13 @@ cd $RPM_BUILD_DIR
 %attr(0775,asterisk,asterisk) %dir /var/spool/asterisk/system
 %attr(0775,asterisk,asterisk) %dir /var/spool/asterisk/tmp
 %attr(0775,asterisk,asterisk) %dir /var/spool/asterisk/voicemail
+
+%files sounds
+%attr(0755,asterisk,asterisk) %dir /var/lib/asterisk/sounds
+%attr(0755,asterisk,asterisk) /var/lib/asterisk/sounds/*
+%attr(0755,asterisk,asterisk) %dir /var/lib/asterisk/moh
+%attr(0755,asterisk,asterisk) /var/lib/asterisk/moh/*
+
 
 #
 #  Alsa Subpackage
