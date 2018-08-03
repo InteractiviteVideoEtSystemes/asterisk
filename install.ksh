@@ -68,9 +68,6 @@ function create_rpm
 
     
     echo "************************* fin du rpmbuild ****************************"
-    #Recuperation du rpm
-    mv -f $HOME/rpmbuild/RPMS/i386/*.rpm $PWD/.
-    mv -f $HOME/rpmbuild/RPMS/x86_64/*.rpm $PWD/.
     clean
 }
 
