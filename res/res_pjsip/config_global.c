@@ -29,7 +29,7 @@
 #include "asterisk/res_pjsip_cli.h"
 
 #define DEFAULT_MAX_FORWARDS 70
-#define DEFAULT_KEEPALIVE_INTERVAL 0
+#define DEFAULT_KEEPALIVE_INTERVAL 90
 #define DEFAULT_USERAGENT_PREFIX "Asterisk PBX"
 #define DEFAULT_OUTBOUND_ENDPOINT "default_outbound_endpoint"
 #define DEFAULT_DEBUG "no"
@@ -491,7 +491,7 @@ int ast_sip_initialize_sorcery_global(void)
 	snprintf(default_useragent, sizeof(default_useragent), "%s %s",
 		DEFAULT_USERAGENT_PREFIX, ast_get_version());
 
-	ast_sorcery_apply_default(sorcery, "global", "config", "pjsip.conf,criteria=type=global");
+	ast_sorcery_apply_default(sorcery, "global", "config", "pjsip.conf,criteria=type=global,single_object=yes,explicit_name=global");
 
 	if (ast_sorcery_object_register(sorcery, "global", global_alloc, NULL, global_apply)) {
 		return -1;

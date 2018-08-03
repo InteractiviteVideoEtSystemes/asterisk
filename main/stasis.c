@@ -1198,10 +1198,25 @@ struct stasis_topic *stasis_topic_pool_get_topic(struct stasis_topic_pool *pool,
 	return topic_pool_entry->topic;
 }
 
+int stasis_topic_pool_topic_exists(const struct stasis_topic_pool *pool, const char *topic_name)
+{
+	struct topic_pool_entry *topic_pool_entry;
+
+	topic_pool_entry = ao2_find(pool->pool_container, topic_name, OBJ_SEARCH_KEY);
+	if (!topic_pool_entry) {
+		return 0;
+	}
+
+	ao2_ref(topic_pool_entry, -1);
+	return 1;
+}
+
 void stasis_log_bad_type_access(const char *name)
 {
 #ifdef AST_DEVMODE
-	ast_log(LOG_ERROR, "Use of %s() before init/after destruction\n", name);
+	if (!stasis_message_type_declined(name)) {
+		ast_log(LOG_ERROR, "Use of %s() before init/after destruction\n", name);
+	}
 #endif
 }
 

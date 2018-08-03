@@ -14,7 +14,7 @@ pipeline {
 	triggers {
 		cron 'H H(0-4) * * *'
 	}
-	
+
 	agent {
 		/* All of the stages need to be performed on a docker host */
 		label "swdev-docker"
@@ -25,8 +25,10 @@ pipeline {
 			steps {
 				/* Here's where we switch to scripted pipeline */
 				script {
+					manager.createSummary("/plugin/workflow-job/images/48x48/pipelinejob.png").appendText("Docker Host: ${NODE_NAME}", false)
+
 					stage ("Checkout") {
-						sh "sudo chown -R jenkins:users ."  
+						sh "sudo chown -R jenkins:users ."
 						sh "printenv | sort"
 						sh "sudo tests/CI/setupJenkinsEnvironment.sh"
 					}
@@ -35,22 +37,45 @@ pipeline {
 					def r = currentBuild.startTimeInMillis % images.length
 					def ri = images[(int)r]
 					def randomImage = env.DOCKER_REGISTRY + "/" + ri
-					def dockerOptions = "--ulimit core=0 --ulimit nofile=10240 " +
+					def dockerOptions = "--privileged --ulimit core=0 --ulimit nofile=10240 " +
 						" -v /srv/jenkins:/srv/jenkins:rw -v /srv/cache:/srv/cache:rw " +
 						" --entrypoint=''"
 					def bt = env.BUILD_TAG.replaceAll(/[^a-zA-Z0-9_.-]/, '-')
 					def outputdir = "tests/CI/output/Testsuite"
+
+					manager.createSummary("/plugin/workflow-job/images/48x48/pipelinejob.png").appendText("Docker Image: ${randomImage}", false)
 					def img = docker.image(randomImage)
 					img.pull()
 
-					stage ("Build") {
-						img.inside(dockerOptions + " --name ${bt}-build") {
+					img.inside(dockerOptions + " --name ${bt}-build") {
+						stage ("Build") {
 							echo 'Building..'
 							env.CCACHE_DIR = "/srv/cache/ccache"
-							sh "./tests/CI/buildAsterisk.sh --output-dir=${outputdir} --cache-dir=/srv/cache"
+							sh "./tests/CI/buildAsterisk.sh --branch-name=${BRANCH_NAME} --output-dir=${outputdir} --cache-dir=/srv/cache"
 
 							archiveArtifacts allowEmptyArchive: true, defaultExcludes: false, fingerprint: false,
 								artifacts: "${outputdir}/*"
+						}
+						stage ("Docs") {
+
+							sh "sudo ./tests/CI/installAsterisk.sh --branch-name=${BRANCH_NAME}  --user-group=jenkins:users"
+
+							def docUrl = env.GIT_URL.replaceAll(/\/[^\/]+$/, "/publish-docs")
+							checkout scm: [$class: 'GitSCM',
+								branches: [[name: "master"]],
+									extensions: [
+										[$class: 'RelativeTargetDirectory', relativeTargetDir: "tests/CI/output/publish-docs"],
+										[$class: 'CloneOption',
+											noTags: true,
+											depth: 10,
+											honorRefspec: true,
+											shallow: true
+										],
+									],
+									userRemoteConfigs: [[url: docUrl]]
+								]
+
+							sh "./tests/CI/publishAsteriskDocs.sh --user-group=jenkins:users --branch-name=${BRANCH_NAME} --wiki-doc-branch-regex=\"${WIKI_DOC_BRANCH_REGEX}\""
 						}
 					}
 
@@ -74,11 +99,11 @@ pipeline {
 								img.inside("${dockerOptions} --name ${bt}-${groupName}") {
 
 									lock("${JOB_NAME}.${NODE_NAME}.installer") {
-										sh 'sudo ./tests/CI/installAsterisk.sh  --user-group=jenkins:users'
+										sh "sudo ./tests/CI/installAsterisk.sh --uninstall-all --branch-name=${BRANCH_NAME} --user-group=jenkins:users"
 									}
 
 									sh "sudo rm -rf ${groupDir} || : "
-									
+
 									checkout scm: [$class: 'GitSCM',
 										branches: [[name: "${BRANCH_NAME}"]],
 											extensions: [
@@ -93,7 +118,7 @@ pipeline {
 											userRemoteConfigs: [[url: testsuiteUrl]]
 										]
 
-									sh "sudo tests/CI/runTestsuite.sh ${groupRunTestsuiteOptions} --testsuite-dir='${groupDir}' --test-command='${groupTestcmd}'"
+									sh "sudo tests/CI/runTestsuite.sh ${groupRunTestsuiteOptions} --testsuite-dir='${groupDir}' --testsuite-command='${groupTestcmd}'"
 
 									archiveArtifacts allowEmptyArchive: true, defaultExcludes: false, fingerprint: true,
 										artifacts: "${groupDir}/asterisk-test-suite-report.xml, ${groupDir}/logs/**, ${groupDir}/core*.txt"

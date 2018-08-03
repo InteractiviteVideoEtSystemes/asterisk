@@ -63,6 +63,9 @@ pipeline {
 			}
 			steps {
 				script {
+					manager.build.displayName = "${env.GERRIT_CHANGE_NUMBER}"
+					manager.createSummary("/plugin/workflow-job/images/48x48/pipelinejob.png").appendText("Docker Host: ${NODE_NAME}", false)
+
 					stage ("Checkout") {
 						sh "sudo chown -R jenkins:users ."
 						env.GERRIT_PROJECT_URL = env.GERRIT_CHANGE_URL.replaceAll(/\/[0-9]+$/, "/${env.GERRIT_PROJECT}")
@@ -112,11 +115,12 @@ pipeline {
 					def ri = images[(int)r]
 					def randomImage = env.DOCKER_REGISTRY + "/" + ri;
 					def bt = env.BUILD_TAG.replaceAll(/[^a-zA-Z0-9_.-]/, '-')
-					def dockerOptions = "--ulimit core=0 --ulimit nofile=10240 " +
+					def dockerOptions = "--privileged --ulimit core=0 --ulimit nofile=10240 " +
 						" -v /srv/jenkins:/srv/jenkins:rw -v /srv/cache:/srv/cache:rw " +
 						" --entrypoint='' --name ${bt}-build"
 					def outputdir = "tests/CI/output/UnitTests"
 
+					manager.createSummary("/plugin/workflow-job/images/48x48/pipelinejob.png").appendText("Docker Image: ${randomImage}", false)
 					def img = docker.image(randomImage)
 					img.pull()
 					img.inside(dockerOptions) {
@@ -124,7 +128,7 @@ pipeline {
 						stage ('Build') {
 							echo 'Building..'
 
-							sh "./tests/CI/buildAsterisk.sh --output-dir=${outputdir} --cache-dir=/srv/cache"
+							sh "./tests/CI/buildAsterisk.sh --branch-name=${BRANCH_NAME} --output-dir=${outputdir} --cache-dir=/srv/cache"
 
 							archiveArtifacts allowEmptyArchive: true, defaultExcludes: false, fingerprint: false,
 								artifacts: "${outputdir}/*"
@@ -134,9 +138,9 @@ pipeline {
 							def outputfile = "${outputdir}/unittests-results.xml"
 							def testcmd = "test execute all"
 
-							sh 'sudo ./tests/CI/installAsterisk.sh --user-group=jenkins:users'
+							sh "sudo ./tests/CI/installAsterisk.sh --uninstall-all --branch-name=${BRANCH_NAME} --user-group=jenkins:users"
 
-							sh "tests/CI/runUnittests.sh --user-group=jenkins:users --output-dir='${outputdir}' --output-xml='${outputfile}' --test-command='${testcmd}'"
+							sh "tests/CI/runUnittests.sh --user-group=jenkins:users --output-dir='${outputdir}' --output-xml='${outputfile}' --unittest-command='${testcmd}'"
 
 							archiveArtifacts allowEmptyArchive: true, defaultExcludes: false, fingerprint: true,
 								artifacts: "${outputdir}/**"

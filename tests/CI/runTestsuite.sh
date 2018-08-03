@@ -9,15 +9,15 @@ pushd $TESTSUITE_DIR
 ./cleanup-test-remnants.sh
 
 if [ $REALTIME -eq 1 ] ; then
-	$CIDIR/setupRealtime.sh
+	$CIDIR/setupRealtime.sh --initialize-db=${INITIALIZE_DB:?0}
 fi
 
 export PYTHONPATH=./lib/python/
-echo "Running tests ${TEST_COMMAND}"
-./runtests.py --cleanup ${TEST_COMMAND} | contrib/scripts/pretty_print --no-color --no-timer --term-width=120 --show-errors || :
+echo "Running tests ${TESTSUITE_COMMAND}"
+./runtests.py --cleanup ${TESTSUITE_COMMAND} | contrib/scripts/pretty_print --no-color --no-timer --term-width=120 --show-errors || :
 
 if [ $REALTIME -eq 1 ] ; then
-	$CIDIR/teardownRealtime.sh
+	$CIDIR/teardownRealtime.sh --cleanup-db=${CLEANUP_DB:?0}
 fi
 
 if [ -f core* ] ; then

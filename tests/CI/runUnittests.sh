@@ -3,7 +3,10 @@ CIDIR=$(dirname $(readlink -fn $0))
 source $CIDIR/ci.functions
 ASTETCDIR=$DESTDIR/etc/asterisk
 
-echo "full => notice,warning,error,debug,verbose" > 	"$ASTETCDIR/logger.conf"
+cat <<-EOF > "$ASTETCDIR/logger.conf"
+	[logfiles]
+	full => notice,warning,error,debug,verbose
+EOF
 
 echo "[default]" > "$ASTETCDIR/extensions.conf"
 
@@ -57,7 +60,7 @@ for n in `seq 1 5` ; do
 	$ASTERISK -rx "core waitfullybooted" -C $CONFFILE && break
 done
 sleep 1
-$ASTERISK -rx "${TEST_COMMAND:-test execute all}" -C $CONFFILE
+$ASTERISK -rx "${UNITTEST_COMMAND:-test execute all}" -C $CONFFILE
 $ASTERISK -rx "test show results failed" -C $CONFFILE
 $ASTERISK -rx "test generate results xml $OUTPUTFILE" -C $CONFFILE
 $ASTERISK -rx "core stop now" -C $CONFFILE

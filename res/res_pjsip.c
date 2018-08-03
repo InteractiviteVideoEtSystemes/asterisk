@@ -471,14 +471,17 @@
 					</para></description>
 				</configOption>
 				<configOption name="transport">
-					<synopsis>Desired transport configuration</synopsis>
-					<description><para>
-						This will set the desired transport configuration to send SIP data through.
+					<synopsis>Explicit transport configuration to use</synopsis>
+					<description>
+						<para>This will <emphasis>force</emphasis> the endpoint to use the
+						specified transport configuration to send SIP messages.  You need
+						to already know what kind of transport (UDP/TCP/IPv4/etc) the
+						endpoint device will use.
 						</para>
-						<warning><para>Not specifying a transport will <emphasis>DEFAULT</emphasis>
-						to the first configured transport in <filename>pjsip.conf</filename> which is
-						valid for the URI we are trying to contact.
-						</para></warning>
+						<note><para>Not specifying a transport will select the first
+						configured transport in <filename>pjsip.conf</filename> which is
+						compatible with the URI we are trying to contact.
+						</para></note>
 						<warning><para>Transport configuration is not affected by reloads. In order to
 						change transports, a full Asterisk restart is required</para></warning>
 					</description>
@@ -1661,7 +1664,7 @@
 					</description>
 				</configOption>
 				<configOption name="type">
-					<synopsis>Must be of type 'system'.</synopsis>
+					<synopsis>Must be of type 'system' UNLESS the object name is 'system'.</synopsis>
 				</configOption>
 			</configObject>
 			<configObject name="global">
@@ -1673,7 +1676,7 @@
 				<configOption name="max_forwards" default="70">
 					<synopsis>Value used in Max-Forwards header for SIP requests.</synopsis>
 				</configOption>
-				<configOption name="keep_alive_interval" default="0">
+				<configOption name="keep_alive_interval" default="90">
 					<synopsis>The interval (in seconds) to send keepalives to active connection-oriented transports.</synopsis>
 				</configOption>
 				<configOption name="contact_expiration_check_interval" default="30">
@@ -1708,7 +1711,7 @@
 					twice the unidentified_request_period are pruned.</synopsis>
 				</configOption>
 				<configOption name="type">
-					<synopsis>Must be of type 'global'.</synopsis>
+					<synopsis>Must be of type 'global' UNLESS the object name is 'global'.</synopsis>
 				</configOption>
 				<configOption name="user_agent" default="Asterisk &lt;Asterisk Version&gt;">
 					<synopsis>Value used in User-Agent header for SIP requests and Server header for SIP responses.</synopsis>
@@ -3552,7 +3555,7 @@ static int create_out_of_dialog_request(const pjsip_method *method, struct ast_s
 			contact = ast_sip_location_retrieve_contact_from_aor_list(endpoint->aors);
 		}
 		if (!contact || ast_strlen_zero(contact->uri)) {
-			ast_log(LOG_ERROR, "Unable to retrieve contact for endpoint %s\n",
+			ast_log(LOG_WARNING, "Unable to retrieve contact for endpoint %s\n",
 					ast_sorcery_object_get_id(endpoint));
 			return -1;
 		}
