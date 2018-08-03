@@ -460,10 +460,7 @@ Voicemail with IMAP storage module for Asterisk
 %package addons
 Summary: Asterisk-addons package.
 Group: Utilities/System
-Requires: asterisk%{astapi}-addons-core = %{version}-%{release}
 Provides: asterisk%{astapi}-addons
-
-Requires: %{name}-addons-core = %{version}-%{release}
 
 %{?_without_mysql:%if 0}
 %{!?_without_mysql:%if 1}
@@ -507,7 +504,6 @@ Summary: mysql modules for Asterisk
 Group: Utilities/System
 BuildRequires: mysql-devel
 Requires: mysql
-Requires: %{name}-addons-core = %{version}-%{release}
 Provides: asterisk%{astapi}-addons-mysql
 
 %description addons-mysql
