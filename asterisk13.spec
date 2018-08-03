@@ -14,7 +14,7 @@ Summary: Asterisk, The Open Source PBX
 Name: asterisk13
 Version: 13.22.1
 # reset release to 1 with each version bump
-Release: 1%{?dist}
+Release: 2%{?dist}
 License: GPL
 Group: Utilities/System
 # Source2: asterisk.logrotate
@@ -66,7 +66,6 @@ Requires: %{name}-core = %{version}-%{release}
 %{!?_without_dahdi:Requires: %{name}-dahdi = %{version}-%{release}}
 Requires: %{name}-doc = %{version}
 Requires: %{name}-voicemail = %{version}-%{release}
-Requires: asterisk-sounds-core-en-ulaw
 BuildRequires: ncurses-devel
 BuildRequires: libxml2-devel
 BuildRequires: libuuid-devel
