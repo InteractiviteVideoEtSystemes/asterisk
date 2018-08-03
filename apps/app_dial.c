@@ -811,6 +811,35 @@ struct chanlist {
 
 AST_LIST_HEAD_NOLOCK(dial_head, chanlist);
 
+static void add_codec_to_cap(struct ast_format_cap * cap, const char * codecname)
+{
+	struct ast_codec * c = ast_codec_get(codecname, AST_MEDIA_TYPE_TEXT, 0);
+	struct ast_format * fmt;
+	if (c) {
+		fmt = ast_format_create(c);
+		if (fmt) {
+			ast_format_cap_append(cap, fmt, 100);
+			ao2_ref(fmt, -1);
+		}
+		ao2_ref(c, -1);
+	}
+	else {
+		ast_log(LOG_WARNING, "Codec %s does not exist.\n", codecname);
+	}
+}
+	
+
+static struct ast_format_cap * add_text_to_capabilities(struct ast_format_cap * nativeformats)
+{
+	struct ast_format_cap * newcap = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
+
+	if (newcap == NULL) return NULL;
+	ast_format_cap_append_from_cap(newcap, nativeformats, AST_MEDIA_TYPE_UNKNOWN);
+	add_codec_to_cap(newcap, "red");
+	add_codec_to_cap(newcap, "t140");
+	return newcap;
+}
+
 static int detect_disconnect(struct ast_channel *chan, char code, struct ast_str **featurecode);
 
 static void chanlist_free(struct chanlist *outgoing)
@@ -2463,6 +2492,7 @@ static int dial_exec_full(struct ast_channel *chan, const char *data, struct ast
 		size_t tech_len;
 		size_t number_len;
 		struct ast_format_cap *nativeformats;
+		struct ast_format_cap *dialformats;
 
 		num_dialed++;
 		if (ast_strlen_zero(number)) {
@@ -2515,12 +2545,23 @@ static int dial_exec_full(struct ast_channel *chan, const char *data, struct ast
 		ast_party_connected_line_copy(&tmp->connected, ast_channel_connected(chan));
 
 		nativeformats = ao2_bump(ast_channel_nativeformats(chan));
-
+		if (pbx_builtin_getvar_helper(chan, "DIAL_ADD_TEXT")) {
+			dialformats = add_text_to_capabilities(nativeformats);
+			if (dialformats) {
+				ast_debug(1, "Added text to outbound call.\n"); 
+				ao2_cleanup(nativeformats);
+			} else {
+				dialformats = nativeformats;
+			}
+		} else {
+			dialformats = nativeformats;
+		}	
+			    
 		ast_channel_unlock(chan);
 
-		tc = ast_request(tmp->tech, nativeformats, NULL, chan, tmp->number, &cause);
+		tc = ast_request(tmp->tech, dialformats, NULL, chan, tmp->number, &cause);
 
-		ao2_cleanup(nativeformats);
+		ao2_cleanup(dialformats);
 
 		if (!tc) {
 			/* If we can't, just go on to the next call */
