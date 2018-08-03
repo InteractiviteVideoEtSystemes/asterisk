@@ -76,6 +76,7 @@ function clean
   	# On efface les liens ainsi que le package precedemment créé
   	echo Effacement des fichiers et liens gnupg rpmbuild ${PROJET}.rpm ${TEMPDIR}/${PROJET}
   	rm -rf $HOME/rpmbuild/SPECS/${PROJET}.spec $HOME/rpmbuild/gnupg $HOME/rpmbuild/SOURCES/${PROJET}
+	rm -f /tmp/pjproject*
 }
 
 case $1 in

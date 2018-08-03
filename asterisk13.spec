@@ -559,7 +559,7 @@ echo %{version}%{?_without_optimizations:-debug} > .version
 ./configure --prefix=/usr --libdir=%{_libdir} --with-pjproject-bundled
 make menuselect.makeopts
 #menuselect/menuselect --list-options to get the options passed below
-menuselect/menuselect --disable-category MENUSELECT_CORE_SOUNDS --disable-category MENUSELECT_EXTRA_SOUNDS --disable-category MENUSELECT_MOH --enable-category MENUSELECT_ADDONS --enable res_pktccops --enable chan_mgcp --enable chan_motif --enable app_meetme --enable app_page --enable res_snmp --enable res_srtp --enable DONT_OPTIMIZE --disable BUILD_NATIVE --enable res_statsd --enable res_chan_stats --enable res_endpoint_stats --enable codec_opus --enable codec_silk --enable codec_siren7 --enable codec_siren14 menuselect.makeopts
+menuselect/menuselect --enable-category MENUSELECT_CORE_SOUNDS --enable-category MENUSELECT_EXTRA_SOUNDS --enable-category MENUSELECT_MOH --enable-category MENUSELECT_ADDONS --enable res_pktccops --enable chan_mgcp --enable chan_motif --enable app_meetme --enable app_page --enable res_snmp --enable res_srtp --enable DONT_OPTIMIZE --disable BUILD_NATIVE --enable res_statsd --enable res_chan_stats --enable res_endpoint_stats --enable codec_opus --enable codec_silk --enable codec_siren7 --enable codec_siren14 menuselect.makeopts
 
 
 make %{?_smp_mflags} %{makeflags}
