@@ -557,7 +557,7 @@ echo %{version} > .version
 %else
 %define makeflags OPT=
 %endif
-cd $RPM_SOURCE_DIR/asterisk13
+cd $RPM_SOURCE_DIR/%{name}
 echo %{version}%{?_without_optimizations:-debug} > .version
 
 # Use Bundled pjproject
@@ -571,8 +571,6 @@ make %{?_smp_mflags} %{makeflags}
 
 %install
 echo DEBUG
-pwd
-cd %{name}
 mkdir -p $RPM_BUILD_ROOT/home/asterisk/
 mkdir -p $RPM_BUILD_ROOT/%{_sysconfdir}/rc.d/init.d/
 mkdir -p $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/
@@ -580,6 +578,7 @@ echo "AST_USER=asterisk" > $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/asterisk
 echo "AST_GROUP=asterisk" >> $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/asterisk
 echo "COREDUMP=yes" >> $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/asterisk
 
+cd $RPM_SOURCE_DIR/%{name}
 make DESTDIR=$RPM_BUILD_ROOT install
 make DESTDIR=$RPM_BUILD_ROOT samples
 make DESTDIR=$RPM_BUILD_ROOT config
