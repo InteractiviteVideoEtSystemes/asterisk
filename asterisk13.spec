@@ -569,8 +569,35 @@ echo %{version}%{?_without_optimizations:-debug} > .version
 ./configure --prefix=/usr --libdir=%{_libdir} --with-pjproject-bundled
 make menuselect.makeopts
 #menuselect/menuselect --list-options to get the options passed below
-menuselect/menuselect --enable-category MENUSELECT_CORE_SOUNDS --enable-category MENUSELECT_EXTRA_SOUNDS --enable-category MENUSELECT_MOH --enable-category MENUSELECT_ADDONS --enable res_pktccops --enable chan_mgcp --enable chan_motif --enable app_meetme --enable app_page --enable res_snmp --enable res_srtp --enable DONT_OPTIMIZE --disable BUILD_NATIVE --enable res_statsd --enable res_chan_stats --enable res_endpoint_stats --enable codec_opus --enable codec_silk --enable codec_siren7 --enable codec_siren14 menuselect.makeopts
+menuselect/menuselect --disable-category MENUSELECT_CORE_SOUNDS --disable-category MENUSELECT_EXTRA_SOUNDS --disable-category MENUSELECT_MOH --enable-category MENUSELECT_ADDONS --enable res_pktccops --enable chan_mgcp --enable chan_motif --enable app_meetme --enable app_page --enable res_snmp --enable res_srtp --enable DONT_OPTIMIZE --disable BUILD_NATIVE --enable res_statsd --enable res_chan_stats --enable res_endpoint_stats --enable codec_opus --enable codec_silk --enable codec_siren7 --enable codec_siren14 menuselect.makeopts
 
+menuselect/menuselect --enable CORE-SOUNDS-EN-WAV
+menuselect/menuselect --enable CORE-SOUNDS-EN-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-EN_AU-WAV
+menuselect/menuselect --enable CORE-SOUNDS-EN_AU-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-EN_GB-WAV
+menuselect/menuselect --enable CORE-SOUNDS-EN_GB-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-ES-WAV
+menuselect/menuselect --enable CORE-SOUNDS-ES-G722
+menuselect/menuselect --enable CORE-SOUNDS-ES-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-FR-WAV
+menuselect/menuselect --enable CORE-SOUNDS-FR-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-IT-WAV
+menuselect/menuselect --enable CORE-SOUNDS-IT-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-RU-WAV
+menuselect/menuselect --enable CORE-SOUNDS-RU-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-JA-WAV
+menuselect/menuselect --enable CORE-SOUNDS-JA-SLN16
+menuselect/menuselect --enable CORE-SOUNDS-SV-WAV
+menuselect/menuselect --enable CORE-SOUNDS-SV-SLN16
+menuselect/menuselect --enable EXTRA-SOUNDS-EN-WAV
+menuselect/menuselect --enable EXTRA-SOUNDS-EN-SLN16
+menuselect/menuselect --enable EXTRA-SOUNDS-EN_GB-WAV
+menuselect/menuselect --enable EXTRA-SOUNDS-EN_GB-SLN16
+menuselect/menuselect --enable EXTRA-SOUNDS-FR-WAV
+menuselect/menuselect --enable EXTRA-SOUNDS-FR-SLN16
+menuselect/menuselect --enable MOH-OPSOUND-WAV
+menuselect/menuselect --enable MOH-OPSOUND-SLN16
 
 make %{?_smp_mflags} %{makeflags}
 
