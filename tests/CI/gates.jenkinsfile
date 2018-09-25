@@ -68,7 +68,6 @@ pipeline {
 					stage ("Checkout") {
 						sh "sudo chown -R jenkins:users ."  
 						env.GERRIT_PROJECT_URL = env.GERRIT_CHANGE_URL.replaceAll(/\/[0-9]+$/, "/${env.GERRIT_PROJECT}")
-						sh "printenv | sort"
 					
 						/*
 						 * Jenkins has already automatically checked out the base branch
@@ -79,33 +78,46 @@ pipeline {
 						 *
 						 * The Gerrit Trigger provides all the URLs and refspecs to
 						 * check out the change.
+						 *
+						 * We need to retrieve the jenkins2 gerrit https credentials
+						 * in case this review is in a restricted project.
 						 */
-						checkout scm: [$class: 'GitSCM',
-							branches: [[name: env.GERRIT_BRANCH ]],
-							extensions: [
-								[$class: 'ScmName', name: 'gerrit-public'],
-								[$class: 'CleanBeforeCheckout'],
-								[$class: 'PreBuildMerge', options: [
-									mergeRemote: 'gerrit-public',
-									fastForwardMode: 'NO_FF',
-									mergeStrategy: 'RECURSIVE',
-									mergeTarget: env.GERRIT_BRANCH]],
-								[$class: 'CloneOption',
-									honorRefspec: true,
-									noTags: true,
-									depth: 10,
-									shallow: true
-								],
-								[$class: 'PruneStaleBranch'],
-								[$class: 'BuildChooserSetting',
-									buildChooser: [$class: 'GerritTriggerBuildChooser']
-								]
-							],
-							userRemoteConfigs: [
-								[name: env.GERRIT_NAME, refspec: env.GERRIT_REFSPEC, url: env.GERRIT_PROJECT_URL ]
-							]
-						]
+						withCredentials([usernamePassword(credentialsId: "${JENKINS_GERRIT_CREDS}",
+							passwordVariable: 'GERRIT_USER_PW', usernameVariable: 'GERRIT_USER_NAME')]) {
 
+							sh "printenv | sort"
+
+							checkout scm: [$class: 'GitSCM',
+								branches: [[name: env.GERRIT_BRANCH ]],
+								extensions: [
+									[$class: 'ScmName', name: 'gerrit-public'],
+									[$class: 'CleanBeforeCheckout'],
+									[$class: 'PreBuildMerge', options: [
+										mergeRemote: 'gerrit-public',
+										fastForwardMode: 'NO_FF',
+										mergeStrategy: 'RECURSIVE',
+										mergeTarget: env.GERRIT_BRANCH]],
+									[$class: 'CloneOption',
+										honorRefspec: true,
+										noTags: true,
+										depth: 10,
+										shallow: true
+									],
+									[$class: 'PruneStaleBranch'],
+									[$class: 'BuildChooserSetting',
+										buildChooser: [$class: 'GerritTriggerBuildChooser']
+									]
+								],
+								userRemoteConfigs: [
+									[
+									credentialsId: env.JENKINS_GERRIT_CREDS,
+									name: env.GERRIT_NAME,
+									refspec: env.GERRIT_REFSPEC,
+									url: env.GERRIT_PROJECT_URL.replaceAll("http(s)?://", "http\$1://${GERRIT_USER_NAME}@")
+									]
+								]
+							]
+						}
 						sh "sudo tests/CI/setupJenkinsEnvironment.sh"
 					}
 
@@ -158,8 +170,10 @@ pipeline {
 
 									sh "sudo rm -rf ${groupDir} || : "
 									
-									checkout scm: [$class: 'GitSCM',
-										branches: [[name: "${BRANCH_NAME}"]],
+									withCredentials([usernamePassword(credentialsId: "${JENKINS_GERRIT_CREDS}",
+										passwordVariable: 'GERRIT_USER_PW', usernameVariable: 'GERRIT_USER_NAME')]) {
+										checkout scm: [$class: 'GitSCM',
+											branches: [[name: "${BRANCH_NAME}"]],
 											extensions: [
 												[$class: 'RelativeTargetDirectory', relativeTargetDir: groupDir],
 												[$class: 'CloneOption',
@@ -169,8 +183,15 @@ pipeline {
 													shallow: true
 												],
 											],
-											userRemoteConfigs: [[name: env.GERRIT_NAME, url: testsuiteUrl]]
+											userRemoteConfigs: [
+												[
+												credentialsId: env.JENKINS_GERRIT_CREDS,
+												name: env.GERRIT_NAME,
+												url: testsuiteUrl.replaceAll("http(s)?://", "http\$1://${GERRIT_USER_NAME}@")
+												]
+											]
 										]
+									}
 
 									sh "sudo tests/CI/runTestsuite.sh --testsuite-dir='${groupDir}' --testsuite-command='${groupTestcmd}'"
 

@@ -293,7 +293,7 @@ static int transport_read(void *data)
 	pj_sockaddr_parse(pj_AF_UNSPEC(), 0, pj_cstr(&buf, ast_sockaddr_stringify(ast_websocket_remote_address(session))), &rdata->pkt_info.src_addr);
 	rdata->pkt_info.src_addr_len = sizeof(rdata->pkt_info.src_addr);
 
-	pj_ansi_strcpy(rdata->pkt_info.src_name, ast_sockaddr_stringify_host(ast_websocket_remote_address(session)));
+	pj_ansi_strcpy(rdata->pkt_info.src_name, ast_sockaddr_stringify_addr(ast_websocket_remote_address(session)));
 	rdata->pkt_info.src_port = ast_sockaddr_port(ast_websocket_remote_address(session));
 
 	recvd = pjsip_tpmgr_receive_packet(rdata->tp_info.transport->tpmgr, rdata);
@@ -429,12 +429,23 @@ static pj_bool_t websocket_on_rx_msg(pjsip_rx_data *rdata)
 		pjsip_sip_uri *uri = pjsip_uri_get_uri(contact->uri);
 		const pj_str_t *txp_str = &STR_WS;
 
-		ast_debug(4, "%s re-writing Contact URI from %.*s:%d%s%.*s to %s:%d;transport=%s\n",
-			pjsip_rx_data_get_info(rdata),
-			(int)pj_strlen(&uri->host), pj_strbuf(&uri->host), uri->port,
-			pj_strlen(&uri->transport_param) ? ";transport=" : "",
-			(int)pj_strlen(&uri->transport_param), pj_strbuf(&uri->transport_param),
-			rdata->pkt_info.src_name ?: "", rdata->pkt_info.src_port, pj_strbuf(txp_str));
+		if (DEBUG_ATLEAST(4)) {
+			char src_addr_buffer[AST_SOCKADDR_BUFLEN];
+			const char *ipv6_s = "", *ipv6_e = "";
+
+			if (pj_strchr(&uri->host, ':')) {
+				ipv6_s = "[";
+				ipv6_e = "]";
+			}
+
+			ast_log(LOG_DEBUG, "%s re-writing Contact URI from %s%.*s%s:%d%s%.*s to %s;transport=%s\n",
+				pjsip_rx_data_get_info(rdata),
+				ipv6_s, (int) pj_strlen(&uri->host), pj_strbuf(&uri->host), ipv6_e, uri->port,
+				pj_strlen(&uri->transport_param) ? ";transport=" : "",
+				(int) pj_strlen(&uri->transport_param), pj_strbuf(&uri->transport_param),
+				pj_sockaddr_print(&rdata->pkt_info.src_addr, src_addr_buffer, sizeof(src_addr_buffer), 3),
+				pj_strbuf(txp_str));
+		}
 
 		pj_cstr(&uri->host, rdata->pkt_info.src_name);
 		uri->port = rdata->pkt_info.src_port;

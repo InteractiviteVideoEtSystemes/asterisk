@@ -321,6 +321,14 @@ enum stasis_message_type_result stasis_message_type_create(const char *name,
 const char *stasis_message_type_name(const struct stasis_message_type *type);
 
 /*!
+ * \brief Gets the hash of a given message type
+ * \param type The type to get the hash of.
+ * \return The hash
+ * \since 13.24.0
+ */
+unsigned int stasis_message_type_hash(const struct stasis_message_type *type);
+
+/*!
  * \brief Check whether a message type is declined
  *
  * \param name The name of the message type to check
@@ -755,6 +763,18 @@ struct stasis_topic_pool *stasis_topic_pool_create(struct stasis_topic *pooled_t
  * \return \c NULL if the topic was not found and could not be allocated
  */
 struct stasis_topic *stasis_topic_pool_get_topic(struct stasis_topic_pool *pool, const char *topic_name);
+
+/*!
+ * \brief Delete a topic from the topic pool
+ *
+ * \param pool Pool from which to delete the topic
+ * \param topic_name Name of the topic to delete
+ *
+ * \since 13.24
+ * \since 15.6
+ * \since 16.1
+ */
+void stasis_topic_pool_delete_topic(struct stasis_topic_pool *pool, const char *topic_name);
 
 /*!
  * \brief Check if a topic exists in a pool

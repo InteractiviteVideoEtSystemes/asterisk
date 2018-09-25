@@ -34,11 +34,13 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 #include "asterisk/astobj2.h"
 #include "asterisk/stasis.h"
 #include "asterisk/utils.h"
+#include "asterisk/hashtab.h"
 
 /*! \internal */
 struct stasis_message_type {
 	struct stasis_message_vtable *vtable;
 	char *name;
+	unsigned int hash;
 };
 
 static struct stasis_message_vtable null_vtable = {};
@@ -61,7 +63,8 @@ int stasis_message_type_create(const char *name,
 		return STASIS_MESSAGE_TYPE_DECLINED;
 	}
 
-	type = ao2_t_alloc(sizeof(*type), message_type_dtor, name);
+	type = ao2_t_alloc_options(sizeof(*type), message_type_dtor,
+		AO2_ALLOC_OPT_LOCK_NOLOCK, name ?: "");
 	if (!type) {
 		return STASIS_MESSAGE_TYPE_ERROR;
 	}
@@ -75,6 +78,7 @@ int stasis_message_type_create(const char *name,
 		ao2_cleanup(type);
 		return STASIS_MESSAGE_TYPE_ERROR;
 	}
+	type->hash = ast_hashtab_hash_string(name);
 	type->vtable = vtable;
 	*result = type;
 
@@ -84,6 +88,11 @@ int stasis_message_type_create(const char *name,
 const char *stasis_message_type_name(const struct stasis_message_type *type)
 {
 	return type->name;
+}
+
+unsigned int stasis_message_type_hash(const struct stasis_message_type *type)
+{
+	return type->hash;
 }
 
 /*! \internal */
@@ -103,7 +112,6 @@ struct stasis_message {
 static void stasis_message_dtor(void *obj)
 {
 	struct stasis_message *message = obj;
-	ao2_cleanup(message->type);
 	ao2_cleanup(message->data);
 }
 
@@ -115,13 +123,21 @@ struct stasis_message *stasis_message_create_full(struct stasis_message_type *ty
 		return NULL;
 	}
 
-	message = ao2_t_alloc(sizeof(*message), stasis_message_dtor, type->name);
+	message = ao2_t_alloc_options(sizeof(*message), stasis_message_dtor,
+		AO2_ALLOC_OPT_LOCK_NOLOCK, type->name);
 	if (message == NULL) {
 		return NULL;
 	}
 
 	message->timestamp = ast_tvnow();
-	ao2_ref(type, +1);
+	/*
+	 * XXX Normal ao2 ref counting rules says we should increment the message
+	 * type ref here and decrement it in stasis_message_dtor().  However, the
+	 * stasis message could be cached and legitimately cause the type ref count
+	 * to hit the excessive ref count assertion.  Since the message type
+	 * practically has to be a global object anyway, we can get away with not
+	 * holding a ref in the stasis message.
+	 */
 	message->type = type;
 	ao2_ref(data, +1);
 	message->data = data;
