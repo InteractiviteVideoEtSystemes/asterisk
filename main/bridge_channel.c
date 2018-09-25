@@ -2362,9 +2362,11 @@ static void bridge_channel_handle_write(struct ast_bridge_channel *bridge_channe
 	case AST_FRAME_NULL:
 		break;
 	case AST_FRAME_TEXT:
-		ast_debug(1, "Sending TEXT frame to '%s': %*.s\n",
+		if  (fr->datalen > 0) {
+			ast_debug(1, "Sending TEXT frame to '%s': %*.s\n",
 			ast_channel_name(bridge_channel->chan), fr->datalen, (char *)fr->data.ptr);
-		ast_sendtext(bridge_channel->chan, fr->data.ptr);
+			ast_sendtext(bridge_channel->chan, fr->data.ptr);
+		}
 		break;
 	case AST_FRAME_TEXT_DATA:
 		msg = (struct ast_msg_data *)fr->data.ptr;
