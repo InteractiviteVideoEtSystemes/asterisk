@@ -6110,6 +6110,14 @@ static int rtp_red_buffer(struct ast_rtp_instance *instance, struct ast_frame *f
 	}
 
 	if (frame->datalen > 0) {
+		size_t datalen = frame->datalen;
+		const char * data_ptr = frame->data.ptr;
+
+		/* Do not send C string terminator */
+		if (data_ptr[datalen] == 0) {
+			datalen--;
+		}
+
 		if (red->t140.datalen > 0) {
 			const unsigned char *primary = red->buf_data;
 
@@ -6126,8 +6134,10 @@ static int rtp_red_buffer(struct ast_rtp_instance *instance, struct ast_frame *f
 			}
 		}
 
-		memcpy(&red->buf_data[red->t140.datalen], frame->data.ptr, frame->datalen);
-		red->t140.datalen += frame->datalen;
+		if (datalen) {
+			memcpy(&red->buf_data[red->t140.datalen], data_ptr, datalen);
+			red->t140.datalen += datalen;
+		}
 		red->t140.ts = frame->ts;
 	}
 

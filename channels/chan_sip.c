@@ -7503,6 +7503,11 @@ static int sip_write(struct ast_channel *ast, struct ast_frame *frame)
 					if (p->invitestate > INV_EARLY_MEDIA || (p->invitestate == INV_EARLY_MEDIA &&
 										 ast_test_flag(&p->flags[0], SIP_PROGRESS_SENT))) {
 						p->lastrtptx = time(NULL);
+						/* Skip C string terminator */
+						const char * data_ptr = frame->data.ptr;
+						if (frame->datalen > 0 && data_ptr[frame->datalen] == 0) {
+							frame->datalen--;
+						}
 						res = ast_rtp_instance_write(p->trtp, frame);
 					}
 				}

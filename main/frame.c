@@ -360,6 +360,8 @@ struct ast_frame *ast_frdup(const struct ast_frame *f)
 	if (out->datalen) {
 		out->data.ptr = buf + sizeof(*out) + AST_FRIENDLY_OFFSET;
 		memcpy(out->data.ptr, f->data.ptr, out->datalen);
+	} else if (f->frametype == AST_FRAME_TEXT) {
+		out->data.ptr = buf + sizeof(*out) + AST_FRIENDLY_OFFSET;
 	} else {
 		out->data.uint32 = f->data.uint32;
 	}
