@@ -14,7 +14,7 @@ Summary: Asterisk, The Open Source PBX
 Name: asterisk13
 Version: 13.23.1
 # reset release to 1 with each version bump
-Release: 1%{?dist}
+Release: 5%{?dist}
 License: GPL
 Group: Utilities/System
 # Source2: asterisk.logrotate
@@ -59,7 +59,7 @@ BuildRequires: unixODBC-devel
 Requires: libtool-ltdl
 BuildRequires: libtool-ltdl-devel
 
-BuildRequires: xmlstarlet wget
+BuildRequires: xmlstarlet wget gmime-devel
 
 %{?_without_optimizations:Requires: %{name}-debuginfo = %{version}-%{release}}
 Requires: %{name}-core = %{version}-%{release}
@@ -718,7 +718,6 @@ cd $RPM_BUILD_DIR
 %{_libdir}/asterisk/modules/chan_phone.so
 %{_libdir}/asterisk/modules/chan_skinny.so
 %{_libdir}/asterisk/modules/chan_sip.so
-%{_libdir}/asterisk/modules/chan_mobile.so
 %{_libdir}/asterisk/modules/chan_unistim.so
 %{_libdir}/asterisk/modules/codec_adpcm.so
 %{_libdir}/asterisk/modules/codec_alaw.so
