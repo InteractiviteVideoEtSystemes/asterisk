@@ -157,6 +157,7 @@ static int sendtext_exec(struct ast_channel *chan, const char *data)
 	const char *to;
 	const char *content_type;
 	const char *body;
+	const char *sendtopeer;
 	int rc = 0;
 
 	ast_channel_lock(chan);
@@ -170,8 +171,42 @@ static int sendtext_exec(struct ast_channel *chan, const char *data)
 		rc = -1;
 		goto cleanup;
 	}
+
 	ast_str_get_encoded_str(&str, -1, body);
 	body = ast_str_buffer(str);
+	sendtopeer = pbx_builtin_getvar_helper(chan, "SENDTEXT_TOPEER");
+	if (sendtopeer && strcasecmp(sendtopeer, "YES") == 0) {
+
+		struct ast_channel *peer;
+
+		ast_channel_unlock(chan);
+		peer = ast_channel_bridge_peer(chan);
+		if (peer)
+		{
+			msg_type = "BASIC";
+			ast_channel_lock(peer);
+			if (ast_sendtext(peer, body) == 0) {
+				rc = 0;
+				status = "SUCCESS";
+			} else {
+				rc = -3;
+				status = "FAILURE";
+			}
+			ast_channel_unlock(peer);
+			ast_channel_unref(peer);
+		}
+		else
+		{
+			ast_log(LOG_WARNING, "Cannot send text to peer channel. No bridged peer found.\n");
+				status = "FAILURE";
+			rc = -2;
+		}
+		ast_channel_lock(chan);
+		pbx_builtin_setvar_helper(chan, "SENDTEXTTYPE", msg_type);
+		pbx_builtin_setvar_helper(chan, "SENDTEXTSTATUS", status);
+		ast_channel_unlock(chan);
+		return rc;
+	}
 
 	msg_type = "NONE";
 	status = "UNSUPPORTED";
@@ -228,7 +263,6 @@ static int sendtext_exec(struct ast_channel *chan, const char *data)
 
 	pbx_builtin_setvar_helper(chan, "SENDTEXTTYPE", msg_type);
 	pbx_builtin_setvar_helper(chan, "SENDTEXTSTATUS", status);
-
 cleanup:
 	pbx_builtin_setvar_helper(chan, "SENDTEXT_FROM_DISPLAYNAME", NULL);
 	pbx_builtin_setvar_helper(chan, "SENDTEXT_TO_DISPLAYNAME", NULL);
