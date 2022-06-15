@@ -18,9 +18,9 @@ I will try to explain everything to allow anyone (or a new employee at IvèS) to
 In this folder, you will find all patches and files we apply to the original source code.
 It will be our work.
 
-An official patch name (from Asterisk/Digium/Sangoma) starts with offi_
-A community patch name (from Fedora/EPEL/CentOS/etc.) starts with commu_
-An IVèS patch starts with ives_
+* An official patch name (from Asterisk/Digium/Sangoma) starts with offi_
+* A community patch name (from Fedora/EPEL/CentOS/etc.) starts with commu_
+* An IVèS patch starts with ives_
 
 ## Scripts folder
 
