@@ -6,7 +6,7 @@
 
 ## FORK
 
-To get more info about this fork, please read this file: https://github.com/InteractiviteVideoEtSystemes/asterisk/blob/ives/18.12.1/contrib/ives/docs/README.md
+To get more info about this fork, please go here: https://github.com/InteractiviteVideoEtSystemes/asterisk/tree/ives/18.12.1/contrib/ives
 
 ## SECURITY
 
