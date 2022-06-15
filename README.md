@@ -3,6 +3,11 @@
         By Mark Spencer <markster@digium.com> and the Asterisk.org developer community.
         Copyright (C) 2001-2021 Sangoma Technologies Corporation and other copyright holders.
 ```
+
+## FORK
+
+To get more info about this fork, please read this file: https://github.com/InteractiviteVideoEtSystemes/asterisk/blob/ives/18.12.1/contrib/ives/docs/README.md
+
 ## SECURITY
 
   It is imperative that you read and fully understand the contents of
