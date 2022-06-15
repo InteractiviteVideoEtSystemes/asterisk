@@ -1,0 +1,13 @@
+--- asterisk-18.12.1.orig/Makefile	2022-06-12 11:47:40.453506631 +0200
++++ asterisk-18.12.1.ives/Makefile	2022-06-12 12:14:58.637436393 +0200
+@@ -896,8 +896,10 @@
+ 
+ config:
+ 	@if [ -f /etc/redhat-release -o -f /etc/fedora-release ]; then \
++		$(INSTALL) -d "$(DESTDIR)/etc/rc.d/init.d/" ; \
+ 		./build_tools/install_subst contrib/init.d/rc.redhat.asterisk  "$(DESTDIR)/etc/rc.d/init.d/asterisk"; \
+ 		if [ ! -f "$(DESTDIR)/etc/sysconfig/asterisk" ] ; then \
++			$(INSTALL) -d "$(DESTDIR)/etc/sysconfig/" ; \
+ 			$(INSTALL) -m 644 contrib/init.d/etc_default_asterisk "$(DESTDIR)/etc/sysconfig/asterisk" ; \
+ 		fi ; \
+ 		if [ -z "$(DESTDIR)" ] ; then \

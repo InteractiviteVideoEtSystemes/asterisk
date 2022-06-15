@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+#
+#   BUILD ASTERISK
+#
+${ASTERISK_ROOT_DIR}/configure --prefix=/usr --libdir=${_LIBDIR} --with-pjproject-bundled
+make ${MAKE_ARGS}
+make menuselect.makeopts ${MAKE_ARGS}
+
+# Enable Add-ons used by IVèS
+menuselect/menuselect --enable chan_mobile --enable chan_ooh323 --enable format_mp3 --enable res_config_mysql menuselect.makeopts
+# Disable deprecated applications
+menuselect/menuselect --disable app_adsiprog --disable app_getcpeid --disable app_ices --disable app_image --disable app_nbscat --disable app_url menuselect.makeopts
+# Disable deprecated channel drivers
+menuselect/menuselect --disable chan_oss --disable chan_sip menuselect.makeopts
+# Enable codec translators used by IVèS
+menuselect/menuselect --enable codec_opus --enable codec_silk --enable codec_siren7 --enable codec_siren14 menuselect.makeopts
+# Disable deprecated resource modules
+menuselect/menuselect --disable res_adsi --disable res_monitor menuselect.makeopts
+# Enable resource modules used by IVèS
+menuselect/menuselect --enable res_chan_stats --enable res_endpoint_stats --enable res_pktccops menuselect.makeopts
+# Enable core sound packages used by IVèS
+menuselect/menuselect --enable CORE-SOUNDS-EN-SLN16 --enable CORE-SOUNDS-EN-WAV --enable CORE-SOUNDS-EN_AU-SLN16 --enable CORE-SOUNDS-EN_AU-WAV --enable CORE-SOUNDS-EN_GB-SLN16 --enable CORE-SOUNDS-EN_GB-WAV --enable CORE-SOUNDS-ES-G722 --enable CORE-SOUNDS-ES-SLN16 --enable CORE-SOUNDS-ES-WAV --enable CORE-SOUNDS-FR-SLN16 --enable CORE-SOUNDS-FR-WAV --enable CORE-SOUNDS-IT-SLN16 --enable CORE-SOUNDS-IT-WAV --enable CORE-SOUNDS-JA-SLN16 --enable CORE-SOUNDS-JA-WAV --enable CORE-SOUNDS-RU-SLN16 --enable CORE-SOUNDS-RU-WAV --enable CORE-SOUNDS-SV-SLN16 --enable CORE-SOUNDS-SV-WAV menuselect.makeopts
+# Enable music on hold file packages used by IVèS
+menuselect/menuselect --enable MOH-OPSOUND-SLN16 --enable MOH-OPSOUND-WAV menuselect.makeopts
+# Enable extras sound packages used by IVèS
+menuselect/menuselect --enable EXTRA-SOUNDS-EN-SLN16 --enable EXTRA-SOUNDS-EN-WAV --enable EXTRA-SOUNDS-EN_GB-SLN16 --enable EXTRA-SOUNDS-EN_GB-WAV --enable EXTRA-SOUNDS-FR-SLN16 --enable EXTRA-SOUNDS-FR-WAV menuselect.makeopts
+# Compiler flags
+menuselect/menuselect --enable DONT_OPTIMIZE --disable BUILD_NATIVE menuselect.makeopts
+
+make install ${MAKE_ARGS}
+make samples ${MAKE_ARGS}
+patch -p1 -N -i ${ASTERISK_ROOT_DIR}/contrib/ives/patchs/0004-ives_fix_makefile.patch
+make config ${MAKE_ARGS}
+make progdocs ${MAKE_ARGS}
