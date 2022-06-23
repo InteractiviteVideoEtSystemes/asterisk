@@ -24,7 +24,7 @@ We have to install and activate some repositories:
 Fetch source code
 
     mkdir -p ~/rpmbuild/SOURCES/
-    git clone --branch="ives/18.12.1" git@github.com:InteractiviteVideoEtSystemes/asterisk.git ~/rpmbuild/SOURCES/asterisk/
+    git clone --branch="ives/18.12.X" git@github.com:InteractiviteVideoEtSystemes/asterisk.git ~/rpmbuild/SOURCES/asterisk/
 
 Run the dedicated script
 
