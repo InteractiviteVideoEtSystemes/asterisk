@@ -21,7 +21,6 @@ dnf install -y ${REQUIRES_LIST}
 #
 cd ${ASTERISK_ROOT_DIR}
 patch --strip=1 --forward --input=${ASTERISK_ROOT_DIR}/contrib/ives/patches/0002-commu_asterisk-mariadb.patch
-patch --strip=1 --forward --input=${ASTERISK_ROOT_DIR}/contrib/ives/patches/0003-ives_mysql-devel_to_mariadb-devel.patch
 
 
 
