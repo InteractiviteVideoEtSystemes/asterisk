@@ -6,7 +6,7 @@
 
 ## FORK
 
-To get more info about this fork, please go here: https://github.com/InteractiviteVideoEtSystemes/asterisk/tree/ives/18.12.1/contrib/ives
+To get more info about this fork, please go here: https://github.com/InteractiviteVideoEtSystemes/asterisk/tree/ives/18.12.X/contrib/ives
 
 ## SECURITY
 
