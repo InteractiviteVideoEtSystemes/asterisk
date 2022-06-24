@@ -45,6 +45,7 @@
 #include "asterisk.h"
 
 #include <mysql/mysql.h>
+#include <mysql/mariadb_version.h>
 #include <mysql/errmsg.h>
 
 #include "asterisk/config.h"
@@ -650,7 +651,7 @@ static int my_load_module(int reload)
 	res |= my_load_config_string(cfg, "global", "ssl_cert", &ssl_cert, "");
 	res |= my_load_config_string(cfg, "global", "ssl_key", &ssl_key, "");
 
-	res |= my_load_config_number(cfg, "global", "port", &dbport, MYSQL_PORT);
+	res |= my_load_config_number(cfg, "global", "port", &dbport, MARIADB_PORT);
 	res |= my_load_config_number(cfg, "global", "timeout", &timeout, 0);
 	res |= my_load_config_string(cfg, "global", "compat", &compat, "no");
 	res |= my_load_config_string(cfg, "global", "cdrzone", &cdrzone, "");

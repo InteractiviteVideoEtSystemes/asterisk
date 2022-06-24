@@ -15,16 +15,6 @@ dnf install -y ${REQUIRES_LIST}
 
 
 #
-#   PATCHES
-#
-# /!\ Order matters /!\
-#
-cd ${ASTERISK_ROOT_DIR}
-patch --strip=1 --forward --input=${ASTERISK_ROOT_DIR}/contrib/ives/patches/0002-commu_asterisk-mariadb.patch
-
-
-
-#
 #   INSTALL DEPENDENCIES AND SOURCES
 #
 ${ASTERISK_ROOT_DIR}/contrib/scripts/install_prereq install
