@@ -50,6 +50,6 @@ menuselect/menuselect --enable DONT_OPTIMIZE --disable BUILD_NATIVE menuselect.m
 
 make install ${MAKE_ARGS}
 make samples ${MAKE_ARGS}
-patch -p1 -N -i ${ASTERISK_ROOT_DIR}/contrib/ives/patchs/0004-ives_fix_makefile.patch
+patch -p1 -N -i ${ASTERISK_ROOT_DIR}/contrib/ives/patches/0004-ives_fix_makefile.patch
 make config ${MAKE_ARGS}
 make progdocs ${MAKE_ARGS}
