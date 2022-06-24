@@ -20,7 +20,6 @@ dnf install -y ${REQUIRES_LIST}
 # /!\ Order matters /!\
 #
 cd ${ASTERISK_ROOT_DIR}
-patch --strip=1 --forward --input=${ASTERISK_ROOT_DIR}/contrib/ives/patches/0001-ives_asterisk-18.12.1-explicit-python3.patch
 patch --strip=1 --forward --input=${ASTERISK_ROOT_DIR}/contrib/ives/patches/0002-commu_asterisk-mariadb.patch
 patch --strip=1 --forward --input=${ASTERISK_ROOT_DIR}/contrib/ives/patches/0003-ives_mysql-devel_to_mariadb-devel.patch
 
