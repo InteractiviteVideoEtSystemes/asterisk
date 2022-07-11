@@ -1,0 +1,10 @@
+--- a/Makefile	2022-06-12 10:58:39.365632730 +0200
++++ b/Makefile	2022-06-12 11:01:56.798624265 +0200
+@@ -810,6 +810,7 @@
+ 	@echo Installing other config files...
+ 	$(call INSTALL_CONFIGS,configs/samples,.sample)
+ 	$(INSTALL) -d "$(DESTDIR)$(ASTSPOOLDIR)/voicemail/default/1234/INBOX"
++	$(INSTALL) -d "$(DESTDIR)$(ASTSPOOLDIR)/usr/share/asterisk/phoneprov/"
+ 	build_tools/make_sample_voicemail "$(DESTDIR)/$(ASTDATADIR)" "$(DESTDIR)/$(ASTSPOOLDIR)"
+ 	@for x in phoneprov/*; do \
+ 		dst="$(DESTDIR)$(ASTDATADIR)/$$x" ;	\
