@@ -23,6 +23,7 @@ export ASTCFLAGS=" "
 #
 #   BUILD ASTERISK
 #
+cd ${ASTERISK_ROOT_DIR}
 ${ASTERISK_ROOT_DIR}/configure --prefix=/usr --libdir=${_LIBDIR} --with-pjproject-bundled
 # MAKE_ARGS = 'DEBUG= OPTIMIZE= ASTVARRUNDIR=/run/asterisk ASTDATADIR=/usr/share/asterisk ASTVARLIBDIR=/usr/share/asterisk ASTDBDIR=/var/spool/asterisk NOISY_BUILD=1'
 make ${MAKE_ARGS}

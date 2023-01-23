@@ -17,6 +17,8 @@ dnf install -y ${REQUIRES_LIST}
 #
 #   INSTALL DEPENDENCIES AND SOURCES
 #
+# Asterisk scripts are not working if the current directory is not the SCRIPT_DIR...
+cd ${ASTERISK_ROOT_DIR}
 ${ASTERISK_ROOT_DIR}/contrib/scripts/install_prereq install
 ${ASTERISK_ROOT_DIR}/contrib/scripts/get_mp3_source.sh
 ${ASTERISK_ROOT_DIR}/bootstrap.sh
