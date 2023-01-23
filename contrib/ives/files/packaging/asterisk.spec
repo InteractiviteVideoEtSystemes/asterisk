@@ -49,6 +49,8 @@ BuildRequires:      tar
 BuildRequires:      mariadb-devel
 # Requirement used during unit tests
 BuildRequires:      ccache
+# Requirement to build documentation
+BuildRequires:      graphviz
 
 # Asterisk now builds against a bundled copy of pjproject, as they apply some patches
 # directly to pjproject before the build against it
