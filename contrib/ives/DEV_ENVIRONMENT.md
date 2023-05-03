@@ -24,7 +24,7 @@ We have to install and activate some repositories:
 Fetch source code
 
     rpmdev-setuptree
-    git clone --branch="ives/20.1.X" git@github.com:InteractiviteVideoEtSystemes/asterisk.git ~/rpmbuild/SOURCES/asterisk/
+    git clone --branch="ives/20.1.X" https://github.com/InteractiviteVideoEtSystemes/asterisk.git ~/rpmbuild/SOURCES/asterisk/
 
 Run the dedicated script
 
