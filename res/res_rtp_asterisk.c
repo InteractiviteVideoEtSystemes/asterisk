@@ -7485,7 +7485,7 @@ static struct ast_frame *ast_rtp_interpret(struct ast_rtp_instance *instance, st
 		num_generations = header_length / 4;
 		len = header_length;
 
-		if (!diff) {
+		if (prev_seqno == 0 || diff <= 0) {
 			for (x = 0; x < num_generations; x++)
 				len += data[x * 4 + 3];
 

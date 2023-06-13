@@ -313,7 +313,7 @@ static struct ast_frame *audiohook_read_frame_both(struct ast_audiohook *audioho
 			}
 		}
 	} else {
-		ast_debug(1, "Failed to get %d samples from read factory %p\n", (int)samples, &audiohook->read_factory);
+		ast_debug(2, "Failed to get %d samples from read factory %p\n", (int)samples, &audiohook->read_factory);
 	}
 
 	/* Move on to the write factory... if there are enough samples, read them in */
