@@ -90,6 +90,7 @@ static struct ast_channel *chan_pjsip_request_with_stream_topology(const char *t
 	const struct ast_channel *requestor, const char *data, int *cause);
 static int chan_pjsip_sendtext_data(struct ast_channel *ast, struct ast_msg_data *msg);
 static int chan_pjsip_sendtext(struct ast_channel *ast, const char *text);
+static int chan_pjsip_sendhtml(struct ast_channel *ast, int subclass, const char *data, int len);
 static int chan_pjsip_digit_begin(struct ast_channel *ast, char digit);
 static int chan_pjsip_digit_end(struct ast_channel *ast, char digit, unsigned int duration);
 static int chan_pjsip_call(struct ast_channel *ast, const char *dest, int timeout);
@@ -113,6 +114,7 @@ struct ast_channel_tech chan_pjsip_tech = {
 	.requester_with_stream_topology = chan_pjsip_request_with_stream_topology,
 	.send_text = chan_pjsip_sendtext,
 	.send_text_data = chan_pjsip_sendtext_data,
+	.send_html = chan_pjsip_sendhtml,
 	.send_digit_begin = chan_pjsip_digit_begin,
 	.send_digit_end = chan_pjsip_digit_end,
 	.call = chan_pjsip_call,
@@ -2870,6 +2872,45 @@ static int chan_pjsip_sendtext(struct ast_channel *ast, const char *text)
 	ast_free(msg);
 
 	return rc;
+}
+
+static int chan_pjsip_sendhtml( struct ast_channel *ast, int subclass, const char *data, int len )
+{
+	struct ast_sip_channel_pvt *channel = ast_channel_tech_pvt( ast );
+	struct ast_sip_session *session = channel->session;
+//	RAII_VAR( struct ast_sip_session *, session, channel->session, ao2_cleanup );
+
+	const struct ast_sip_body body = {
+		.type = "application",
+		.subtype = "x-www-form-urlencoded",
+		.body_text = data
+	};
+
+	struct pjsip_tx_data *tdata;
+
+	ast_verbose( "Sending URL %s on %s\n", data, ast_channel_name(ast) );
+
+	if( session->inv_session->state == PJSIP_INV_STATE_DISCONNECTED )
+	{
+		ast_log( LOG_ERROR, "Session already DISCONNECTED [reason=%d (%s)]\n",
+			session->inv_session->cause,
+			pjsip_get_status_text( session->inv_session->cause )->ptr );
+		return -1;
+	}
+
+	if( ast_sip_create_request( "INFO", session->inv_session->dlg, session->endpoint, NULL, NULL, &tdata ) )
+	{
+		ast_log( LOG_ERROR, "Could not create html INFO request\n" );
+		return -1;
+	}
+	if( ast_sip_add_body( tdata, &body ) )
+	{
+		ast_log( LOG_ERROR, "Could not add body to html INFO request\n" );
+		return -1;
+	}
+	ast_sip_session_send_request( session, tdata );
+
+	return 0;
 }
 
 /*! \brief Convert SIP hangup causes to Asterisk hangup causes */
