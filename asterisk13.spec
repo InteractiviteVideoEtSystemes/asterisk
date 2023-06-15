@@ -28,38 +28,42 @@ Conflicts: asterisk10
 Conflicts: asterisk11
 Conflicts: asterisk12
 Provides: asterisk%{astapi}
-BuildRequires: subversion
-Requires: lua
-BuildRequires: lua-devel
-Requires: portaudio
-BuildRequires: portaudio-devel
-Requires: neon
-BuildRequires: neon-devel
-Requires: libxml2
-BuildRequires: libxml2-devel
-Requires: spandsp
-BuildRequires: spandsp-devel
-Requires: libical
-BuildRequires: libical-devel
-Requires: libsrtp
-BuildRequires: libsrtp-devel
-Requires: freeradius
-Requires: radiusclient-ng
-BuildRequires: radiusclient-ng-devel
-Requires: jack-audio-connection-kit
-BuildRequires: jack-audio-connection-kit-devel
-Requires: openldap
-BuildRequires: openldap-devel
-Requires: sqlite
-BuildRequires: sqlite-devel
-Requires: sqlite2
-BuildRequires: sqlite2-devel
-Requires: unixODBC
-BuildRequires: unixODBC-devel
-Requires: libtool-ltdl
-BuildRequires: libtool-ltdl-devel
 
+BuildRequires: devtoolset-7
+BuildRequires: jack-audio-connection-kit-devel
+BuildRequires: gmime-devel
+BuildRequires: libical-devel
+BuildRequires: libsrtp-devel
+BuildRequires: libtool-ltdl-devel
+BuildRequires: libxml2-devel
+BuildRequires: lua-devel
+BuildRequires: neon-devel
+BuildRequires: openldap-devel
+BuildRequires: portaudio-devel
+BuildRequires: radiusclient-ng-devel
+BuildRequires: spandsp-devel
+BuildRequires: sqlite-devel
+BuildRequires: sqlite2-devel
+BuildRequires: subversion
+BuildRequires: unixODBC-devel
 BuildRequires: xmlstarlet wget
+
+
+Requires: freeradius
+Requires: jack-audio-connection-kit
+Requires: libical
+Requires: libsrtp
+Requires: libtool-ltdl
+Requires: libxml2
+Requires: lua
+Requires: neon
+Requires: openldap
+Requires: portaudio
+Requires: radiusclient-ng
+Requires: spandsp
+Requires: sqlite
+Requires: sqlite2
+Requires: unixODBC
 
 %{?_without_optimizations:Requires: %{name}-debuginfo = %{version}-%{release}}
 Requires: %{name}-core = %{version}-%{release}
@@ -554,7 +558,8 @@ chan_ooh323 module for Asterisk
 %prep
 cd $RPM_SOURCE_DIR/asterisk13
 echo %{version} > .version
-
+. /opt/rh/devtoolset-7/enable
+./configure --prefix=/usr --libdir=%{_libdir} --with-pjproject-bundled
 
 %build
 %ifarch x86_64
@@ -566,11 +571,10 @@ cd $RPM_SOURCE_DIR/%{name}
 echo %{version}%{?_without_optimizations:-debug} > .version
 
 # Use Bundled pjproject
-./configure --prefix=/usr --libdir=%{_libdir} --with-pjproject-bundled
+. /opt/rh/devtoolset-7/enable
 make menuselect.makeopts
 #menuselect/menuselect --list-options to get the options passed below
-menuselect/menuselect --enable-category MENUSELECT_ADDONS --enable res_pktccops --enable chan_mgcp --enable chan_motif --enable app_meetme --enable app_page --enable res_snmp --enable res_srtp --enable DONT_OPTIMIZE --disable BUILD_NATIVE --enable res_statsd --enable res_chan_stats --enable res_endpoint_stats --enable codec_opus --enable codec_silk --enable codec_siren7 --enable codec_siren14 --enable CORE-SOUNDS-EN-WAV --enable CORE-SOUNDS-EN-SLN16 --enable CORE-SOUNDS-EN_AU-WAV --enable CORE-SOUNDS-EN_AU-SLN16 --enable CORE-SOUNDS-EN_GB-WAV --enable CORE-SOUNDS-EN_GB-SLN16 --enable CORE-SOUNDS-ES-WAV --enable CORE-SOUNDS-ES-G722 --enable CORE-SOUNDS-ES-SLN16 --enable CORE-SOUNDS-FR-WAV --enable CORE-SOUNDS-FR-SLN16 --enable CORE-SOUNDS-IT-WAV --enable CORE-SOUNDS-IT-SLN16 --enable CORE-SOUNDS-RU-WAV --enable CORE-SOUNDS-RU-SLN16 --enable CORE-SOUNDS-JA-WAV --enable CORE-SOUNDS-JA-SLN16 --enable CORE-SOUNDS-SV-WAV --enable CORE-SOUNDS-SV-SLN16 --enable EXTRA-SOUNDS-EN-WAV --enable EXTRA-SOUNDS-EN-SLN16 --enable EXTRA-SOUNDS-EN_GB-WAV --enable EXTRA-SOUNDS-EN_GB-SLN16 --enable EXTRA-SOUNDS-FR-WAV --enable EXTRA-SOUNDS-FR-SLN16 --enable MOH-OPSOUND-WAV --enable MOH-OPSOUND-SLN16  menuselect.makeopts
-
+menuselect/menuselect --enable-category MENUSELECT_ADDONS --enable res_pktccops --enable chan_mgcp --enable res_http_post --enable chan_motif --enable app_meetme --enable app_page --enable res_snmp --enable res_srtp --enable DONT_OPTIMIZE --disable BUILD_NATIVE --enable res_statsd --enable res_chan_stats --enable res_endpoint_stats --enable codec_opus --enable codec_silk --enable codec_siren7 --enable codec_siren14 --enable CORE-SOUNDS-EN-WAV --enable CORE-SOUNDS-EN-SLN16 --enable CORE-SOUNDS-EN_AU-WAV --enable CORE-SOUNDS-EN_AU-SLN16 --enable CORE-SOUNDS-EN_GB-WAV --enable CORE-SOUNDS-EN_GB-SLN16 --enable CORE-SOUNDS-ES-WAV --enable CORE-SOUNDS-ES-G722 --enable CORE-SOUNDS-ES-SLN16 --enable CORE-SOUNDS-FR-WAV --enable CORE-SOUNDS-FR-SLN16 --enable CORE-SOUNDS-IT-WAV --enable CORE-SOUNDS-IT-SLN16 --enable CORE-SOUNDS-RU-WAV --enable CORE-SOUNDS-RU-SLN16 --enable CORE-SOUNDS-JA-WAV --enable CORE-SOUNDS-JA-SLN16 --enable CORE-SOUNDS-SV-WAV --enable CORE-SOUNDS-SV-SLN16 --enable EXTRA-SOUNDS-EN-WAV --enable EXTRA-SOUNDS-EN-SLN16 --enable EXTRA-SOUNDS-EN_GB-WAV --enable EXTRA-SOUNDS-EN_GB-SLN16 --enable EXTRA-SOUNDS-FR-WAV --enable EXTRA-SOUNDS-FR-SLN16 --enable MOH-OPSOUND-WAV --enable MOH-OPSOUND-SLN16  menuselect.makeopts
 make %{?_smp_mflags} %{makeflags}
 
 %install
@@ -581,7 +585,7 @@ mkdir -p $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/
 echo "AST_USER=asterisk" > $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/asterisk
 echo "AST_GROUP=asterisk" >> $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/asterisk
 echo "COREDUMP=yes" >> $RPM_BUILD_ROOT/%{_sysconfdir}/sysconfig/asterisk
-
+. /opt/rh/devtoolset-7/enable
 cd $RPM_SOURCE_DIR/%{name}
 make DESTDIR=$RPM_BUILD_ROOT install
 make DESTDIR=$RPM_BUILD_ROOT samples
@@ -718,7 +722,6 @@ cd $RPM_BUILD_DIR
 %{_libdir}/asterisk/modules/chan_phone.so
 %{_libdir}/asterisk/modules/chan_skinny.so
 %{_libdir}/asterisk/modules/chan_sip.so
-%{_libdir}/asterisk/modules/chan_mobile.so
 %{_libdir}/asterisk/modules/chan_unistim.so
 %{_libdir}/asterisk/modules/codec_adpcm.so
 %{_libdir}/asterisk/modules/codec_alaw.so

@@ -4,13 +4,6 @@ PROJET=asterisk13
 #Repertoire temporaire utiliser pour preparer les packages
 TEMPDIR=/tmp
 
-function svn_export
-{
-        svn export http://svn.ives.fr/svn-asterisk/tags/1.4.19m-videocaps ${PROJET}
-}
-
-#Preparation du fichier spec de packaging rpm
-
 #Creation de l'environnement de packaging rpm
 function create_rpm
 {
@@ -24,21 +17,12 @@ function create_rpm
     echo "%_gpg_name IVeSkey" >> ~/.rpmmacros
     echo "%_gpg_path" $HOME"/rpmbuild/gnupg" >> ~/.rpmmacros
     echo "%vendor IVeS" >> ~/.rpmmacros
+    rpmdev-setuptree
     #Import de la clef gpg IVeS
     mkdir -p $HOME/rpmbuild
     cd $HOME/rpmbuild
-    svn export http://svn.ives.fr/svn-libs-dev/gnupg
-    mkdir -p SOURCES
-    mkdir -p SPECS
-    mkdir -p BUILD
-    mkdir -p SRPMS
-    mkdir -p TMP
-    mkdir -p RPMS
-    mkdir -p RPMS/noarch
-    mkdir -p RPMS/x86_64
-    mkdir -p RPMS/i386
-    mkdir -p RPMS/i686
-    mkdir -p RPMS/i586
+    git clone git@git.ives.fr:internal/gnupg.git
+    
     #Recuperation de la description du package 
     cd -
     cp ${PROJET}.spec $HOME/rpmbuild/SPECS/${PROJET}.spec
@@ -73,7 +57,7 @@ function create_rpm
 
 function clean
 {
-  	# On efface les liens ainsi que le package precedemment créé
+  	# On efface les liens ainsi que le package precedemment crï¿½ï¿½
   	echo Effacement des fichiers et liens gnupg rpmbuild ${PROJET}.rpm ${TEMPDIR}/${PROJET}
   	rm -rf $HOME/rpmbuild/SPECS/${PROJET}.spec $HOME/rpmbuild/gnupg $HOME/rpmbuild/SOURCES/${PROJET}
 	rm -f /tmp/pjproject*
