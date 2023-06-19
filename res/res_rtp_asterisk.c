@@ -172,6 +172,9 @@ static int rtpdebug;			/*!< Are we debugging? */
 static int rtcpdebug;			/*!< Are we debugging RTCP? */
 static int rtcpstats;			/*!< Are we debugging RTCP? */
 static int rtcpinterval = RTCP_DEFAULT_INTERVALMS; /*!< Time between rtcp reports in millisecs */
+#ifndef TEST_T140_RED
+static int rtcp_t140_red_test = -1;
+#endif /* TEST_T140_RED */
 static struct ast_sockaddr rtpdebugaddr;	/*!< Debug packets to/from this host */
 static struct ast_sockaddr rtcpdebugaddr;	/*!< Debug RTCP packets to/from this host */
 static int rtpdebugport;		/*!< Debug only RTP packets from IP or IP+Port if port is > 0 */
@@ -5754,19 +5757,115 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		*data = 0xBD;
 	}
 
-	if (ast_format_cmp(rtp->f.subclass.format, ast_format_t140_red) == AST_FORMAT_CMP_EQUAL) {
-		unsigned char *data = rtp->f.data.ptr;
-        unsigned char *data_end = data + rtp->f.datalen;
-		unsigned char *header_end = data;
-        unsigned char *d;
-		int num_generations;
-		int header_length;
-		int len;
-		int diff =(int)seqno - (prev_seqno+1); /* if diff = 0, no drop*/
+    if (ast_format_cmp(rtp->f.subclass.format, ast_format_t140_red) == AST_FORMAT_CMP_EQUAL) {
+        unsigned char* data = rtp->f.data.ptr;
+        unsigned char* data_end = data + rtp->f.datalen;
+        unsigned char* header_end = data;
+        int num_generations;
+        int header_length;
+        int len;
+        int diff = (int)seqno - (prev_seqno + 1); /* if diff = 0, no drop*/
+
+#ifndef TEST_T140_RED
+        switch (rtcp_t140_red_test)
+        {
+        case 1:
+            if (rtp->rxcount == 1) {
+                /* Packet lost simulation on sequence number 0 */
+                ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u\n", rtcp_t140_red_test, seqno);
+                if (seqno == 0) {
+                    /* drop */
+                    rtp->rxcount--;
+                    return AST_LIST_FIRST(&frames) ? AST_LIST_FIRST(&frames) : &ast_null_frame;
+                }
+                else if (seqno == 1) {
+                    prev_seqno = 0;
+                    diff = (int)seqno - (prev_seqno + 1);
+                }
+            }
+            break;
+
+        case 2:
+            if (seqno == 2 && diff == 0) {
+                /* Packet lost simulation on sequence number 2 */
+                ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u\n", rtcp_t140_red_test, seqno);
+                rtp->lastrxseqno = 1;
+                rtp->rxseqno = 1;
+                rtp->rxcount--;
+                /* drop packet */
+                return AST_LIST_FIRST(&frames) ? AST_LIST_FIRST(&frames) : &ast_null_frame;
+                /* on seqno 3 will backup RED text from seqno 2*/
+            }
+            break;
+
+        case 3:
+            if (seqno >= 2 && seqno <= 3) {
+                /* Packet lost simulation on sequence number 2 and 3 */
+                ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u\n", rtcp_t140_red_test, seqno);
+                rtp->lastrxseqno = 1;
+                rtp->rxseqno = 1;
+                rtp->rxcount--;
+                /* drop packet */
+                return AST_LIST_FIRST(&frames) ? AST_LIST_FIRST(&frames) : &ast_null_frame;
+                /* on seqno 4 will backup RED text from seqno 2 and 3 */
+            }
+            break;
+
+        case 4:
+            if (seqno >= 2 && seqno <= 4) {
+                /* Packet lost simulation on sequences number 2, 3 and 4 */
+                ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u\n", rtcp_t140_red_test, seqno);
+                rtp->lastrxseqno = 1;
+                rtp->rxseqno = 1;
+                rtp->rxcount--;
+                /* drop packet */
+                return AST_LIST_FIRST(&frames) ? AST_LIST_FIRST(&frames) : &ast_null_frame;
+                /* on seqno 5 will backup RED text from seqno 3 and 4 with utf8 0xEFBFBD first */
+            }
+            break;
+
+        case 5:
+            if (seqno == 2) {
+                /* Packet inversion simulation 3 before 2 */
+                rtp->lastrxseqno++;
+                seqno++;
+                /* should backup RED text from seqno 1 */
+            } else if (seqno == 3) {
+                /* Packet inversion simulation 3 before 2 */
+                rtp->lastrxseqno--;
+                seqno--;
+                /* should ignore packet 3 */
+            }
+            if (seqno == 2 || seqno == 3) {
+                ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u\n", rtcp_t140_red_test, seqno);
+                rtp->f.seqno = seqno;
+                rtp->rxseqno = seqno;
+                rtp->lastrxseqno = seqno;
+                diff = (int)seqno - (prev_seqno + 1);
+            }
+            break;
+
+        case 6:
+            /* rotation at seqno == 3 (0xfffd == -3) */
+            ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u\n", rtcp_t140_red_test, seqno);
+            seqno += 0xfffd;
+            seqno &= 0xffff;
+            rtp->f.seqno = seqno;
+            rtp->rxseqno = seqno;
+            rtp->lastrxseqno = seqno;
+            diff = (int)seqno - (prev_seqno + 1);
+            break;
+
+        default:
+            ast_log(LOG_WARNING, "Undefined t140_red_test value in general section for file rtp.conf\n");
+            break;
+        }
+
+#endif /* TEST_T140_RED */
 
         /* format ast_format_t140_red became ast_format_t140 */
 		ao2_replace(rtp->f.subclass.format, ast_format_t140);
-        /* RFC 2198 - ง3 )    |F|   block PT  |  timestamp offset         |   block length    |
+        /* RFC 2198 - ยง3 )    |F|   block PT  |  timestamp offset         |   block length    |
          * Bit F is zero for the last header block, search F==0 :
          */
         while (header_end < data_end && (*header_end & 0x80)) {
@@ -5786,8 +5885,21 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		if (prev_seqno == 0 || diff == 0 || diff > 10) {
             /* If starting or successive rtp seqno or the sender cycled => go to current playload */
             for (unsigned char *block_length = data + 2; block_length < header_end; block_length += 4) {
-                len +=  (0x03 & (int)(*block_length)) << 8 + *(block_length + 1); // 10 bits integer
+                len +=  ((0x03 & (int)(*block_length)) << 8) + *(block_length + 1); /* 10 bits integer */
             }
+
+#ifndef TEST_T140_RED
+            if (rtcp_t140_red_test == 7) {
+                /* mark big playload */
+                if (rtp->f.datalen - len > 255)
+                {
+                    ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u\n", rtcp_t140_red_test, seqno);
+                    *(((unsigned char *)rtp->f.data.ptr) + len) = '<';
+                    *(((unsigned char *)rtp->f.data.ptr) + rtp->f.datalen -1) = '>';
+                }
+            }
+#endif /* TEST_T140_RED */
+
             if (!(rtp->f.datalen - len)) {
                 /* playload empty */
                 return AST_LIST_FIRST(&frames) ? AST_LIST_FIRST(&frames) : &ast_null_frame;
@@ -5812,12 +5924,23 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		} else {
             /* If can fix (diff) lost packets => go to the (diff)th redondant playload */
             for (unsigned char* block_length = data + 2; block_length < header_end - diff*4; block_length += 4) {
-                len += (0x03 & (int)(*block_length)) << 8 + *(block_length + 1); // 10 bits integer
+                len += ((0x03 & (int)(*block_length)) << 8) + *(block_length + 1); // 10 bits integer
             }
             /* set the current and fixing redondant playloads */
 			rtp->f.data.ptr += len;
 			rtp->f.datalen -= len;
 		}
+        #ifndef TEST_T140_RED
+        char f_data_ptr[1025];
+        memcpy(f_data_ptr, rtp->f.data.ptr, rtp->f.datalen);
+
+        if (rtp->f.datalen > 0)  {
+            f_data_ptr[rtp->f.datalen]='\0';
+            ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u ; RED='%s'\n", rtcp_t140_red_test, seqno, f_data_ptr);
+        }
+        else if (rtp->f.datalen < 0)  ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u ; RED=??? datalen<0\n", rtcp_t140_red_test, seqno);
+        else ast_debug(1, "--- case rtcp_t140_red_test=%d : seqno=%u ; RED=''\n", rtcp_t140_red_test, seqno);
+        #endif /* TEST_T140_RED */
 	}
 
 	if (ast_format_get_type(rtp->f.subclass.format) == AST_MEDIA_TYPE_AUDIO) {
@@ -6592,97 +6715,104 @@ static void blacklist_config_load(struct ast_config *cfg, const char *option_nam
 
 static int rtp_reload(int reload)
 {
-	struct ast_config *cfg;
-	const char *s;
-	struct ast_flags config_flags = { reload ? CONFIG_FLAG_FILEUNCHANGED : 0 };
+    struct ast_config* cfg;
+    const char* s;
+    struct ast_flags config_flags = { reload ? CONFIG_FLAG_FILEUNCHANGED : 0 };
 
 #ifdef HAVE_PJPROJECT
-	struct ast_variable *var;
-	struct ast_ice_host_candidate *candidate;
+    struct ast_variable* var;
+    struct ast_ice_host_candidate* candidate;
 #endif
 
-	cfg = ast_config_load2("rtp.conf", "rtp", config_flags);
-	if (!cfg || cfg == CONFIG_STATUS_FILEUNCHANGED || cfg == CONFIG_STATUS_FILEINVALID) {
-		return 0;
-	}
+    cfg = ast_config_load2("rtp.conf", "rtp", config_flags);
+    if (!cfg || cfg == CONFIG_STATUS_FILEUNCHANGED || cfg == CONFIG_STATUS_FILEINVALID) {
+        return 0;
+    }
 
-	rtpstart = DEFAULT_RTP_START;
-	rtpend = DEFAULT_RTP_END;
-	dtmftimeout = DEFAULT_DTMF_TIMEOUT;
-	strictrtp = DEFAULT_STRICT_RTP;
-	learning_min_sequential = DEFAULT_LEARNING_MIN_SEQUENTIAL;
-	learning_min_duration = DEFAULT_LEARNING_MIN_DURATION;
+    rtpstart = DEFAULT_RTP_START;
+    rtpend = DEFAULT_RTP_END;
+    dtmftimeout = DEFAULT_DTMF_TIMEOUT;
+    strictrtp = DEFAULT_STRICT_RTP;
+    learning_min_sequential = DEFAULT_LEARNING_MIN_SEQUENTIAL;
+    learning_min_duration = DEFAULT_LEARNING_MIN_DURATION;
 
-	/** This resource is not "reloaded" so much as unloaded and loaded again.
-	 * In the case of the TURN related variables, the memory referenced by a
-	 * previously loaded instance  *should* have been released when the
-	 * corresponding pool was destroyed. If at some point in the future this
-	 * resource were to support ACTUAL live reconfiguration and did NOT release
-	 * the pool this will cause a small memory leak.
-	 */
+    /** This resource is not "reloaded" so much as unloaded and loaded again.
+     * In the case of the TURN related variables, the memory referenced by a
+     * previously loaded instance  *should* have been released when the
+     * corresponding pool was destroyed. If at some point in the future this
+     * resource were to support ACTUAL live reconfiguration and did NOT release
+     * the pool this will cause a small memory leak.
+     */
 
 #ifdef HAVE_PJPROJECT
-	icesupport = DEFAULT_ICESUPPORT;
-	turnport = DEFAULT_TURN_PORT;
-	memset(&stunaddr, 0, sizeof(stunaddr));
-	turnaddr = pj_str(NULL);
-	turnusername = pj_str(NULL);
-	turnpassword = pj_str(NULL);
-	host_candidate_overrides_clear();
-	blacklist_clear(&ice_blacklist_lock, &ice_blacklist);
-	blacklist_clear(&stun_blacklist_lock, &stun_blacklist);
+    icesupport = DEFAULT_ICESUPPORT;
+    turnport = DEFAULT_TURN_PORT;
+    memset(&stunaddr, 0, sizeof(stunaddr));
+    turnaddr = pj_str(NULL);
+    turnusername = pj_str(NULL);
+    turnpassword = pj_str(NULL);
+    host_candidate_overrides_clear();
+    blacklist_clear(&ice_blacklist_lock, &ice_blacklist);
+    blacklist_clear(&stun_blacklist_lock, &stun_blacklist);
 #endif
 
-	if ((s = ast_variable_retrieve(cfg, "general", "rtpstart"))) {
-		rtpstart = atoi(s);
-		if (rtpstart < MINIMUM_RTP_PORT)
-			rtpstart = MINIMUM_RTP_PORT;
-		if (rtpstart > MAXIMUM_RTP_PORT)
-			rtpstart = MAXIMUM_RTP_PORT;
-	}
-	if ((s = ast_variable_retrieve(cfg, "general", "rtpend"))) {
-		rtpend = atoi(s);
-		if (rtpend < MINIMUM_RTP_PORT)
-			rtpend = MINIMUM_RTP_PORT;
-		if (rtpend > MAXIMUM_RTP_PORT)
-			rtpend = MAXIMUM_RTP_PORT;
-	}
-	if ((s = ast_variable_retrieve(cfg, "general", "rtcpinterval"))) {
-		rtcpinterval = atoi(s);
-		if (rtcpinterval == 0)
-			rtcpinterval = 0; /* Just so we're clear... it's zero */
-		if (rtcpinterval < RTCP_MIN_INTERVALMS)
-			rtcpinterval = RTCP_MIN_INTERVALMS; /* This catches negative numbers too */
-		if (rtcpinterval > RTCP_MAX_INTERVALMS)
-			rtcpinterval = RTCP_MAX_INTERVALMS;
-	}
-	if ((s = ast_variable_retrieve(cfg, "general", "rtpchecksums"))) {
+    if ((s = ast_variable_retrieve(cfg, "general", "rtpstart"))) {
+        rtpstart = atoi(s);
+        if (rtpstart < MINIMUM_RTP_PORT)
+            rtpstart = MINIMUM_RTP_PORT;
+        if (rtpstart > MAXIMUM_RTP_PORT)
+            rtpstart = MAXIMUM_RTP_PORT;
+    }
+    if ((s = ast_variable_retrieve(cfg, "general", "rtpend"))) {
+        rtpend = atoi(s);
+        if (rtpend < MINIMUM_RTP_PORT)
+            rtpend = MINIMUM_RTP_PORT;
+        if (rtpend > MAXIMUM_RTP_PORT)
+            rtpend = MAXIMUM_RTP_PORT;
+    }
+    if ((s = ast_variable_retrieve(cfg, "general", "rtcpinterval"))) {
+        rtcpinterval = atoi(s);
+        if (rtcpinterval == 0)
+            rtcpinterval = 0; /* Just so we're clear... it's zero */
+        if (rtcpinterval < RTCP_MIN_INTERVALMS)
+            rtcpinterval = RTCP_MIN_INTERVALMS; /* This catches negative numbers too */
+        if (rtcpinterval > RTCP_MAX_INTERVALMS)
+            rtcpinterval = RTCP_MAX_INTERVALMS;
+    }
+    if ((s = ast_variable_retrieve(cfg, "general", "rtpchecksums"))) {
 #ifdef SO_NO_CHECK
-		nochecksums = ast_false(s) ? 1 : 0;
+        nochecksums = ast_false(s) ? 1 : 0;
 #else
-		if (ast_false(s))
-			ast_log(LOG_WARNING, "Disabling RTP checksums is not supported on this operating system!\n");
+        if (ast_false(s))
+            ast_log(LOG_WARNING, "Disabling RTP checksums is not supported on this operating system!\n");
 #endif
-	}
-	if ((s = ast_variable_retrieve(cfg, "general", "dtmftimeout"))) {
-		dtmftimeout = atoi(s);
-		if ((dtmftimeout < 0) || (dtmftimeout > 64000)) {
-			ast_log(LOG_WARNING, "DTMF timeout of '%d' outside range, using default of '%d' instead\n",
-				dtmftimeout, DEFAULT_DTMF_TIMEOUT);
-			dtmftimeout = DEFAULT_DTMF_TIMEOUT;
-		};
-	}
-	if ((s = ast_variable_retrieve(cfg, "general", "strictrtp"))) {
-		strictrtp = ast_true(s);
-	}
-	if ((s = ast_variable_retrieve(cfg, "general", "probation"))) {
-		if ((sscanf(s, "%d", &learning_min_sequential) != 1) || learning_min_sequential <= 1) {
-			ast_log(LOG_WARNING, "Value for 'probation' could not be read, using default of '%d' instead\n",
-				DEFAULT_LEARNING_MIN_SEQUENTIAL);
-			learning_min_sequential = DEFAULT_LEARNING_MIN_SEQUENTIAL;
-		}
-		learning_min_duration = CALC_LEARNING_MIN_DURATION(learning_min_sequential);
-	}
+    }
+    if ((s = ast_variable_retrieve(cfg, "general", "dtmftimeout"))) {
+        dtmftimeout = atoi(s);
+        if ((dtmftimeout < 0) || (dtmftimeout > 64000)) {
+            ast_log(LOG_WARNING, "DTMF timeout of '%d' outside range, using default of '%d' instead\n",
+                dtmftimeout, DEFAULT_DTMF_TIMEOUT);
+            dtmftimeout = DEFAULT_DTMF_TIMEOUT;
+        };
+    }
+    if ((s = ast_variable_retrieve(cfg, "general", "strictrtp"))) {
+        strictrtp = ast_true(s);
+    }
+    if ((s = ast_variable_retrieve(cfg, "general", "probation"))) {
+        if ((sscanf(s, "%d", &learning_min_sequential) != 1) || learning_min_sequential <= 1) {
+            ast_log(LOG_WARNING, "Value for 'probation' could not be read, using default of '%d' instead\n",
+                DEFAULT_LEARNING_MIN_SEQUENTIAL);
+            learning_min_sequential = DEFAULT_LEARNING_MIN_SEQUENTIAL;
+        }
+        learning_min_duration = CALC_LEARNING_MIN_DURATION(learning_min_sequential);
+    }
+#ifndef TEST_T140_RED
+    if ((s = ast_variable_retrieve(cfg, "general", "t140_red_test"))) {
+        rtcp_t140_red_test = atoi(s);
+    }
+#endif // TEST_T140_RED
+
+
 #ifdef HAVE_PJPROJECT
 	if ((s = ast_variable_retrieve(cfg, "general", "icesupport"))) {
 		icesupport = ast_true(s);
