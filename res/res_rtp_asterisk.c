@@ -5764,7 +5764,7 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
         int num_generations;
         int header_length;
         int len;
-        int diff = (int)seqno - (prev_seqno + 1); /* if diff = 0, no drop*/
+        short diff =((int)seqno - (prev_seqno + 1)) & 0xffff; /* if diff = 0, no drop */
 
 #ifndef TEST_T140_RED
         switch (rtcp_t140_red_test)
@@ -5853,7 +5853,7 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
             rtp->f.seqno = seqno;
             rtp->rxseqno = seqno;
             rtp->lastrxseqno = seqno;
-            diff = (int)seqno - (prev_seqno + 1);
+            diff = ((int)seqno - (prev_seqno + 1)) & 0xffff;
             break;
 
         default:
