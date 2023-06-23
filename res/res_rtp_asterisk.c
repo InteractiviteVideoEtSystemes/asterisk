@@ -5758,11 +5758,10 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		unsigned char *data = rtp->f.data.ptr;
         unsigned char *data_end = data + rtp->f.datalen;
 		unsigned char *header_end = data;
-        unsigned char *d;
 		int num_generations;
 		int header_length;
 		int len;
-		int diff =(int)seqno - (prev_seqno+1); /* if diff = 0, no drop*/
+        short diff = ((int)seqno - (prev_seqno + 1)) & 0xffff; /* if diff = 0, no drop */
 
         /* format ast_format_t140_red became ast_format_t140 */
 		ao2_replace(rtp->f.subclass.format, ast_format_t140);
@@ -5786,7 +5785,7 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		if (prev_seqno == 0 || diff == 0 || diff > 10) {
             /* If starting or successive rtp seqno or the sender cycled => go to current playload */
             for (unsigned char *block_length = data + 2; block_length < header_end; block_length += 4) {
-                len +=  (0x03 & (int)(*block_length)) << 8 + *(block_length + 1); // 10 bits integer
+                len += ((0x03 & (int)(*block_length)) << 8) + *(block_length + 1); /* 10 bits integer */
             }
             if (!(rtp->f.datalen - len)) {
                 /* playload empty */
@@ -5812,7 +5811,7 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		} else {
             /* If can fix (diff) lost packets => go to the (diff)th redondant playload */
             for (unsigned char* block_length = data + 2; block_length < header_end - diff*4; block_length += 4) {
-                len += (0x03 & (int)(*block_length)) << 8 + *(block_length + 1); // 10 bits integer
+                len += ((0x03 & (int)(*block_length)) << 8) + *(block_length + 1); /* 10 bits integer */
             }
             /* set the current and fixing redondant playloads */
 			rtp->f.data.ptr += len;
