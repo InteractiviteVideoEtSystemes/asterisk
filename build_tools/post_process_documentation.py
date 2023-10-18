@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#!/usr/bin/env python3
 # vin: sw=3 et:
 '''
 Copyright (C) 2012, Digium, Inc.

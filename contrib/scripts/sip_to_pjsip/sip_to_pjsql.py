@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from sip_to_pjsip import convert
 import sip_to_pjsip
