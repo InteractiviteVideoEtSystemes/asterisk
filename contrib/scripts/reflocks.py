@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Process a ref debug log for lock usage
 
  This file will process a log file created by Asterisk
