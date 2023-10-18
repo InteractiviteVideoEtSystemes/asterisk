@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 
 #include <mysql/mysql.h>
+#include <mysql/mariadb_version.h>
 #include <mysql/errmsg.h>
 
 #include "asterisk/channel.h"
