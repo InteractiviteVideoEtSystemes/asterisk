@@ -17,8 +17,10 @@ import sqlalchemy as sa
 def upgrade():
     op.add_column('ps_endpoints', sa.Column('max_audio_streams', sa.Integer))
     op.add_column('ps_endpoints', sa.Column('max_video_streams', sa.Integer))
+    op.add_column('ps_endpoints', sa.Column('max_text_streams', sa.Integer))
 
 
 def downgrade():
     op.drop_column('ps_endpoints', 'max_audio_streams')
     op.drop_column('ps_endpoints', 'max_video_streams')
+    op.drop_column('ps_endpoints', 'max_text_streams')
