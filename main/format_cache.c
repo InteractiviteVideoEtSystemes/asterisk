@@ -458,8 +458,8 @@ static void set_cached_format(const char *name, struct ast_format *format)
 		ao2_replace(ast_format_vp8, format);
 	} else if (!strcmp(name, "vp9")) {
 		ao2_replace(ast_format_vp9, format);
-	} else if( !strcmp( name, "av1" ) ) {
-		ao2_replace( ast_format_av1, format );
+	} else if( !strcmp(name, "av1")) {
+		ao2_replace(ast_format_av1, format);
 	} else if (!strcmp(name, "red")) {
 		ao2_replace(ast_format_t140_red, format);
 	} else if (!strcmp(name, "t140")) {

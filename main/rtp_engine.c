@@ -3772,7 +3772,7 @@ int ast_rtp_engine_init(void)
 	add_static_payload(111, ast_format_g726, 0);
 	add_static_payload(112, ast_format_g726_aal2, 0);
 
-	add_static_payload(114, ast_format_av1, 0 );
+	add_static_payload(114, ast_format_av1, 0);
 
 	add_static_payload(115, ast_format_siren14, 0);
 	add_static_payload(116, ast_format_g719, 0);
