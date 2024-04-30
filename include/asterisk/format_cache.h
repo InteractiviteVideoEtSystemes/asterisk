@@ -189,6 +189,11 @@ extern struct ast_format *ast_format_vp8;
 extern struct ast_format *ast_format_vp9;
 
 /*!
+ * \brief Built-in cached av1 format.
+ */
+extern struct ast_format *ast_format_av1;
+
+/*!
  * \brief Built-in cached jpeg format.
  */
 extern struct ast_format *ast_format_jpeg;
