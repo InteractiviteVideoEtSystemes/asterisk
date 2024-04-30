@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Process a ref debug log
 
  This file will process a log file created by enabling

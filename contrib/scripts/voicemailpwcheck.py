@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 ''' Sample externpasscheck script for use with voicemail.conf
 
 Copyright (C) 2010, Digium, Inc.

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # vim: set ts=8 sw=4 sts=4 et ai tw=79:
 '''
 Usage: ./spandspflow2pcap.py SPANDSP_LOG SENDFAX_PCAP
