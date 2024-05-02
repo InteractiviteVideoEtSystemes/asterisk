@@ -995,6 +995,12 @@
 						See https://docs.asterisk.org/Configuration/Channel-Drivers/IP-Quality-of-Service for more information about QoS settings
 					</para></description>
 				</configOption>
+				<configOption name="tos_text">
+					<synopsis>DSCP TOS bits for text streams</synopsis>
+					<description><para>
+						See https://wiki.asterisk.org/wiki/display/AST/IP+Quality+of+Service for more information about QoS settings
+					</para></description>
+				</configOption>
 				<configOption name="cos_audio">
 					<synopsis>Priority for audio streams</synopsis>
 					<description><para>
@@ -1005,6 +1011,12 @@
 					<synopsis>Priority for video streams</synopsis>
 					<description><para>
 						See https://docs.asterisk.org/Configuration/Channel-Drivers/IP-Quality-of-Service for more information about QoS settings
+					</para></description>
+				</configOption>
+				<configOption name="cos_text">
+					<synopsis>Priority for text streams</synopsis>
+					<description><para>
+							See https://wiki.asterisk.org/wiki/display/AST/IP+Quality+of+Service for more information about QoS settings
 					</para></description>
 				</configOption>
 				<configOption name="allow_subscribe" default="yes">
@@ -1373,6 +1385,13 @@
 						streams allowed for the endpoint.
 					</para></description>
 				</configOption>
+				<configOption name="max_text_streams" default="1">
+					<synopsis>The maximum number of allowed text streams for the endpoint</synopsis>
+					<description><para>
+							This option enforces a limit on the maximum simultaneous negotiated text
+							streams allowed for the endpoint.
+					</para></description>
+ 				</configOption>
 				<configOption name="bundle" default="no">
 					<synopsis>Enable RTP bundling</synopsis>
 					<description><para>

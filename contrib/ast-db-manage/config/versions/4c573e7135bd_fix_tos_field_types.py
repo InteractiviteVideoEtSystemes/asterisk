@@ -20,10 +20,13 @@ YESNO_VALUES = ['yes', 'no']
 def upgrade():
     op.alter_column('ps_endpoints', 'tos_audio', type_=sa.String(10))
     op.alter_column('ps_endpoints', 'tos_video', type_=sa.String(10))
+    op.alter_column('ps_endpoints', 'tos_text', type_=sa.String(10))
     op.drop_column('ps_endpoints', 'cos_audio')
     op.drop_column('ps_endpoints', 'cos_video')
+    op.drop_column('ps_endpoints', 'cos_text')
     op.add_column('ps_endpoints', sa.Column('cos_audio', sa.Integer))
     op.add_column('ps_endpoints', sa.Column('cos_video', sa.Integer))
+    op.add_column('ps_endpoints', sa.Column('cos_text', sa.Integer))
 
     op.alter_column('ps_transports', 'tos', type_=sa.String(10))
 
@@ -38,12 +41,16 @@ def downgrade():
     # Can't cast string to YESNO_VALUES, so dropping and adding is required
     op.drop_column('ps_endpoints', 'tos_audio')
     op.drop_column('ps_endpoints', 'tos_video')
+    op.drop_column('ps_endpoints', 'tos_text')
     op.add_column('ps_endpoints', sa.Column('tos_audio', yesno_values))
     op.add_column('ps_endpoints', sa.Column('tos_video', yesno_values))
+    op.add_column('ps_endpoints', sa.Column('tos_text', yesno_values))
     op.drop_column('ps_endpoints', 'cos_audio')
     op.drop_column('ps_endpoints', 'cos_video')
+    op.drop_column('ps_endpoints', 'cos_text')
     op.add_column('ps_endpoints', sa.Column('cos_audio', yesno_values))
     op.add_column('ps_endpoints', sa.Column('cos_video', yesno_values))
+    op.add_column('ps_endpoints', sa.Column('cos_text', yesno_values))
 
     if op.get_context().bind.dialect.name == 'mssql':
         op.drop_constraint('ck_ps_transports_tos_yesno_values', 'ps_transports')

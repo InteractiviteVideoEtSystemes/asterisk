@@ -363,8 +363,10 @@ CREATE TABLE ps_endpoints (
     sdp_session VARCHAR(40), 
     tos_audio INTEGER, 
     tos_video INTEGER, 
+    tos_text INTEGER, 
     cos_audio INTEGER, 
     cos_video INTEGER, 
+    cos_text INTEGER, 
     sub_min_expiry INTEGER, 
     from_domain VARCHAR(40), 
     from_user VARCHAR(40), 
@@ -645,13 +647,19 @@ ALTER TABLE ps_endpoints ALTER COLUMN tos_audio TYPE VARCHAR(10);
 
 ALTER TABLE ps_endpoints ALTER COLUMN tos_video TYPE VARCHAR(10);
 
+ALTER TABLE ps_endpoints ALTER COLUMN tos_text TYPE VARCHAR(10);
+
 ALTER TABLE ps_endpoints DROP COLUMN cos_audio;
 
 ALTER TABLE ps_endpoints DROP COLUMN cos_video;
 
+ALTER TABLE ps_endpoints DROP COLUMN cos_text;
+
 ALTER TABLE ps_endpoints ADD COLUMN cos_audio INTEGER;
 
 ALTER TABLE ps_endpoints ADD COLUMN cos_video INTEGER;
+
+ALTER TABLE ps_endpoints ADD COLUMN cos_text INTEGER;
 
 ALTER TABLE ps_transports ALTER COLUMN tos TYPE VARCHAR(10);
 
@@ -1166,6 +1174,8 @@ UPDATE alembic_version SET version_num='d7983954dd96' WHERE alembic_version.vers
 ALTER TABLE ps_endpoints ADD COLUMN max_audio_streams INTEGER;
 
 ALTER TABLE ps_endpoints ADD COLUMN max_video_streams INTEGER;
+
+ALTER TABLE ps_endpoints ADD COLUMN max_text_streams INTEGER;
 
 UPDATE alembic_version SET version_num='39959b9c2566' WHERE alembic_version.version_num = 'd7983954dd96';
 

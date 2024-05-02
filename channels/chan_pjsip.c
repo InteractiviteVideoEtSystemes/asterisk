@@ -123,6 +123,7 @@ struct ast_channel_tech chan_pjsip_tech = {
 	.read_stream = chan_pjsip_read_stream,
 	.write = chan_pjsip_write,
 	.write_stream = chan_pjsip_write_stream,
+	.write_text = chan_pjsip_write,
 	.exception = chan_pjsip_read_stream,
 	.indicate = chan_pjsip_indicate,
 	.transfer = chan_pjsip_transfer,
@@ -420,6 +421,10 @@ static int send_direct_media_request(void *data)
 	if (session->active_media_state->default_session[AST_MEDIA_TYPE_VIDEO]) {
 		changed |= check_for_rtp_changes(
 			cdata->chan, cdata->vrtp, session->active_media_state->default_session[AST_MEDIA_TYPE_VIDEO], session);
+	}
+	if (session->active_media_state->default_session[AST_MEDIA_TYPE_TEXT]) {
+		changed |= check_for_rtp_changes(
+			cdata->chan, cdata->vrtp, session->active_media_state->default_session[AST_MEDIA_TYPE_TEXT], session);
 	}
 	ast_channel_unlock(cdata->chan);
 
@@ -1006,6 +1011,17 @@ static int chan_pjsip_write_stream(struct ast_channel *ast, int stream_num, stru
 			res = media->write_callback(session, media, frame);
 		}
 		break;
+	case AST_FRAME_TEXT:
+		if (!media) {
+			return 0;
+		} else if (media->type != AST_MEDIA_TYPE_TEXT) {
+			ast_debug(3, "Channel %s stream %d is of type '%s', not text!\n",
+				ast_channel_name(ast), stream_num, ast_codec_media_type2str(media->type));
+			return 0;
+		} else if (media->write_callback) {
+			res = media->write_callback(session, media, frame);
+		}
+		 break;
 	case AST_FRAME_MODEM:
 		if (!media) {
 			return 0;
@@ -1041,6 +1057,9 @@ static int chan_pjsip_write_stream(struct ast_channel *ast, int stream_num, stru
 
 static int chan_pjsip_write(struct ast_channel *ast, struct ast_frame *frame)
 {
+	if(frame->frametype == AST_FRAME_TEXT && frame->stream_num != -1) {
+		return chan_pjsip_write_stream(ast, frame->stream_num, frame);
+	}
 	return chan_pjsip_write_stream(ast, -1, frame);
 }
 
