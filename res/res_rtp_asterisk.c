@@ -9041,8 +9041,12 @@ static int red_write(const void *data)
 	struct ast_rtp_instance *instance = (struct ast_rtp_instance*) data;
 	struct ast_rtp *rtp = ast_rtp_instance_get_data(instance);
 
+	if (!rtp || !rtp->red) {
+		return 0;
+	}
+
 	ao2_lock(instance);
-	if (rtp->red->t140.datalen > 0) {
+	if (rtp && rtp->red && rtp->red->t140.datalen > 0) {
 		ast_rtp_write(instance, &rtp->red->t140);
 	}
 	ao2_unlock(instance);

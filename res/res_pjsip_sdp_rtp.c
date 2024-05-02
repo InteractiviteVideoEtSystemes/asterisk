@@ -371,6 +371,33 @@ static void get_codecs(struct ast_sip_session *session, const struct pjmedia_sdp
 
 				ast_copy_pj_str(fmt_param, &fmtp.fmt_param, sizeof(fmt_param));
 
+				if (strncasecmp(name, "RED", 3) == 0) {
+					int red_data_pt[10];            /* For T.140 RED */
+					char red_cp_data[30];
+					char *red_cp = red_cp_data;
+					char *rest = NULL;
+					int red_num_gen = -1;
+ast_log(AST_LOG_NOTICE, "T140/RED enabling... (pt=%d)\n", num);
+					strcpy(red_cp, fmt_param);
+					red_cp = strtok_r(red_cp, "/", &rest);
+					while (red_cp && (red_num_gen)++ < AST_RED_MAX_GENERATION) {
+						sscanf(red_cp, "%30u", (unsigned *)&red_data_pt[red_num_gen]);
+						red_cp = strtok_r(NULL, "/", &rest);
+					}
+
+					if (red_num_gen > 0) {
+ast_log(AST_LOG_NOTICE, "T140/RED enabled\n");
+						session->endpoint->media.red_enabled = 1;
+						ast_rtp_red_init(session_media->rtp, 300, red_data_pt, red_num_gen);
+					} else {
+ast_log(AST_LOG_NOTICE, "T140/RED disabled -> error\n");
+						session->endpoint->media.red_enabled = 0;
+					}
+				} else {
+ast_log(AST_LOG_NOTICE, "T140/RED not found %s (pt=%d)\n", name, num);
+					session->endpoint->media.red_enabled = 0;
+				}
+
 				format_parsed = ast_format_parse_sdp_fmtp(format, fmt_param);
 				if (format_parsed) {
 					ast_rtp_codecs_payload_replace_format(codecs, num, format_parsed);
@@ -1950,6 +1977,16 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 			media->attr[media->attr_count++] = attr;
 		}
 
+		// TODO: JPB en attendant de faire mieux
+		if (media_type == AST_MEDIA_TYPE_TEXT && (rtp_code == 105 || rtp_code == 99 || rtp_code == 96)) {
+			if (rtp_code == 105 || rtp_code == 96)
+				snprintf( tmp, sizeof( tmp ), "%d %d/%d/%d", rtp_code, rtp_code + 1, rtp_code + 1, rtp_code + 1 );
+			else
+				snprintf( tmp, sizeof( tmp ), "%d %d/%d/%d", rtp_code, rtp_code - 1, rtp_code - 1, rtp_code - 1 );
+			attr = pjmedia_sdp_attr_create( pool, "fmtp", pj_cstr( &stmp, tmp ) );
+			media->attr[media->attr_count++] = attr;
+		}
+
 		if (ast_format_get_maximum_ms(format) &&
 			((ast_format_get_maximum_ms(format) < max_packet_size) || !max_packet_size)) {
 			max_packet_size = ast_format_get_maximum_ms(format);
@@ -1962,7 +1999,9 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 	}
 
 	/* Add non-codec formats */
-	if (ast_sip_session_is_pending_stream_default(session, stream) && media_type != AST_MEDIA_TYPE_VIDEO
+	if (ast_sip_session_is_pending_stream_default(session, stream)
+		&& media_type != AST_MEDIA_TYPE_VIDEO
+		&& media_type != AST_MEDIA_TYPE_TEXT
 		&& media->desc.fmt_count < PJMEDIA_MAX_SDP_FMT) {
 		for (index = 1LL; index <= AST_RTP_MAX; index <<= 1) {
 			if (!(noncodec & index)) {
