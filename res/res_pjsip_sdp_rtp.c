@@ -67,7 +67,7 @@ static struct ast_sockaddr address_rtp;
 
 static const char STR_AUDIO[] = "audio";
 static const char STR_VIDEO[] = "video";
-static const char STR_VIDEO[] = "text";
+static const char STR_TEXT[] = "text";
 
 static int send_keepalive(const void *data)
 {
