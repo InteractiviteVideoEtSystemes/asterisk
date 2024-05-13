@@ -888,6 +888,28 @@ struct ast_sip_t38_configuration {
 };
 
 /*!
+ * \brief WebRTC Datachannel configuration for SIP endpoints
+ */
+struct ast_sip_webrtc_datachannel_configuration
+{
+	/*! Whether WebRTC Datachannel support is enabled or not */
+	unsigned int enabled;
+	/*! Whether to use IPv6 for WebRTC Datachannel or not */
+	unsigned int ipv6;
+};
+
+/*!
+ * \brief Websocket text configuration for SIP endpoints
+ */
+struct ast_sip_websocket_text_configuration
+{
+	/*! Whether websocket text support is enabled or not */
+	unsigned int enabled;
+	/*! Whether to use IPv6 for websocket text or not */
+	unsigned int ipv6;
+};
+
+/*!
  * \brief Media configuration for SIP endpoints
  */
 struct ast_sip_endpoint_media_configuration {
@@ -905,6 +927,10 @@ struct ast_sip_endpoint_media_configuration {
 	struct ast_sip_direct_media_configuration direct_media;
 	/*! T.38 (FoIP) options */
 	struct ast_sip_t38_configuration t38;
+	/*! WebRTC Datachannel configuration options */
+	struct ast_sip_webrtc_datachannel_configuration webrtc_datachannel_configuration;
+	/*! Websocket text configuration options */
+	struct ast_sip_websocket_text_configuration websocket_text_configuration;
 	/*! Configured codecs */
 	struct ast_format_cap *codecs;
 	/*! Capabilities in topology form */
