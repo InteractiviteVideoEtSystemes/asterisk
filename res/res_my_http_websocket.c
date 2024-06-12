@@ -322,17 +322,26 @@ static int unload_module(void)
 	AST_LIST_LOCK(&websocket_session_list);
 	AST_LIST_TRAVERSE_SAFE_BEGIN(&websocket_session_list, ws_session, entry)
 	{
-		struct websocket_frame *frame_wrapper = NULL;
+		//struct websocket_frame *frame_wrapper = NULL;
+		struct ast_frame *frame = NULL;
 
 		AST_LIST_REMOVE_CURRENT(entry);
-		ast_websocket_unref(ws_session->websocket);
-
+		if (ws_session->websocket) {
+			ast_websocket_unref(ws_session->websocket);
+		}
+		/*
 		AST_LIST_TRAVERSE_SAFE_BEGIN(&ws_session->frame_stack, frame_wrapper, entry)
 		{
 			ast_frfree(frame_wrapper->frame);
 			ast_free(frame_wrapper);
 		}
 		AST_LIST_TRAVERSE_SAFE_END;
+		*/
+		frame = pop_frame(ws_session);
+		while (frame != NULL) {
+			ast_frfree(frame);
+			frame = pop_frame(ws_session);
+		}
 
 		ast_free(ws_session);
 	}
