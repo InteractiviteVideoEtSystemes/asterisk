@@ -643,7 +643,7 @@ static int native_rtp_bridge_compatible_check(struct ast_bridge *bridge, struct 
 	RAII_VAR(struct rtp_glue_data *, glue0, NULL, rtp_glue_data_destroy);
 	RAII_VAR(struct rtp_glue_data *, glue1, NULL, rtp_glue_data_destroy);
 
-	ast_debug(1, "Bridge '%s'.  Checking compatability for channels '%s' and '%s'\n",
+	ast_debug(1, "Bridge '%s'. Checking compatibility for channels '%s' and '%s'\n",
 		bridge->uniqueid, ast_channel_name(bc0->chan), ast_channel_name(bc1->chan));
 
 	if (!native_rtp_bridge_capable(bc0->chan)) {
