@@ -197,7 +197,11 @@ static int negotiate_incoming_sdp_stream(struct ast_sip_session *sip_session,
     RAII_VAR(struct ast_sockaddr *, addrs, NULL, ast_free);
     SCOPE_ENTER(1, "%s\n", ast_sip_session_get_name(sip_session));
 
-    ast_debug(3, "websocket negotiate_incoming_sdp_stream for media type '%s' direction output %d\n", ast_codec_media_type2str(sip_session_media->type), sip_session->call_direction);
+    ast_debug(3, "websocket negotiate_incoming_sdp_stream for media type '%s' direction output %d stream %d\n"
+        , ast_codec_media_type2str(sip_session_media->type)
+        , sip_session->call_direction
+        , sip_session_media->stream_num
+        );
 
     if (!sip_session->endpoint->media.websocket_text_configuration.enabled) {
         SCOPE_EXIT_RTN_VALUE(0, "Declining: websocket text configuration not enabled on sip_session\n");
@@ -295,7 +299,11 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     SCOPE_ENTER(1, "%s Type: %s %s\n", ast_sip_session_get_name(sip_session),
         ast_codec_media_type2str(sip_session_media->type), ast_str_tmp(128, ast_stream_to_str(asterisk_stream, &STR_TMP)));
 
-    ast_debug(3, "websocket create_outgoing_sdp_stream for media type '%s' direction output %d\n", ast_codec_media_type2str(sip_session_media->type), sip_session->call_direction);
+    ast_debug(3, "websocket create_outgoing_sdp_stream for media type '%s' direction output %d stream %d\n"
+        , ast_codec_media_type2str(sip_session_media->type)
+        , sip_session->call_direction
+        , sip_session_media->stream_num
+        );
     /*
     RAII_VAR(char *, transport_str, ast_strndup(stream->desc.transport.ptr, stream->desc.transport.slen), ast_free);
 
@@ -548,8 +556,6 @@ static int media_sip_session_websocket_text_write_callback(struct ast_sip_sessio
         struct ast_websocket *websocket = NULL;
         struct websocket_session *ws_session = NULL;
 
-        ast_log(LOG_DEBUG, "Frame 3 pushed to stack for session with channel name: %s\n", ast_channel_name(sip_session->channel));
-
         // Recherche de la session websocket grace au nom du canal asterisk recupere sur la session sip.
         AST_LIST_LOCK(&websocket_session_list);
         AST_LIST_TRAVERSE(&websocket_session_list, ws_session, entry)
@@ -562,6 +568,24 @@ static int media_sip_session_websocket_text_write_callback(struct ast_sip_sessio
             }
         }
         AST_LIST_UNLOCK(&websocket_session_list);
+
+        if (frame->datalen > 0) {
+            char *text = frame->data.ptr;
+
+            if (text[frame->datalen - 1] != '\0') {
+                /* Not zero terminated, we need to allocate */
+                text = ast_strndup(text, frame->datalen);
+            }
+
+            if (text) {
+                ast_log(LOG_DEBUG, "Frame 3 pushed to stack for session with channel name: %s, msg '%s'\n", ast_channel_name(sip_session->channel), text);
+
+                if (text != frame->data.ptr) {
+                    /* Only free if we allocated */
+                    ast_free(text);
+                }
+            }
+        }
 
         if (websocket) {
             char *payload = frame->data.ptr;
@@ -657,10 +681,11 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *sip_session,
         SCOPE_EXIT_RTN_VALUE(1, "No channel\n");
     }
 
-    ast_debug(3, "websocket apply_negotiated_sdp_stream for media type '%s' with channel name %s direction output %d\n"
+    ast_debug(3, "websocket apply_negotiated_sdp_stream for media type '%s' with channel name %s direction output %d stream %d\n"
         , ast_codec_media_type2str(sip_session_media->type) 
         , ast_channel_name(sip_session->channel)
         , sip_session->call_direction
+        , sip_session_media->stream_num
         );
 
     RAII_VAR(char *, transport_str, ast_strndup(remote_stream->desc.transport.ptr, remote_stream->desc.transport.slen), ast_free);
