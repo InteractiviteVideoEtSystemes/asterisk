@@ -5307,7 +5307,6 @@ static struct ast_frame *red_t140_to_red(struct rtp_red *red)
 
 	/* no primary data and no generations to send */
 	if (len == red->hdrlen && !red->t140.datalen) {
-		ast_log(LOG_DEBUG, "RTP frame texte len %d, red->hdrlen %d, red->t140.datalen %d\n", len, red->hdrlen, red->t140.datalen);
 		return NULL;
 	}
 
