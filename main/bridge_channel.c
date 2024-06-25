@@ -1060,8 +1060,7 @@ int ast_bridge_channel_queue_frame(struct ast_bridge_channel *bridge_channel, st
 
 	if (DEBUG_ATLEAST(1)) {
 		if (fr->frametype == AST_FRAME_TEXT) {
-			ast_log(LOG_DEBUG, "Queuing TEXT frame to '%s', stream %d: %*.s\n", ast_channel_name(bridge_channel->chan),
-				dup->stream_num,
+			ast_log(LOG_DEBUG, "Queuing TEXT frame to '%s': %*.s\n", ast_channel_name(bridge_channel->chan),
 				fr->datalen, (char *)fr->data.ptr);
 		} else if (fr->frametype == AST_FRAME_TEXT_DATA) {
 			struct ast_msg_data *msg = fr->data.ptr;

@@ -5307,6 +5307,7 @@ static struct ast_frame *red_t140_to_red(struct rtp_red *red)
 
 	/* no primary data and no generations to send */
 	if (len == red->hdrlen && !red->t140.datalen) {
+		ast_log(LOG_DEBUG, "RTP frame texte len %d, red->hdrlen %d, red->t140.datalen %d\n", len, red->hdrlen, red->t140.datalen);
 		return NULL;
 	}
 
@@ -7924,7 +7925,7 @@ static struct ast_frame *ast_rtp_interpret(struct ast_rtp_instance *instance, st
 
 		/* format ast_format_t140_red became ast_format_t140 */
 		ao2_replace(rtp->f.subclass.format, ast_format_t140);
-		/* RFC 2198 - §3 )    |F|   block PT  |  timestamp offset         |   block length    |
+		/* RFC 2198 - ï¿½3 )    |F|   block PT  |  timestamp offset         |   block length    |
 		 * Bit F is zero for the last header block, search F==0 :
 		 */
 		while (header_end < data_end && (*header_end & 0x80)) {
