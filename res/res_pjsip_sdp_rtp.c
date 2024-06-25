@@ -69,6 +69,19 @@ static const char STR_AUDIO[] = "audio";
 static const char STR_VIDEO[] = "video";
 static const char STR_TEXT[] = "text";
 
+
+static void replace_newline(char *buffer, char replacement)
+{
+	// Parcours du buffer jusqu'� la fin de la cha�ne
+	for (int i = 0; i < strlen(buffer); i++) {
+		// Si le caract�re courant est un retour � la ligne
+		if (buffer[i] == '\r' || buffer[i] == '\n') {
+			// Remplacement par le caract�re sp�cifi�
+			buffer[i] = replacement;
+		}
+	}
+}
+
 static int send_keepalive(const void *data)
 {
 	struct ast_sip_session_media *session_media = (struct ast_sip_session_media *) data;
@@ -975,7 +988,7 @@ static enum ast_sip_session_media_encryption get_media_encryption_type(pj_str_t 
 
 	*optimistic = 0;
 
-	if (!transport_str) {
+	if (!transport_str || !strstr(transport_str, "AVP")) {
 		return AST_SIP_MEDIA_TRANSPORT_INVALID;
 	}
 	if (strstr(transport_str, "UDP/TLS")) {
@@ -1529,11 +1542,32 @@ static int negotiate_incoming_sdp_stream(struct ast_sip_session *session,
 	int res;
 	SCOPE_ENTER(1, "%s\n", ast_sip_session_get_name(session));
 
+	ast_debug(3, "rtp negotiate_incoming_sdp_stream for media type '%s' direction output %d stream %d\n"
+		, ast_codec_media_type2str(session_media->type)
+		, session->call_direction
+		, session_media->stream_num
+		);
+
+	char szSdpBuffer[1024];
+	int buf_size;
+	buf_size = pjmedia_sdp_print(sdp, szSdpBuffer, 1024);
+	if (buf_size > 0) {
+		szSdpBuffer[buf_size] = '\0';
+		replace_newline(szSdpBuffer, '#');
+		ast_debug(3, "negotiate_incoming_sdp_stream with sdp %s\n", szSdpBuffer);
+	}
+
 	/* If no type formats have been configured reject this stream */
 	if (!ast_format_cap_has_type(session->endpoint->media.codecs, media_type)) {
 		ast_debug(3, "Endpoint has no codecs for media type '%s', declining stream\n",
 			ast_codec_media_type2str(session_media->type));
 		SCOPE_EXIT_RTN_VALUE(0, "Endpoint has no codecs\n");
+	}
+
+	RAII_VAR(char *, transport_str, ast_strndup(stream->desc.transport.ptr, stream->desc.transport.slen), ast_free);
+
+	if (!transport_str || !strstr(transport_str, "AVP")) {
+		SCOPE_EXIT_RTN_VALUE(0, "Incompatible transport\n");
 	}
 
 	/* Ensure incoming transport is compatible with the endpoint's configuration */
@@ -1764,6 +1798,7 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 	static const pj_str_t STR_SENDONLY = { "sendonly", 8 };
 	static const pj_str_t STR_INACTIVE = { "inactive", 8 };
 	static const pj_str_t STR_RECVONLY = { "recvonly", 8 };
+	//struct pjmedia_sdp_media *remote_stream = remote->media[index];
 	pjmedia_sdp_media *media;
 	const char *hostip = NULL;
 	struct ast_sockaddr addr;
@@ -1974,6 +2009,10 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 			media->attr[media->attr_count++] = attr;
 		}
 
+		if (media_type == AST_MEDIA_TYPE_TEXT) {
+			ast_log(LOG_DEBUG, "SDP generate RTP frame text %d %s\n", rtp_code, ast_format_get_codec_name(format));
+		}
+
 		if (media_type == AST_MEDIA_TYPE_TEXT && !strcasecmp(ast_format_get_codec_name(format), "red")) {
 			// TODO jpb: En attendant de faire mieux.
 			if (rtp_code == 105 || rtp_code == 96) {
@@ -2085,6 +2124,27 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 	/* Add the media stream to the SDP */
 	sdp->media[sdp->media_count++] = media;
 
+	char szSdpBuffer[2048];
+	int buf_size;
+	buf_size = pjmedia_sdp_print(sdp, szSdpBuffer, 2048);
+	if (buf_size >= 0) {
+		szSdpBuffer[buf_size] = '\0';
+		replace_newline(szSdpBuffer, '#');
+		ast_debug(3, "rtp create_outgoing_sdp_stream with sdp %s\n", szSdpBuffer);
+	} else {
+		ast_debug(3, "rtp create_outgoing_sdp_stream with sdp error %d\n", buf_size);
+	}
+	if (remote) {
+		buf_size = pjmedia_sdp_print(remote, szSdpBuffer, 2048);
+		if (buf_size >= 0) {
+			szSdpBuffer[buf_size] = '\0';
+			replace_newline(szSdpBuffer, '#');
+			ast_debug(3, "rtp create_outgoing_sdp_stream with remote sdp %s\n", szSdpBuffer);
+		} else {
+			ast_debug(3, "rtp create_outgoing_sdp_stream with remote sdp error %d (remote %d)\n", buf_size, remote ? 1 : 0);
+		}
+	}
+
 	SCOPE_EXIT_RTN_VALUE(1, "RC: 1\n");
 }
 
@@ -2148,6 +2208,38 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *session,
 
 	if (!session->channel) {
 		SCOPE_EXIT_RTN_VALUE(1, "No channel\n");
+	}
+
+	ast_debug(3, "rtp apply_negotiated_sdp_stream for media type '%s' with channel name %s direction output %d stream %d\n"
+		, ast_codec_media_type2str(session_media->type)
+		, ast_channel_name(session->channel)
+		, session->call_direction
+		, session_media->stream_num
+		);
+
+	RAII_VAR(char *, transport_str, ast_strndup(remote_stream->desc.transport.ptr, remote_stream->desc.transport.slen), ast_free);
+
+	if (!transport_str || !strstr(transport_str, "AVP")) {
+		SCOPE_EXIT_RTN_VALUE(0, "Incompatible transport\n");
+	}
+
+	char szSdpBuffer[2048];
+	int buf_size;
+	buf_size = pjmedia_sdp_print(local, szSdpBuffer, 2048);
+	if (buf_size >= 0) {
+		szSdpBuffer[buf_size] = '\0';
+		replace_newline(szSdpBuffer, '#');
+		ast_debug(3, "rtp apply_negotiated_sdp_stream with local sdp %s\n", szSdpBuffer);
+	} else {
+		ast_debug(3, "rtp apply_negotiated_sdp_stream with local sdp error %d\n", buf_size);
+	}
+	buf_size = pjmedia_sdp_print(remote, szSdpBuffer, 2048);
+	if (buf_size >= 0) {
+		szSdpBuffer[buf_size] = '\0';
+		replace_newline(szSdpBuffer, '#');
+		ast_debug(3, "rtp apply_negotiated_sdp_stream with remote sdp %s\n", szSdpBuffer);
+	} else {
+		ast_debug(3, "rtp apply_negotiated_sdp_stream with remote sdp error %d (remote %d)\n", buf_size, remote ? 1 : 0);
 	}
 
 	/* Ensure incoming transport is compatible with the endpoint's configuration */
@@ -2304,6 +2396,8 @@ static void change_outgoing_sdp_stream_media_address(pjsip_tx_data *tdata, struc
 	char host[NI_MAXHOST];
 	struct ast_sockaddr our_sdp_addr = { { 0, } };
 
+	ast_debug(3, "change_outgoing_sdp_stream_media_address\n");
+
 	/* If the stream has been rejected there will be no connection line */
 	if (!stream->conn || !transport_state) {
 		return;
@@ -2347,7 +2441,7 @@ static void stream_destroy(struct ast_sip_session_media *session_media)
 
 /*! \brief SDP handler for 'audio' media stream */
 static struct ast_sip_session_sdp_handler audio_sdp_handler = {
-	.id = STR_AUDIO,
+	.id = "audio_rtp", //STR_AUDIO, 
 	.negotiate_incoming_sdp_stream = negotiate_incoming_sdp_stream,
 	.create_outgoing_sdp_stream = create_outgoing_sdp_stream,
 	.apply_negotiated_sdp_stream = apply_negotiated_sdp_stream,
@@ -2358,7 +2452,7 @@ static struct ast_sip_session_sdp_handler audio_sdp_handler = {
 
 /*! \brief SDP handler for 'video' media stream */
 static struct ast_sip_session_sdp_handler video_sdp_handler = {
-	.id = STR_VIDEO,
+	.id = "video_rtp", //STR_VIDEO,
 	.negotiate_incoming_sdp_stream = negotiate_incoming_sdp_stream,
 	.create_outgoing_sdp_stream = create_outgoing_sdp_stream,
 	.apply_negotiated_sdp_stream = apply_negotiated_sdp_stream,
@@ -2370,7 +2464,7 @@ static struct ast_sip_session_sdp_handler video_sdp_handler = {
 
 /*! \brief SDP handler for 'text' media stream */
 static struct ast_sip_session_sdp_handler text_sdp_handler = {
-	.id = STR_TEXT,
+	.id = "test_rtp", //STR_TEXT,
 	.negotiate_incoming_sdp_stream = negotiate_incoming_sdp_stream,
 	.create_outgoing_sdp_stream = create_outgoing_sdp_stream,
 	.apply_negotiated_sdp_stream = apply_negotiated_sdp_stream,
@@ -2458,7 +2552,7 @@ static int load_module(void)
 		ast_log(LOG_ERROR, "Unable to register SDP handler for %s stream type\n", STR_VIDEO);
 		goto end;
 	}
-
+	
 	if (ast_sip_session_register_sdp_handler(&text_sdp_handler, STR_TEXT)) {
 		ast_log(LOG_ERROR, "Unable to register SDP handler for %s stream type\n", STR_TEXT);
 		goto end;
