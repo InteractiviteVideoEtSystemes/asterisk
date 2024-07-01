@@ -39,14 +39,11 @@
 #include <pjmedia.h>
 #include <pjlib.h>
 
-//#include "asterisk/utils.h"
 #include "asterisk/module.h"
-//#include "asterisk/netsock2.h"
 #include "asterisk/astobj2.h"
 #include "asterisk/strings.h"
 
 #include "asterisk/channel.h"
-//#include "asterisk/acl.h"
 #include "asterisk/stream.h"
 #include "asterisk/format_cache.h"
 #include "asterisk/http.h"
@@ -58,9 +55,6 @@
 
 static const char STR_TEXT[] = "text";
 
-/*! \brief Address for ws_text */
-static struct ast_sockaddr address_ws_text;
-
 /*! \brief Websocket Text information */
 struct ast_websocket_text
 {
@@ -68,19 +62,13 @@ struct ast_websocket_text
     int pipe_fds[2];
 };
 
-struct websocket_frame
-{
-    struct ast_frame *frame;
-    AST_LIST_ENTRY(websocket_frame) entry;
-};
 
 struct websocket_session
 {
-    struct ast_websocket *websocket;
-    char channel_name[256];
+    char id[256];
     int fd;
+    struct ast_websocket *websocket;
 
-    AST_LIST_HEAD(frame_stack, websocket_frame) frame_stack;
     AST_LIST_ENTRY(websocket_session) entry;
 };
 
@@ -123,52 +111,10 @@ static int get_websocket_tls_port(void)
     return websocket_tls_port;
 }
 
-static int push_frame(struct websocket_session *ws_session, struct ast_frame *frame)
-{
-    struct websocket_frame *frame_wrapper;
-
-    frame_wrapper = ast_calloc(1, sizeof(*frame_wrapper));
-    if (!frame_wrapper) {
-        ast_log(LOG_ERROR, "Failed to allocate memory for new frame\n");
-        return -1;
-    }
-
-    frame_wrapper->frame = ast_frdup(frame);
-
-    AST_LIST_LOCK(&ws_session->frame_stack);
-    AST_LIST_INSERT_HEAD(&ws_session->frame_stack, frame_wrapper, entry);
-    AST_LIST_UNLOCK(&ws_session->frame_stack);
-
-    ast_log(LOG_DEBUG, "Frame pushed to stack for websocket session with channel name: %s\n", ws_session->channel_name);
-    return 0;
-}
-
-static struct ast_frame *pop_frame(struct websocket_session *ws_session)
-{
-    struct websocket_frame *frame_wrapper;
-    struct ast_frame *frame = NULL;
-
-    AST_LIST_LOCK(&ws_session->frame_stack);
-    frame_wrapper = AST_LIST_REMOVE_HEAD(&ws_session->frame_stack, entry);
-    AST_LIST_UNLOCK(&ws_session->frame_stack);
-
-    if (frame_wrapper) {
-        frame = frame_wrapper->frame;
-        ast_free(frame_wrapper);
-        ast_log(LOG_DEBUG, "Frame popped from stack for websocket session with channel name: %s\n", ws_session->channel_name);
-    } else {
-        ast_log(LOG_DEBUG, "No frame in stack for websocket session with with channel name: %s\n", ws_session->channel_name);
-    }
-
-    return frame;
-}
-
 /*! \brief Supplement for adding framehook to sip_session channel */
 static struct ast_sip_session_supplement websocket_text_supplement = {
     .method = "INVITE",
     .priority = AST_SIP_SUPPLEMENT_PRIORITY_CHANNEL + 1,
-//	.incoming_request = xx_incoming_invite_request,
-//	.outgoing_request = xx_outgoing_invite_request,
 };
 
 static int ast_websocket_text_fd(const struct ast_websocket_text *ws_text)
@@ -234,12 +180,6 @@ static int negotiate_incoming_sdp_stream(struct ast_sip_session *sip_session,
     RAII_VAR(struct ast_sockaddr *, addrs, NULL, ast_free);
     SCOPE_ENTER(1, "%s\n", ast_sip_session_get_name(sip_session));
 
-    ast_debug(3, "websocket negotiate_incoming_sdp_stream for media type '%s' direction output %d stream %d\n"
-        , ast_codec_media_type2str(sip_session_media->type)
-        , sip_session->call_direction
-        , sip_session_media->stream_num
-        );
-
     if (!sip_session->endpoint->media.websocket_text_configuration.enabled) {
         SCOPE_EXIT_RTN_VALUE(0, "Declining: websocket text configuration not enabled on sip_session\n");
     }
@@ -277,14 +217,14 @@ static int negotiate_incoming_sdp_stream(struct ast_sip_session *sip_session,
     if (!sip_session_media->websocket_text) {
         sip_session_media->websocket_text = ast_calloc(1, sizeof(*sip_session_media->websocket_text));
         if (!sip_session_media->websocket_text) {
-            SCOPE_EXIT_RTN_VALUE(-1, "Couldn't create rtp\n");
+            SCOPE_EXIT_RTN_VALUE(-1, "Couldn't create websocket text\n");
         }
         ast_debug(3, "websocket negotiate_incoming_sdp_stream created '%s'\n", ast_codec_media_type2str(sip_session_media->type));
     } else {
         ast_debug(3, "websocket negotiate_incoming_sdp_stream already created '%s'\n", ast_codec_media_type2str(sip_session_media->type));
     }
 
-    if (sip_session->channel && sip_session_media->websocket_text->fd != 0xDEAD) {
+    if (sip_session->inv_session && sip_session_media->websocket_text->fd != 0xDEAD) {
         sip_session_media->websocket_text->fd = 0xDEAD;
 
         ws_session = ast_calloc(1, sizeof(*ws_session));
@@ -292,15 +232,13 @@ static int negotiate_incoming_sdp_stream(struct ast_sip_session *sip_session,
             SCOPE_EXIT_RTN_VALUE(-1, "Failed to allocate memory for websocket session\n");
         }
 
-        //strcpy(ws_session->channel_name, "channel_demo");
-        //strcpy(ws_session->channel_name, ast_channel_name(sip_session->channel));
-        strcpy(ws_session->channel_name, sip_session->inv_session->obj_name + strlen("inv0x"));
+        strcpy(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x"));
 
         AST_LIST_LOCK(&websocket_session_list);
         AST_LIST_INSERT_HEAD(&websocket_session_list, ws_session, entry);
         AST_LIST_UNLOCK(&websocket_session_list);
 
-        ast_debug(3, "websocket negotiate_incoming_sdp_stream linked with sip session channel name %s\n", ast_channel_name(sip_session->channel));
+        ast_debug(3, "websocket negotiate_incoming_sdp_stream linked with sip session invite id %s\n", sip_session->inv_session->obj_name);
     } else {
         ast_debug(3, "websocket negotiate_incoming_sdp_stream without sip session channel\n");
     }
@@ -325,77 +263,19 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     static const pj_str_t STR_TCP_WSS = {"TCP/WSS", 7};
     static const pj_str_t STR_T140 = {"t140", 4};
     static const pj_str_t STR_RTP_AVP = {"RTP/AVPF", 8};
-    //struct pjmedia_sdp_media *remote_stream = remote->media[index];
     pjmedia_sdp_media *media;
     const char *hostip = NULL;
     struct ast_sockaddr addr;
-
+    struct websocket_session *ws_session = NULL;
     char tmp[512];
     pj_str_t stmp;
+
     SCOPE_ENTER(1, "%s Type: %s %s\n", ast_sip_session_get_name(sip_session),
         ast_codec_media_type2str(sip_session_media->type), ast_str_tmp(128, ast_stream_to_str(asterisk_stream, &STR_TMP)));
 
-    ast_debug(3, "websocket create_outgoing_sdp_stream for media type '%s' direction output %d stream %d\n"
-        , ast_codec_media_type2str(sip_session_media->type)
-        , sip_session->call_direction
-        , sip_session_media->stream_num
-        );
-    /*
-    RAII_VAR(char *, transport_str, ast_strndup(stream->desc.transport.ptr, stream->desc.transport.slen), ast_free);
-
-    if (!transport_str || !strstr(transport_str, "TCP/WSS")) {
-        SCOPE_EXIT_RTN_VALUE(0, "Incompatible transport\n");
-    }
-    */
-
     if (!sip_session->endpoint->media.websocket_text_configuration.enabled) {
         SCOPE_EXIT_RTN_VALUE(1, "Not creating outgoing SDP stream: websocket text not enabled\n");
-    } else {
-        /**/
-        struct ast_sockaddr temp_media_address;
-        struct ast_sockaddr *media_address = &address_ws_text;
-
-        if (sip_session->endpoint->media.bind_rtp_to_media_address && !ast_strlen_zero(sip_session->endpoint->media.address)) {
-            if (ast_sockaddr_parse(&temp_media_address, sip_session->endpoint->media.address, 0)) {
-                ast_debug_rtp(1, "Endpoint %s: Binding Websocket text media to %s\n",
-                    ast_sorcery_object_get_id(sip_session->endpoint),
-                    sip_session->endpoint->media.address);
-                media_address = &temp_media_address;
-            } else {
-                ast_debug_rtp(1, "Endpoint %s: Websocket text media address invalid: %s\n",
-                    ast_sorcery_object_get_id(sip_session->endpoint),
-                    sip_session->endpoint->media.address);
-            }
-        } else {
-            struct ast_sip_transport *transport;
-
-            transport = ast_sorcery_retrieve_by_id(ast_sip_get_sorcery(), "transport",
-                sip_session->endpoint->transport);
-            if (transport) {
-                struct ast_sip_transport_state *trans_state;
-
-                trans_state = ast_sip_get_transport_state(ast_sorcery_object_get_id(transport));
-                if (trans_state) {
-                    char hoststr[PJ_INET6_ADDRSTRLEN];
-
-                    pj_sockaddr_print(&trans_state->host, hoststr, sizeof(hoststr), 0);
-                    if (ast_sockaddr_parse(&temp_media_address, hoststr, 0)) {
-                        ast_debug_rtp(1, "Transport %s bound to %s: Using it for Websocket text media.\n",
-                            sip_session->endpoint->transport, hoststr);
-                        media_address = &temp_media_address;
-                    } else {
-                        ast_debug_rtp(1, "Transport %s bound to %s: Invalid for Websocket text media.\n",
-                            sip_session->endpoint->transport, hoststr);
-                    }
-                    ao2_ref(trans_state, -1);
-                }
-                ao2_ref(transport, -1);
-            }
-        }
-        /**/
     }
-
-    struct websocket_session *ws_session = NULL;
 
     if (!sip_session_media->websocket_text) {
         sip_session_media->websocket_text = ast_calloc(1, sizeof(*sip_session_media->websocket_text));
@@ -407,7 +287,7 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
         ast_debug(3, "websocket create_outgoing_sdp_stream already created '%s'\n", ast_codec_media_type2str(sip_session_media->type));
     }
 
-    if (sip_session->channel && sip_session_media->websocket_text->fd != 0xDEAD) {
+    if (sip_session->inv_session && sip_session_media->websocket_text->fd != 0xDEAD) {
         sip_session_media->websocket_text->fd = 0xDEAD;
 
         ws_session = ast_calloc(1, sizeof(*ws_session));
@@ -415,20 +295,19 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
             SCOPE_EXIT_RTN_VALUE(-1, "Failed to allocate memory for websocket session\n");
         }
 
-        //strcpy(ws_session->channel_name, "channel_demo");
-        //strcpy(ws_session->channel_name, ast_channel_name(sip_session->channel));
-        strcpy(ws_session->channel_name, sip_session->inv_session->obj_name + strlen("inv0x"));
+        strcpy(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x"));
 
         AST_LIST_LOCK(&websocket_session_list);
         AST_LIST_INSERT_HEAD(&websocket_session_list, ws_session, entry);
         AST_LIST_UNLOCK(&websocket_session_list);
 
-        ast_debug(3, "websocket create_outgoing_sdp_stream linked with sip session channel name %s\n", ast_channel_name(sip_session->channel));
+        ast_debug(3, "websocket create_outgoing_sdp_stream linked with sip session invite id %s\n", sip_session->inv_session->obj_name);
     } else {
         ast_debug(3, "websocket create_outgoing_sdp_stream without sip session channel\n");
     }
 
     pjmedia_sdp_attr *attr;
+    const pj_str_t *hostname = pj_gethostname();
 
 #ifndef HAVE_PJSIP_ENDPOINT_COMPACT_FORM
     extern pj_bool_t pjsip_use_compact_form;
@@ -436,114 +315,28 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     pj_bool_t pjsip_use_compact_form = pjsip_cfg()->endpt.use_compact_form;
 #endif
 
-    if (sip_session->call_direction == AST_SIP_SESSION_OUTGOING_CALL) {
-        int rtp_code;
-        pjmedia_sdp_rtpmap rtpmap;
-
-        if (!(media = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_media))) ||
-            !(media->conn = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_conn)))) {
-            SCOPE_EXIT_RTN_VALUE(-1, "Pool alloc failure\n");
-        }
-
-        pj_strdup2(pool, &media->desc.media, ast_codec_media_type2str(sip_session_media->type));
-
-        media->desc.transport = STR_RTP_AVP;
-
-        if (ast_strlen_zero(sip_session->endpoint->media.address)) {
-            hostip = ast_sip_get_host_ip_string(sip_session->endpoint->media.websocket_text_configuration.ipv6 ? pj_AF_INET6() : pj_AF_INET());
-        } else {
-            hostip = sip_session->endpoint->media.address;
-        }
-
-        if (ast_strlen_zero(hostip)) {
-            SCOPE_EXIT_RTN_VALUE(-1, "No local host ip\n");
-        }
-
-        media->conn->net_type = STR_IN;
-        media->conn->addr_type = sip_session->endpoint->media.websocket_text_configuration.ipv6 ? STR_IP6 : STR_IP4;
-        pj_strdup2(pool, &media->conn->addr, hostip);
-        media->desc.port = 16922; // (pj_uint16_t)ast_sockaddr_port(&addr);
-        media->desc.port_count = 1;
-
-        rtp_code = 107; // 99;
-        snprintf(tmp, sizeof(tmp), "%d", rtp_code);
-        pj_strdup2(pool, &media->desc.fmt[media->desc.fmt_count++], tmp);
-
-        rtpmap.pt = media->desc.fmt[media->desc.fmt_count - 1];
-
-        rtpmap.clock_rate = 1000;
-        pj_strdup2(pool, &rtpmap.enc_name, "red");
-        pj_cstr(&rtpmap.param, NULL);
-
-        pjmedia_sdp_rtpmap_to_attr(pool, &rtpmap, &attr);
-        media->attr[media->attr_count++] = attr;
-
-        //rtp_code = rtp_code - 1;
-        //snprintf(tmp, sizeof(tmp), "%d %d/%d/%d", rtp_code + 1, rtp_code, rtp_code, rtp_code);
-        rtp_code = rtp_code + 1;
-        snprintf(tmp, sizeof(tmp), "%d %d/%d/%d", rtp_code - 1, rtp_code, rtp_code, rtp_code);
-        attr = pjmedia_sdp_attr_create(pool, "fmtp", pj_cstr(&stmp, tmp));
-        media->attr[media->attr_count++] = attr;
-
-        snprintf(tmp, sizeof(tmp), "%d", rtp_code);
-        pj_strdup2(pool, &media->desc.fmt[media->desc.fmt_count++], tmp);
-
-        rtpmap.pt = media->desc.fmt[media->desc.fmt_count - 1];
-        rtpmap.clock_rate = 1000;
-        pj_strdup2(pool, &rtpmap.enc_name, "t140");
-        pj_cstr(&rtpmap.param, NULL);
-
-        pjmedia_sdp_rtpmap_to_attr(pool, &rtpmap, &attr);
-        media->attr[media->attr_count++] = attr;
-
-    } else {
-        if (!(media = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_media)))) {
-            SCOPE_EXIT_RTN_VALUE(-1, "Pool alloc failure\n");
-        }
-
-        pj_strdup2(pool, &media->desc.media, ast_codec_media_type2str(sip_session_media->type));
-
-        media->desc.transport = STR_TCP_WSS;
-        media->desc.port = get_websocket_tls_port();
-            ;
-        media->desc.port_count = 1;
-
-        media->desc.fmt[media->desc.fmt_count++] = STR_T140;
-
-        const pj_str_t* hostname = pj_gethostname();
-
-        if (sip_session->inv_session) {
-            snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", hostname ? hostname->ptr : "localhost", media->desc.port, sip_session->inv_session->obj_name + strlen( "inv0x"));
-        } else {
-            snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", hostname ? hostname->ptr : "localhost", media->desc.port, "channel_demo");
-        }
-
-        attr = pjmedia_sdp_attr_create(pool, tmp, NULL);
-        media->attr[media->attr_count++] = attr;
+    if (!(media = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_media)))) {
+        SCOPE_EXIT_RTN_VALUE(-1, "Pool alloc failure\n");
     }
+
+    pj_strdup2(pool, &media->desc.media, ast_codec_media_type2str(sip_session_media->type));
+
+    media->desc.transport = STR_TCP_WSS;
+    media->desc.port = get_websocket_tls_port();
+    media->desc.port_count = 1;
+
+    media->desc.fmt[media->desc.fmt_count++] = STR_T140;
+
+    if (sip_session->inv_session) {
+        snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", hostname ? hostname->ptr : "localhost", media->desc.port, sip_session->inv_session->obj_name + strlen( "inv0x"));
+    } else {
+        snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", hostname ? hostname->ptr : "localhost", media->desc.port, "channel_demo");
+    }
+
+    attr = pjmedia_sdp_attr_create(pool, tmp, NULL);
+    media->attr[media->attr_count++] = attr;
 
     sdp->media[sdp->media_count++] = media;
-
-    char szSdpBuffer[2048];
-    int buf_size;
-    buf_size = pjmedia_sdp_print(sdp, szSdpBuffer, 2048);
-    if (buf_size >= 0) {
-        szSdpBuffer[buf_size] = '\0';
-        replace_newline(szSdpBuffer, '#');
-        ast_debug(3, "websocket create_outgoing_sdp_stream with sdp %s\n", szSdpBuffer);
-    } else {
-        ast_debug(3, "websocket create_outgoing_sdp_stream with sdp error %d\n", buf_size);
-    }
-    if (remote) {
-        buf_size = pjmedia_sdp_print(remote, szSdpBuffer, 2048);
-        if (buf_size >= 0) {
-            szSdpBuffer[buf_size] = '\0';
-            replace_newline(szSdpBuffer, '#');
-            ast_debug(3, "websocket create_outgoing_sdp_stream with remote sdp %s\n", szSdpBuffer);
-        } else {
-            ast_debug(3, "websocket create_outgoing_sdp_stream with remote sdp error %d (remote %d)\n", buf_size, remote ? 1 : 0);
-        }
-    }
 
     SCOPE_EXIT_RTN_VALUE(1, "RC: 1\n");
 }
@@ -589,9 +382,7 @@ static struct ast_frame *media_sip_session_websocket_text_read_callback(struct a
             ast_log(LOG_WARNING, "websocket text read EOF\n");
             done = 1;
         } else {
-            // Gérer les erreurs
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Aucune donnée supplémentaire disponible pour l'instant
                 ast_log(LOG_WARNING, "websocket text read no additional data available\n");
                 done = 1;
             } else {
@@ -607,12 +398,8 @@ static struct ast_frame *media_sip_session_websocket_text_read_callback(struct a
         AST_LIST_LOCK(&websocket_session_list);
         AST_LIST_TRAVERSE(&websocket_session_list, ws_session, entry)
         {
-            //if (strcmp(ws_session->channel_name, "channel_demo") == 0) {
-            //if (strcmp(ws_session->channel_name, ast_channel_name(sip_session->channel)) == 0) {
-            if (strcmp(ws_session->channel_name, sip_session->inv_session->obj_name + strlen("inv0x")) == 0) {
+            if (strcmp(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x")) == 0) {
                 struct ast_frame f_in;
-
-                //frame = pop_frame(ws_session);
 
                 memset(&f_in, 0, sizeof(f_in));
                 f_in.frametype = AST_FRAME_TEXT;
@@ -655,9 +442,7 @@ static int media_sip_session_websocket_text_write_callback(struct ast_sip_sessio
         AST_LIST_LOCK(&websocket_session_list);
         AST_LIST_TRAVERSE(&websocket_session_list, ws_session, entry)
         {
-            //if (strcmp(ws_session->channel_name, "channel_demo") == 0) {
-            //if (strcmp(ws_session->channel_name, ast_channel_name(sip_session->channel)) == 0) {
-            if (strcmp(ws_session->channel_name, sip_session->inv_session->obj_name + strlen("inv0x")) == 0) {
+            if (strcmp(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x")) == 0) {
                 websocket = ws_session->websocket;
                 break;
             }
@@ -674,8 +459,6 @@ static int media_sip_session_websocket_text_write_callback(struct ast_sip_sessio
 
             if (text) {
                 if (websocket) {
-                    //char *payload = frame->data.ptr;
-                    //uint64_t payload_len = frame->datalen - 1;
                     char *payload = text;
                     uint64_t payload_len = strlen(text);
                     enum ast_websocket_opcode opcode = AST_WEBSOCKET_OPCODE_TEXT;
@@ -784,36 +567,10 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *sip_session,
         SCOPE_EXIT_RTN_VALUE(1, "No channel\n");
     }
 
-    ast_debug(3, "websocket apply_negotiated_sdp_stream for media type '%s' with channel name %s direction output %d stream %d\n"
-        , ast_codec_media_type2str(sip_session_media->type) 
-        , ast_channel_name(sip_session->channel)
-        , sip_session->call_direction
-        , sip_session_media->stream_num
-        );
-
     RAII_VAR(char *, transport_str, ast_strndup(remote_stream->desc.transport.ptr, remote_stream->desc.transport.slen), ast_free);
 
     if (!transport_str || !strstr(transport_str, "TCP/WSS")) {
         SCOPE_EXIT_RTN_VALUE(0, "Incompatible transport\n");
-    }
-
-    char szSdpBuffer[2048];
-    int buf_size;
-    buf_size = pjmedia_sdp_print(local, szSdpBuffer, 2048);
-    if (buf_size >= 0) {
-        szSdpBuffer[buf_size] = '\0';
-        replace_newline(szSdpBuffer, '#');
-        ast_debug(3, "websocket apply_negotiated_sdp_stream with local sdp %s\n", szSdpBuffer);
-    } else {
-        ast_debug(3, "websocket apply_negotiated_sdp_stream with local sdp error %d\n", buf_size);
-    }
-    buf_size = pjmedia_sdp_print(remote, szSdpBuffer, 2048);
-    if (buf_size >= 0) {
-        szSdpBuffer[buf_size] = '\0';
-        replace_newline(szSdpBuffer, '#');
-        ast_debug(3, "websocket apply_negotiated_sdp_stream with remote sdp %s\n", szSdpBuffer);
-    } else {
-        ast_debug(3, "websocket apply_negotiated_sdp_stream with remote sdp error %d (remote %d)\n", buf_size, remote ? 1 : 0);
     }
 
     ast_copy_pj_str(host, remote_stream->conn ? &remote_stream->conn->addr : &remote->conn->addr, sizeof(host));
@@ -829,14 +586,14 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *sip_session,
     if (!sip_session_media->websocket_text) {
         sip_session_media->websocket_text = ast_calloc(1, sizeof(*sip_session_media->websocket_text));
         if (!sip_session_media->websocket_text) {
-            SCOPE_EXIT_RTN_VALUE(-1, "Couldn't create rtp\n");
+            SCOPE_EXIT_RTN_VALUE(-1, "Couldn't create websocket text\n");
         }
         ast_debug(3, "websocket apply_negotiated_sdp_stream created '%s'\n", ast_codec_media_type2str(sip_session_media->type));
     } else {
         ast_debug(3, "websocket apply_negotiated_sdp_stream already created '%s'\n", ast_codec_media_type2str(sip_session_media->type));
     }
 
-    if (sip_session->channel && sip_session_media->websocket_text->fd != 0xDEAD) {
+    if (sip_session->inv_session && sip_session_media->websocket_text->fd != 0xDEAD) {
         sip_session_media->websocket_text->fd = 0xDEAD;
 
         ws_session = ast_calloc(1, sizeof(*ws_session));
@@ -844,17 +601,24 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *sip_session,
             SCOPE_EXIT_RTN_VALUE(-1, "Failed to allocate memory for websocket session\n");
         }
 
-        //strcpy(ws_session->channel_name, "channel_demo");
-        //strcpy(ws_session->channel_name, ast_channel_name(sip_session->channel));
-        strcpy(ws_session->channel_name, sip_session->inv_session->obj_name + strlen("inv0x"));
+        strcpy(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x"));
 
         AST_LIST_LOCK(&websocket_session_list);
         AST_LIST_INSERT_HEAD(&websocket_session_list, ws_session, entry);
         AST_LIST_UNLOCK(&websocket_session_list);
 
-        ast_debug(3, "websocket apply_negotiated_sdp_stream linked with sip session channel name %s\n", ast_channel_name(sip_session->channel));
+        ast_debug(3, "websocket apply_negotiated_sdp_stream linked with sip session invite id %s\n", sip_session->inv_session->obj_name);
     } else {
-        ast_log(LOG_ERROR, "websocket apply_negotiated_sdp_stream already linked with sip session channel name %s\n", ast_channel_name(sip_session->channel));
+        AST_LIST_LOCK(&websocket_session_list);
+        AST_LIST_TRAVERSE(&websocket_session_list, ws_session, entry)
+        {
+            if (strcmp(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x")) == 0) {
+                break;
+            }
+        }
+        AST_LIST_UNLOCK(&websocket_session_list);
+
+        ast_log(LOG_ERROR, "websocket apply_negotiated_sdp_stream already linked with sip session invite id %s\n", sip_session->inv_session->obj_name);
     }
 
     ast_sip_session_media_set_write_callback(sip_session, sip_session_media, media_sip_session_websocket_text_write_callback);
@@ -884,9 +648,20 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *sip_session,
 static void stream_destroy(struct ast_sip_session_media *sip_session_media)
 {
     if (sip_session_media->websocket_text) {
+        if (sip_session_media->websocket_text->pipe_fds[0] > 0) {
+            close(sip_session_media->websocket_text->pipe_fds[0]);
+            sip_session_media->websocket_text->pipe_fds[0] = -1;
+        }
+        if (sip_session_media->websocket_text->pipe_fds[1] > 0) {
+            close(sip_session_media->websocket_text->pipe_fds[1]);
+            sip_session_media->websocket_text->pipe_fds[1] = -1;
+        }
+
         ast_websocket_text_destroy(sip_session_media->websocket_text);
     }
+
     sip_session_media->websocket_text = NULL;
+
 }
 
 /*! \brief SDP handler for 'application' media stream */
@@ -928,7 +703,7 @@ static void add_variable_to_list(struct ast_variable **head, const char *name, c
     ast_log(LOG_NOTICE, "Variable added: %s=%s\n", name, value);
 }
 
-static int mywebsocket_uri_cb(struct ast_tcptls_session_instance *ser
+static int websocket_text_t140_uri_cb(struct ast_tcptls_session_instance *ser
     , const struct ast_http_uri *urih
     , const char *uri
     , enum ast_http_method method
@@ -936,15 +711,15 @@ static int mywebsocket_uri_cb(struct ast_tcptls_session_instance *ser
     , struct ast_variable *headers
 )
 {
-    ast_debug(1, "Entering WebSocket t140 loop method %s uri %s\n", ast_get_http_method(method), uri);
-/**/
     struct websocket_session *ws_session = NULL;
+
+    ast_debug(1, "Entering webSocket text t140 loop method %s uri %s\n", ast_get_http_method(method), uri);
 
     // Recherche de la session websocket grace au nom du canal asterisk recupere sur la session sip.
     AST_LIST_LOCK(&websocket_session_list);
     AST_LIST_TRAVERSE(&websocket_session_list, ws_session, entry)
     {
-        if (!strcmp(ws_session->channel_name, uri)) {
+        if (!strcmp(ws_session->id, uri)) {
             break;
         }
     }
@@ -954,15 +729,15 @@ static int mywebsocket_uri_cb(struct ast_tcptls_session_instance *ser
         ast_http_error(ser, 403, "Access Denied", "You do not have permission to access the requested URL.");
         return 0;
     }
-/**/
+
     add_variable_to_list(&get_params, "uri", uri);
 
     return ast_websocket_uri_cb(ser, urih, uri, method, get_params, headers);
 }
 
-static struct ast_http_uri mywebsocketuri = {
-    .callback = mywebsocket_uri_cb,
-    .description = "Asterisk my HTTP WebSocket",
+static struct ast_http_uri websocket_text_t140_uri = {
+    .callback = websocket_text_t140_uri_cb,
+    .description = "Asterisk HTTP WebSocket text t140",
     .uri = "ws_text",
     .has_subtree = 1,
     .data = NULL,
@@ -970,12 +745,12 @@ static struct ast_http_uri mywebsocketuri = {
 };
 
 /*! \brief Simple echo implementation which echoes received text and binary frames */
-static void mywebsocket_echo_callback(struct ast_websocket *websocket, struct ast_variable *parameters, struct ast_variable *headers)
+static void websocket_text_t140_callback(struct ast_websocket *websocket, struct ast_variable *parameters, struct ast_variable *headers)
 {
     int res;
     struct websocket_session *ws_session = NULL;
 
-    ast_debug(1, "Entering WebSocket t140 loop %s, addr remote %s and local %s\n"
+    ast_debug(1, "Entering webSocket text t140 loop %s, addr remote %s and local %s\n"
         , ast_websocket_session_id(websocket)
         , ast_sockaddr_stringify(ast_websocket_remote_address(websocket))
         , ast_sockaddr_stringify(ast_websocket_local_address(websocket))
@@ -983,27 +758,19 @@ static void mywebsocket_echo_callback(struct ast_websocket *websocket, struct as
 
     struct ast_variable *i;
     for (i = parameters; i; i = i->next) {
-        ast_debug(1, "Entering WebSocket t140 loop %s parameters %s = %s\n", ast_websocket_session_id(websocket), i->name, i->value);
         if (!strcmp(i->name, "uri")) {
-            // Recherche de la session websocket grace au nom du canal asterisk recupere sur la session sip.
             AST_LIST_LOCK(&websocket_session_list);
             AST_LIST_TRAVERSE(&websocket_session_list, ws_session, entry)
             {
-                if (!strcmp(ws_session->channel_name, i->value)) {
+                if (!strcmp(ws_session->id, i->value)) {
                     break;
                 }
             }
             AST_LIST_UNLOCK(&websocket_session_list);
         }
     }
-    for (i = headers; i; i = i->next) {
-        ast_debug(1, "Entering WebSocket t140 loop %s headers %s = %s\n", ast_websocket_session_id(websocket), i->name, i->value);
-    }
-
-    //ws_session = ast_calloc(1, sizeof(*ws_session));
     if (!ws_session) {
         ast_log(LOG_ERROR, "Failed to find uri or allocate memory for WebSocket client\n");
-        //ast_http_error(ser, 403, "Access Denied", "You do not have permission to access the requested URL.");
         goto end;
     }
 
@@ -1015,8 +782,6 @@ static void mywebsocket_echo_callback(struct ast_websocket *websocket, struct as
         ast_websocket_ref(websocket);
         ws_session->websocket = websocket;
     }
-
-    ast_log(LOG_DEBUG, "media_sip_session_websocket_text_read_callback fd %d with channel name: %s\n", ast_websocket_fd(ws_session->websocket), ws_session->channel_name);
 
     while ((res = ast_websocket_wait_for_input(websocket, -1)) > 0) {
         char *payload;
@@ -1031,52 +796,23 @@ static void mywebsocket_echo_callback(struct ast_websocket *websocket, struct as
         }
 
         if (opcode == AST_WEBSOCKET_OPCODE_TEXT && payload_len > 0) {
-            // On empile une ast_frame avec le texte recu dans une liste
-            struct ast_frame f_in;
-            memset(&f_in, 0, sizeof(f_in));
-            f_in.frametype = AST_FRAME_TEXT;
-            //f_in.subclass.format = ast_format_t140_red;
-            f_in.subclass.format = ast_format_t140;
-            //f_in.subclass.format = ast_format_none;
-            f_in.datalen = payload_len;
-            f_in.data.ptr = (void *)payload;
-
-//            push_frame(ws_session, &f_in);
             write(ws_session->fd, payload, payload_len);
-
         } else if (opcode == AST_WEBSOCKET_OPCODE_CLOSE) {
             break;
         } else {
-            ast_debug(1, "Ignored WebSocket opcode %u\n", opcode);
+            ast_debug(1, "Ignored webSocket text t140 opcode %u\n", opcode);
         }
     }
 
 end:
-    ast_debug(1, "Exiting WebSocket t140 loop %s\n", ast_websocket_session_id(websocket));
+    ast_debug(1, "Exiting webSocket text t140 loop %s\n", ast_websocket_session_id(websocket));
 
     AST_LIST_LOCK(&websocket_session_list);
     AST_LIST_TRAVERSE_SAFE_BEGIN(&websocket_session_list, ws_session, entry)
     {
         if (ws_session->websocket == websocket) {
-            struct websocket_frame *frame_wrapper = NULL;
-            //struct ast_frame *frame = NULL;
-
             AST_LIST_REMOVE_CURRENT(entry);
             ast_websocket_unref(ws_session->websocket);
-
-            AST_LIST_TRAVERSE_SAFE_BEGIN(&ws_session->frame_stack, frame_wrapper, entry)
-            {
-                ast_frfree(frame_wrapper->frame);
-                ast_free(frame_wrapper);
-            }
-            AST_LIST_TRAVERSE_SAFE_END;
-            /*
-            frame = pop_frame(ws_session);
-            while (frame != NULL) {
-                ast_frfree(frame);
-                frame = pop_frame(ws_session);
-            }
-            */
 
             ast_free(ws_session);
             break;
@@ -1094,36 +830,18 @@ static int unload_module(void)
     ast_sip_session_unregister_sdp_handler(&text_sdp_handler, STR_TEXT);
     ast_sip_session_unregister_supplement(&websocket_text_supplement);
 
-    ast_websocket_server_remove_protocol(mywebsocketuri.data, "t140", mywebsocket_echo_callback);
-    ast_http_uri_unlink(&mywebsocketuri);
-    ao2_ref(mywebsocketuri.data, -1);
-    mywebsocketuri.data = NULL;
+    ast_websocket_server_remove_protocol(websocket_text_t140_uri.data, "t140", websocket_text_t140_callback);
+    ast_http_uri_unlink(&websocket_text_t140_uri);
+    ao2_ref(websocket_text_t140_uri.data, -1);
+    websocket_text_t140_uri.data = NULL;
 
     AST_LIST_LOCK(&websocket_session_list);
     AST_LIST_TRAVERSE_SAFE_BEGIN(&websocket_session_list, ws_session, entry)
     {
-        struct websocket_frame *frame_wrapper = NULL;
-        //struct ast_frame *frame = NULL;
-
         AST_LIST_REMOVE_CURRENT(entry);
         if (ws_session->websocket) {
             ast_websocket_unref(ws_session->websocket);
         }
-        /**/
-        AST_LIST_TRAVERSE_SAFE_BEGIN(&ws_session->frame_stack, frame_wrapper, entry)
-        {
-            ast_frfree(frame_wrapper->frame);
-            ast_free(frame_wrapper);
-        }
-        AST_LIST_TRAVERSE_SAFE_END;
-        /**/
-        /*
-        frame = pop_frame(ws_session);
-        while (frame != NULL) {
-            ast_frfree(frame);
-            frame = pop_frame(ws_session);
-        }
-        */
 
         ast_free(ws_session);
     }
@@ -1145,18 +863,12 @@ static int unload_module(void)
  */
 static int load_module(void)
 {
-    if (ast_check_ipv6()) {
-        ast_sockaddr_parse(&address_ws_text, "::", 0);
-    } else {
-        ast_sockaddr_parse(&address_ws_text, "0.0.0.0", 0);
-    }
-
-    mywebsocketuri.data = ast_websocket_server_create();
-    if (!mywebsocketuri.data) {
+    websocket_text_t140_uri.data = ast_websocket_server_create();
+    if (!websocket_text_t140_uri.data) {
         return AST_MODULE_LOAD_DECLINE;
     }
-    ast_http_uri_link(&mywebsocketuri);
-    ast_websocket_server_add_protocol(mywebsocketuri.data, "t140", mywebsocket_echo_callback);
+    ast_http_uri_link(&websocket_text_t140_uri);
+    ast_websocket_server_add_protocol(websocket_text_t140_uri.data, "t140", websocket_text_t140_callback);
 
     ast_sip_session_register_supplement(&websocket_text_supplement);
 
