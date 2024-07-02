@@ -42,6 +42,7 @@
 #include "asterisk/pbx.h"
 #include "asterisk/channel.h"
 #include "asterisk/timing.h"
+#include "asterisk/format_cache.h"
 #include "asterisk/bridge.h"
 #include "asterisk/bridge_channel.h"
 #include "asterisk/bridge_after.h"
@@ -2338,7 +2339,7 @@ static void bridge_channel_handle_control(struct ast_bridge_channel *bridge_chan
  */
 static void sendtext_safe(struct ast_channel *chan, const struct ast_frame *f)
 {
-	if (f->datalen) {
+	if (f->datalen > 0) {
 		char *text = f->data.ptr;
 
 		if (text[f->datalen - 1]) {
@@ -2431,11 +2432,6 @@ static void bridge_channel_handle_write(struct ast_bridge_channel *bridge_channe
 		break;
 	case AST_FRAME_NULL:
 		break;
-	case AST_FRAME_TEXT:
-		ast_debug(1, "Sending TEXT frame to '%s': %*.s\n",
-			ast_channel_name(bridge_channel->chan), fr->datalen, (char *)fr->data.ptr);
-		sendtext_safe(bridge_channel->chan, fr);
-		break;
 	case AST_FRAME_TEXT_DATA:
 		msg = (struct ast_msg_data *)fr->data.ptr;
 		ast_debug(1, "Sending TEXT_DATA frame from '%s' to '%s:%s': %s\n",
@@ -2445,6 +2441,16 @@ static void bridge_channel_handle_write(struct ast_bridge_channel *bridge_channe
 			ast_msg_data_get_attribute(msg, AST_MSG_DATA_ATTR_BODY));
 		ast_sendtext_data(bridge_channel->chan, msg);
 		break;
+	case AST_FRAME_TEXT:
+		ast_debug(1, "Sending TEXT frame to '%s': %*.s\n",
+			ast_channel_name(bridge_channel->chan), fr->datalen, (char *)fr->data.ptr);
+		if (ast_format_cmp(fr->subclass.format, ast_format_t140) != AST_FORMAT_CMP_EQUAL &&
+			ast_format_cmp(fr->subclass.format, ast_format_t140_red) != AST_FORMAT_CMP_EQUAL) {
+			sendtext_safe(bridge_channel->chan, fr);
+			break;
+		} else {
+			// WARNING: no break to process the default case.
+		}
 	default:
 		/* Assume that there is no mapped stream for this */
 		num = -1;

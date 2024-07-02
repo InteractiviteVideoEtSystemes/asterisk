@@ -3715,13 +3715,16 @@ int ast_rtp_engine_init(void)
 	set_next_mime_type(ast_format_h264, 0, "video", "H264", 90000);
 	set_next_mime_type(ast_format_h265, 0, "video", "H265", 90000);
 	set_next_mime_type(ast_format_mp4, 0, "video", "MP4V-ES", 90000);
+	/* RED and T140 */
 	set_next_mime_type(ast_format_t140_red, 0, "text", "RED", 1000);
 	set_next_mime_type(ast_format_t140, 0, "text", "T140", 1000);
+	/* G7xx */
 	set_next_mime_type(ast_format_siren7, 0, "audio", "G7221", 16000);
 	set_next_mime_type(ast_format_siren14, 0, "audio", "G7221", 32000);
 	set_next_mime_type(ast_format_g719, 0, "audio", "G719", 48000);
-	/* Opus, VP8, VP9 and AV1 */
+	/* Opus */
 	set_next_mime_type(ast_format_opus, 0,  "audio", "opus", 48000);
+	/* VP8, VP9 and AV1 */
 	set_next_mime_type(ast_format_vp8, 0,  "video", "VP8", 90000);
 	set_next_mime_type(ast_format_vp9, 0, "video", "VP9", 90000);
 	set_next_mime_type(ast_format_av1, 0, "video", "AV1", 90000);
@@ -3762,7 +3765,7 @@ int ast_rtp_engine_init(void)
 	add_static_payload(102, ast_format_siren7, 0);
 	add_static_payload(103, ast_format_h263p, 0);
 	add_static_payload(104, ast_format_mp4, 0);
-	add_static_payload(105, ast_format_t140_red, 0);   /* Real time text chat (with redundancy encoding) */
+	add_static_payload(105, ast_format_t140_red, 0);   /* Real time text chat (with redundancy encoding "red") */
 	add_static_payload(106, ast_format_t140, 0);     /* Real time text chat */
 	add_static_payload(107, ast_format_opus, 0);
 	add_static_payload(108, ast_format_vp9, 0);
