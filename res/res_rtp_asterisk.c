@@ -5484,8 +5484,10 @@ static int ast_rtp_write(struct ast_rtp_instance *instance, struct ast_frame *fr
 	if (rtp->red) {
 		/* return 0; */
 		/* no primary data or generations to send */
-		if ((frame = red_t140_to_red(rtp->red)) == NULL)
+		if ((frame = red_t140_to_red(rtp->red)) == NULL) {
+			ast_log(LOG_ERROR, "Build RTP frame text T.140/RED failed\n");
 			return 0;
+		}
 	}
 
 	/* Grab the subclass and look up the payload we are going to use */
@@ -9046,7 +9048,7 @@ static int red_write(const void *data)
 	}
 
 	ao2_lock(instance);
-	if (rtp && rtp->red && rtp->red->t140.datalen > 0) {
+	if (rtp->red->t140.datalen > 0) {
 		ast_rtp_write(instance, &rtp->red->t140);
 	}
 	ao2_unlock(instance);
