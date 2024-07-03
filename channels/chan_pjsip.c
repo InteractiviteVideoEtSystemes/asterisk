@@ -1018,6 +1018,8 @@ static int chan_pjsip_write_stream(struct ast_channel *ast, int stream_num, stru
 			ast_debug(3, "Channel %s stream %d is of type '%s', not text!\n",
 				ast_channel_name(ast), stream_num, ast_codec_media_type2str(media->type));
 			return 0;
+		} else if (session->endpoint->media.red_enabled) {
+			res = ast_rtp_red_buffer(media->rtp, frame);
 		} else if (media->write_callback) {
 			res = media->write_callback(session, media, frame);
 		}

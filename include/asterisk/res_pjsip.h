@@ -921,6 +921,8 @@ struct ast_sip_endpoint_media_configuration {
 	unsigned int tos_text;
 	/*! Priority for text streams */
 	unsigned int cos_text;
+	/*! Indicate if text stream supports RED */
+	unsigned int red_enabled;
 	/*! Is g.726 packed in a non standard way */
 	unsigned int g726_non_standard;
 	/*! Bind the RTP instance to the media_address */
