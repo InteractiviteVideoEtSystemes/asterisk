@@ -905,8 +905,6 @@ struct ast_sip_websocket_text_configuration
 {
 	/*! Whether websocket text support is enabled or not */
 	unsigned int enabled;
-	/*! Whether to use IPv6 for websocket text or not */
-	unsigned int ipv6;
 };
 
 /*!
