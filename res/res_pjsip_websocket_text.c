@@ -42,6 +42,7 @@
 #include "asterisk/module.h"
 #include "asterisk/astobj2.h"
 #include "asterisk/strings.h"
+#include "asterisk/file.h"
 
 #include "asterisk/channel.h"
 #include "asterisk/stream.h"
@@ -317,14 +318,14 @@ static struct ast_frame *media_sip_session_websocket_session_text_read_callback(
     }
 
     ssize_t bytes_read;
-    size_t buffer_capacity = 1024;
+    size_t buffer_capacity = 396;
     char *final_buffer = NULL;
     size_t total_length = 0;
     int done = 0;
 
     final_buffer = (char *)ast_malloc(buffer_capacity);
     if (final_buffer == NULL) {
-        ast_log(LOG_ERROR, "ast_malloc failed\n");
+        ast_log(LOG_ERROR, "websocket text malloc failed\n");
     }
 
     while (!done) {
@@ -340,11 +341,13 @@ static struct ast_frame *media_sip_session_websocket_session_text_read_callback(
 
         bytes_read = read(ast_websocket_session_text_fd(sip_session_media->websocket_session_text), final_buffer + total_length, buffer_capacity - total_length);
         if (bytes_read > 0) {
-            ast_debug(3, "Reading websocket text raw, length %" PRIu64 "\n", bytes_read);
+            ast_debug(3, "Reading websocket text string, length %" PRIu64 "\n", bytes_read);
             total_length += bytes_read;
             if (bytes_read < (ssize_t)(buffer_capacity - total_length)) {
                 done = 1;
             }
+            done = 1;
+
         } else if (bytes_read == 0) {
             ast_log(LOG_WARNING, "Reading websocket text EOF\n");
             done = 1;
@@ -365,18 +368,21 @@ static struct ast_frame *media_sip_session_websocket_session_text_read_callback(
         AST_LIST_LOCK(&websocket_session_text_list);
         AST_LIST_TRAVERSE(&websocket_session_text_list, ws_session, entry)
         {
-            if (strcmp(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x")) == 0) {
+            if (!strcmp(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x"))) {
                 struct ast_frame f_in;
 
                 memset(&f_in, 0, sizeof(f_in));
                 f_in.frametype = AST_FRAME_TEXT;
                 //f_in.subclass.format = ast_format_none;
-                f_in.subclass.format = ast_format_t140;
-                //f_in.subclass.format = ast_format_t140_red;
+                //f_in.subclass.format = ast_format_t140;
+                f_in.subclass.format = ast_format_t140_red;
                 f_in.datalen = total_length;
                 f_in.data.ptr = (void *)final_buffer;
 
                 frame = ast_frdup(&f_in);
+
+                ast_debug(3, "Reading websocket text string, total length %" PRIu64 "\n", total_length);
+
                 break;
             }
         }
@@ -386,7 +392,7 @@ static struct ast_frame *media_sip_session_websocket_session_text_read_callback(
     }
 
     if (!frame) {
-        ast_log(LOG_ERROR, "websocket text session and frame not found\n");
+        ast_log(LOG_ERROR, "websocket text session or frame not found, length %" PRIu64 " loss\n", total_length);
         return NULL; // Error.
     }
 
@@ -409,7 +415,7 @@ static int media_sip_session_websocket_session_text_write_callback(struct ast_si
         AST_LIST_LOCK(&websocket_session_text_list);
         AST_LIST_TRAVERSE(&websocket_session_text_list, ws_session, entry)
         {
-            if (strcmp(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x")) == 0) {
+            if (!strcmp(ws_session->id, sip_session->inv_session->obj_name + strlen("inv0x"))) {
                 websocket = ws_session->websocket;
                 break;
             }
@@ -425,14 +431,13 @@ static int media_sip_session_websocket_session_text_write_callback(struct ast_si
             }
 
             if (text) {
+                uint64_t text_len = strlen(text);
                 if (websocket) {
-                    char *payload = text;
-                    uint64_t payload_len = strlen(text);
                     enum ast_websocket_opcode opcode = AST_WEBSOCKET_OPCODE_TEXT;
 
-                    ast_websocket_write(websocket, opcode, payload, payload_len);
+                    ast_websocket_write(websocket, opcode, text, text_len);
                 } else {
-                    ast_log(LOG_ERROR, "websocket text session not found\n");
+                    ast_log(LOG_ERROR, "websocket text session not found, length %" PRIu64 " loss\n", text_len);
                 }
 
                 if (text != frame->data.ptr) {
@@ -574,8 +579,8 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *sip_session,
     if (pipe(sip_session_media->websocket_session_text->pipe_fds) == -1 || sip_session_media->websocket_session_text == NULL) {
         SCOPE_EXIT_RTN_VALUE(-1, "pipe create to exchange frames failed\n");
     } else {
-        ast_fd_set_flags(ast_websocket_session_text_fd(sip_session_media->websocket_session_text), SOCK_NONBLOCK);
-
+        //ast_fd_set_flags(ast_websocket_session_text_fd(sip_session_media->websocket_session_text), O_NONBLOCK);
+        
         ast_sip_session_media_add_read_callback(sip_session
             , sip_session_media
             , ast_websocket_session_text_fd(sip_session_media->websocket_session_text)
@@ -679,7 +684,7 @@ static int websocket_text_t140_uri_cb(struct ast_tcptls_session_instance *ser
 {
     struct ast_websocket_session_text *ws_session = NULL;
 
-    ast_debug(1, "Entering webSocket text t140 loop method %s uri %s\n", ast_get_http_method(method), uri);
+    ast_debug(1, "Entering websocket text t140 loop method %s uri %s\n", ast_get_http_method(method), uri);
 
     // Recherche de la session websocket grace au nom du canal asterisk recupere sur la session sip.
     AST_LIST_LOCK(&websocket_session_text_list);
@@ -716,11 +721,11 @@ static void websocket_session_text_t140_callback(struct ast_websocket *websocket
     int res;
     struct ast_websocket_session_text *ws_session = NULL;
 
-    ast_debug(1, "Entering webSocket text t140 loop %s, addr remote %s and local %s\n"
+    ast_debug(1, "Entering websocket text t140 loop %s, addr remote %s and local %s\n"
         , ast_websocket_session_id(websocket)
         , ast_sockaddr_stringify(ast_websocket_remote_address(websocket))
         , ast_sockaddr_stringify(ast_websocket_local_address(websocket))
-    );
+        );
 
     struct ast_variable *i;
     for (i = parameters; i; i = i->next) {
@@ -736,11 +741,11 @@ static void websocket_session_text_t140_callback(struct ast_websocket *websocket
         }
     }
     if (!ws_session) {
-        ast_log(LOG_ERROR, "Failed to find uri or allocate memory for WebSocket client\n");
+        ast_log(LOG_ERROR, "Failed to find uri or allocate memory for websocket client\n");
         goto end;
     }
 
-    if (ast_fd_set_flags(ast_websocket_fd(websocket), SOCK_NONBLOCK)) {
+    if (ast_fd_set_flags(ast_websocket_fd(websocket), O_NONBLOCK)) {
         goto end;
     }
 
@@ -757,21 +762,29 @@ static void websocket_session_text_t140_callback(struct ast_websocket *websocket
 
         if (ast_websocket_read(websocket, &payload, &payload_len, &opcode, &fragmented)) {
             // We err on the side of caution and terminate the ws_session if any error occurs.
-            ast_log(LOG_WARNING, "Read failure during WebSocket t140 loop\n");
+            ast_log(LOG_WARNING, "Read failure during websocket t140 loop\n");
             break;
         }
 
         if (opcode == AST_WEBSOCKET_OPCODE_TEXT && payload_len > 0) {
-            write(ws_session->pipe_fds[1], payload, payload_len);
+            //write(ws_session->pipe_fds[1], payload, payload_len);
+            size_t offset = 0;
+            while (offset < payload_len) {
+                size_t bytes_to_write = (payload_len - offset >= 396) ? 396 : (payload_len - offset);
+
+                write(ws_session->pipe_fds[1], payload + offset, bytes_to_write);
+
+                offset += bytes_to_write;
+            }
         } else if (opcode == AST_WEBSOCKET_OPCODE_CLOSE) {
             break;
         } else {
-            ast_debug(1, "Ignored webSocket text t140 opcode %u\n", opcode);
+            ast_debug(1, "Ignored websocket text t140 opcode %u\n", opcode );
         }
     }
 
 end:
-    ast_debug(1, "Exiting webSocket text t140 loop %s\n", ast_websocket_session_id(websocket));
+    ast_debug(1, "Exiting websocket text t140 loop %s\n", ast_websocket_session_id(websocket));
 
     AST_LIST_LOCK(&websocket_session_text_list);
     AST_LIST_TRAVERSE_SAFE_BEGIN(&websocket_session_text_list, ws_session, entry)
