@@ -384,7 +384,7 @@ static void get_codecs(struct ast_sip_session *session, const struct pjmedia_sdp
 						red_cp = strtok_r(NULL, "/", &rest);
 					}
 
-					if (++red_num_gen > 0) {
+					if (red_num_gen > 0) {
 						ast_log(AST_LOG_NOTICE, "T.140/RED enabled (pt=%d) with %d generations\n", num, red_num_gen);
 						session->endpoint->media.red_enabled = 1;
 						ast_rtp_red_init(session_media->rtp, 300, red_data_pt, red_num_gen);
