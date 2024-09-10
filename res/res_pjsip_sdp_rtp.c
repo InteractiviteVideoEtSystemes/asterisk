@@ -1981,7 +1981,7 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 		}
 
 		if (media_type == AST_MEDIA_TYPE_TEXT) {
-			ast_log(LOG_DEBUG, "SDP generate RTP frame text %d %s\n", rtp_code, ast_format_get_codec_name(format));
+			ast_debug(3, "SDP generate RTP frame text %d %s\n", rtp_code, ast_format_get_codec_name(format));
 		}
 
 		if (media_type == AST_MEDIA_TYPE_TEXT && !strcasecmp(ast_format_get_codec_name(format), "red")) {

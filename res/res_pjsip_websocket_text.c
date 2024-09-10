@@ -68,6 +68,15 @@ struct ast_websocket_session_text
 
 static AST_LIST_HEAD(websocket_session_text_list, ast_websocket_session_text) websocket_session_text_list;
 
+#define WEBSOCKET_HOSTNAME_MAX_LENGTH 255
+
+// Structure pour stocker les valeurs de configuration
+struct websocket_session_text_config
+{
+    int port;
+    char hostname[WEBSOCKET_HOSTNAME_MAX_LENGTH + 1];
+};
+
 static void replace_newline(char *buffer, char replacement)
 {
     // Parcours du buffer jusqu'à la fin de la chaîne
@@ -103,6 +112,52 @@ static int get_websocket_tls_port(void)
     }
 
     return websocket_tls_port;
+}
+
+// Function to load the module configuration
+// 'config' is passed as a pointer to avoid dynamic memory allocation
+static int load_websocket_session_text_config(struct websocket_session_text_config *config) {
+    struct ast_config *cfg;
+    const char *port_str, *hostname;
+    struct ast_flags config_flags = {0};
+
+    // Ensure the config pointer is not NULL to prevent crashes
+    if (config == NULL) {
+        ast_log(LOG_ERROR, "Null pointer passed to load res_pjsip_websocket_text.conf\n");
+        return -2; // Return error if the pointer is NULL
+    } else {
+        const pj_str_t *pj_hostname = pj_gethostname();
+
+        // Default to "localhost" if no hostname is specified
+        strncpy(config->hostname, pj_hostname ? pj_hostname->ptr : "localhost", WEBSOCKET_HOSTNAME_MAX_LENGTH);
+        config->hostname[WEBSOCKET_HOSTNAME_MAX_LENGTH] = '\0';  // Ensure null termination
+        
+        config->port = get_websocket_tls_port(); // Default port if not specified
+    }
+
+    // Load the configuration file res_pjsip_websocket_text.conf
+    cfg = ast_config_load("res_pjsip_websocket_text.conf", config_flags);
+    if (!cfg || cfg == CONFIG_STATUS_FILEINVALID) {
+        ast_log(LOG_ERROR, "Failed to load res_pjsip_websocket_text.conf\n");
+        return 1; // Return warning if file loading fails
+    }
+
+    // Retrieve the 'port' value from the [general] section of the config
+    if ((port_str = ast_variable_retrieve(cfg, "general", "port")) != NULL) {
+        config->port = atoi(port_str);  // Convertir en entier
+    }
+
+    // Retrieve the 'hostname' value from the [general] section of the config
+    if ((hostname = ast_variable_retrieve(cfg, "general", "hostname")) != NULL) {
+        // Copy the hostname into the structure, ensuring no buffer overflow
+        strncpy(config->hostname, hostname, WEBSOCKET_HOSTNAME_MAX_LENGTH);
+        config->hostname[WEBSOCKET_HOSTNAME_MAX_LENGTH] = '\0';  // Ensure null termination
+    }
+
+    // Destroy the config structure after we're done processing
+    ast_config_destroy(cfg);
+
+    return 0; // Return success
 }
 
 /*! \brief Supplement for adding framehook to sip_session channel */
@@ -170,7 +225,6 @@ static int negotiate_incoming_sdp_stream(struct ast_sip_session *sip_session,
     char host[NI_MAXHOST];
     pjmedia_sdp_media *stream = sdp->media[index];
     struct ast_format_cap *joint;
-    int res;
     RAII_VAR(struct ast_sockaddr *, addrs, NULL, ast_free);
     SCOPE_ENTER(1, "%s\n", ast_sip_session_get_name(sip_session));
 
@@ -234,17 +288,11 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     struct pjmedia_sdp_session *sdp, const struct pjmedia_sdp_session *remote, struct ast_stream *asterisk_stream)
 {
     pj_pool_t *pool = sip_session->inv_session->pool_prov;
-    static const pj_str_t STR_IN = {"IN", 2};
-    static const pj_str_t STR_IP4 = {"IP4", 3};
-    static const pj_str_t STR_IP6 = {"IP6", 3};
     static const pj_str_t STR_TCP_WSS = {"TCP/WSS", 7};
     static const pj_str_t STR_T140 = {"t140", 4};
-    static const pj_str_t STR_RTP_AVP = {"RTP/AVPF", 8};
+    //static const pj_str_t STR_RTP_AVP = {"RTP/AVPF", 8};
     pjmedia_sdp_media *media;
-    const char *hostip = NULL;
-    struct ast_sockaddr addr;
     char tmp[512];
-    pj_str_t stmp;
 
     SCOPE_ENTER(1, "%s Type: %s %s\n", ast_sip_session_get_name(sip_session),
         ast_codec_media_type2str(sip_session_media->type), ast_str_tmp(128, ast_stream_to_str(asterisk_stream, &STR_TMP)));
@@ -275,13 +323,10 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     }
 
     pjmedia_sdp_attr *attr;
-    const pj_str_t *hostname = pj_gethostname();
+    struct websocket_session_text_config config;
 
-#ifndef HAVE_PJSIP_ENDPOINT_COMPACT_FORM
-    extern pj_bool_t pjsip_use_compact_form;
-#else
-    pj_bool_t pjsip_use_compact_form = pjsip_cfg()->endpt.use_compact_form;
-#endif
+    // Charger la configuration
+    load_websocket_session_text_config(&config);
 
     if (!(media = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_media)))) {
         SCOPE_EXIT_RTN_VALUE(-1, "Pool alloc failure\n");
@@ -290,15 +335,15 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     pj_strdup2(pool, &media->desc.media, ast_codec_media_type2str(sip_session_media->type));
 
     media->desc.transport = STR_TCP_WSS;
-    media->desc.port = get_websocket_tls_port();
+    media->desc.port = config.port;
     media->desc.port_count = 1;
 
     media->desc.fmt[media->desc.fmt_count++] = STR_T140;
 
     if (sip_session->inv_session) {
-        snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", hostname ? hostname->ptr : "localhost", media->desc.port, sip_session->inv_session->obj_name + strlen( "inv0x"));
+        snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", config.hostname, media->desc.port, sip_session->inv_session->obj_name + strlen( "inv0x"));
     } else {
-        snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", hostname ? hostname->ptr : "localhost", media->desc.port, "channel_demo");
+        snprintf(tmp, sizeof(tmp), "wss://%s:%d/ws_text/%s", config.hostname, media->desc.port, "channel_demo");
     }
 
     attr = pjmedia_sdp_attr_create(pool, tmp, NULL);
@@ -437,7 +482,7 @@ static int media_sip_session_websocket_session_text_write_callback(struct ast_si
 
                     ast_websocket_write(websocket, opcode, text, text_len);
                 } else {
-                    ast_log(LOG_ERROR, "websocket text session not found, length %" PRIu64 " loss\n", text_len);
+                    ast_log(LOG_ERROR, "websocket text session %s not found, length %" PRIu64 " loss\n", sip_session->inv_session->obj_name + strlen("inv0x"), text_len);
                 }
 
                 if (text != frame->data.ptr) {
@@ -462,7 +507,6 @@ static int set_caps(struct ast_sip_session *session,
     enum ast_media_type media_type = session_media->type;
     int direct_media_enabled = !ast_sockaddr_isnull(&session_media->direct_media_addr) &&
         ast_format_cap_count(session->direct_media_cap);
-    int dsp_features = 0;
     SCOPE_ENTER(1, "%s %s\n", ast_sip_session_get_name(session), is_offer ? "OFFER" : "ANSWER");
 
     if (!(caps = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT)) ||
@@ -745,7 +789,8 @@ static void websocket_session_text_t140_callback(struct ast_websocket *websocket
         goto end;
     }
 
-    if (ast_fd_set_flags(ast_websocket_fd(websocket), O_NONBLOCK)) {
+    //if (ast_fd_set_flags(ast_websocket_fd(websocket), O_NONBLOCK)) {
+    if(ast_websocket_set_nonblock(websocket)) {
         goto end;
     }
 
@@ -784,7 +829,7 @@ static void websocket_session_text_t140_callback(struct ast_websocket *websocket
     }
 
 end:
-    ast_debug(1, "Exiting websocket text t140 loop %s\n", ast_websocket_session_id(websocket));
+    ast_debug(1, "Exiting websocket text t140 loop %s uri %s\n", ast_websocket_session_id(websocket), ws_session->id);
 
     AST_LIST_LOCK(&websocket_session_text_list);
     AST_LIST_TRAVERSE_SAFE_BEGIN(&websocket_session_text_list, ws_session, entry)
@@ -809,10 +854,12 @@ static int unload_module(void)
     ast_sip_session_unregister_sdp_handler(&text_sdp_handler, STR_TEXT);
     ast_sip_session_unregister_supplement(&websocket_session_text_supplement);
 
-    ast_websocket_server_remove_protocol(websocket_text_t140_uri.data, "t140", websocket_session_text_t140_callback);
-    ast_http_uri_unlink(&websocket_text_t140_uri);
-    ao2_ref(websocket_text_t140_uri.data, -1);
-    websocket_text_t140_uri.data = NULL;
+    if (websocket_text_t140_uri.data) {
+        ast_websocket_server_remove_protocol(websocket_text_t140_uri.data, "t140", websocket_session_text_t140_callback);
+        ast_http_uri_unlink(&websocket_text_t140_uri);
+        ao2_ref(websocket_text_t140_uri.data, -1);
+        websocket_text_t140_uri.data = NULL;
+    }
 
     AST_LIST_LOCK(&websocket_session_text_list);
     AST_LIST_TRAVERSE_SAFE_BEGIN(&websocket_session_text_list, ws_session, entry)
