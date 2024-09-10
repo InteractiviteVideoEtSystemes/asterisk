@@ -290,7 +290,6 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     pj_pool_t *pool = sip_session->inv_session->pool_prov;
     static const pj_str_t STR_TCP_WSS = {"TCP/WSS", 7};
     static const pj_str_t STR_T140 = {"t140", 4};
-    //static const pj_str_t STR_RTP_AVP = {"RTP/AVPF", 8};
     pjmedia_sdp_media *media;
     char tmp[512];
 
@@ -325,7 +324,7 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *sip_session, struc
     pjmedia_sdp_attr *attr;
     struct websocket_session_text_config config;
 
-    // Charger la configuration
+    // Load the configuration into the 'config' structure
     load_websocket_session_text_config(&config);
 
     if (!(media = pj_pool_zalloc(pool, sizeof(struct pjmedia_sdp_media)))) {
@@ -456,7 +455,7 @@ static int media_sip_session_websocket_session_text_write_callback(struct ast_si
         struct ast_websocket *websocket = NULL;
         struct ast_websocket_session_text *ws_session = NULL;
 
-        // Recherche de la session websocket grace au nom du canal asterisk recupere sur la session sip.
+        // Searching for the websocket session using the asterisk channel name retrieved from the sip session.
         AST_LIST_LOCK(&websocket_session_text_list);
         AST_LIST_TRAVERSE(&websocket_session_text_list, ws_session, entry)
         {
@@ -525,13 +524,13 @@ static int set_caps(struct ast_sip_session *session,
         ast_format_cap_append_from_cap(caps, session->endpoint->media.codecs, media_type);
     }
 
-    // Ajouter le format T.140/RED
+    // Add T.140/RED format
     if (ast_format_cap_append(peer, ast_format_t140_red, 0) != 0) {
         ast_log(LOG_ERROR, "Failed to add T.140/RED format\n");
         SCOPE_EXIT_RTN_VALUE(-1, "Impossible to add T.140/RED in call offer caps\n");
     }
 
-    // Ajouter le format T.140
+    // Add T.140 format
     if (ast_format_cap_append(peer, ast_format_t140, 0) != 0) {
         ast_log(LOG_ERROR, "Failed to add T.140 format\n");
         SCOPE_EXIT_RTN_VALUE(-1, "Impossible to add t140 in call offer caps\n");
@@ -623,7 +622,7 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *sip_session,
     if (pipe(sip_session_media->websocket_session_text->pipe_fds) == -1 || sip_session_media->websocket_session_text == NULL) {
         SCOPE_EXIT_RTN_VALUE(-1, "pipe create to exchange frames failed\n");
     } else {
-        //ast_fd_set_flags(ast_websocket_session_text_fd(sip_session_media->websocket_session_text), O_NONBLOCK);
+        ast_fd_set_flags(ast_websocket_session_text_fd(sip_session_media->websocket_session_text), O_NONBLOCK);
         
         ast_sip_session_media_add_read_callback(sip_session
             , sip_session_media
@@ -730,7 +729,7 @@ static int websocket_text_t140_uri_cb(struct ast_tcptls_session_instance *ser
 
     ast_debug(1, "Entering websocket text t140 loop method %s uri %s\n", ast_get_http_method(method), uri);
 
-    // Recherche de la session websocket grace au nom du canal asterisk recupere sur la session sip.
+    // Searching for the websocket session using the asterisk channel name retrieved from the sip session.
     AST_LIST_LOCK(&websocket_session_text_list);
     AST_LIST_TRAVERSE(&websocket_session_text_list, ws_session, entry)
     {
