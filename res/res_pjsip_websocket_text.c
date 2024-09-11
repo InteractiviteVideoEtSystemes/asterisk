@@ -77,18 +77,6 @@ struct websocket_session_text_config
     char hostname[WEBSOCKET_HOSTNAME_MAX_LENGTH + 1];
 };
 
-static void replace_newline(char *buffer, char replacement)
-{
-    // Parcours du buffer jusqu'à la fin de la chaîne
-    for (int i = 0; i < strlen(buffer); i++) {
-        // Si le caractère courant est un retour à la ligne
-        if (buffer[i] == '\r' || buffer[i] == '\n') {
-            // Remplacement par le caractère spécifié
-            buffer[i] = replacement;
-        }
-    }
-}
-
 static int get_websocket_tls_port(void)
 {
     struct ast_config *cfg;
@@ -144,7 +132,7 @@ static int load_websocket_session_text_config(struct websocket_session_text_conf
 
     // Retrieve the 'port' value from the [general] section of the config
     if ((port_str = ast_variable_retrieve(cfg, "general", "port")) != NULL) {
-        config->port = atoi(port_str);  // Convertir en entier
+        config->port = atoi(port_str);
     }
 
     // Retrieve the 'hostname' value from the [general] section of the config
