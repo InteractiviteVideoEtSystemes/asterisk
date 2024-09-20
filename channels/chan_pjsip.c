@@ -1753,11 +1753,12 @@ static int chan_pjsip_indicate(struct ast_channel *ast, int condition, const voi
 					ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), ast_format_vp9) != AST_FORMAT_CMP_NOT_EQUAL ||
 					ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), ast_format_av1 ) != AST_FORMAT_CMP_NOT_EQUAL ||
 					ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), ast_format_h265) != AST_FORMAT_CMP_NOT_EQUAL ||
-					(channel->session->endpoint->media.webrtc &&
+					(//channel->session->endpoint->media.webrtc &&
+					 channel->session->endpoint->media.rtp.use_avpf &&
 					 ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), ast_format_h264) != AST_FORMAT_CMP_NOT_EQUAL)) {
 					/* FIXME Fake RTP write, this will be sent as an RTCP packet. Ideally the
-					 * RTP engine would provide a way to externally write/schedule RTCP
-					 * packets */
+					 * RTP engine would provide a way to externally write/schedule RTCP packets
+					 */
 					struct ast_frame fr;
 					fr.frametype = AST_FRAME_CONTROL;
 					fr.subclass.integer = AST_CONTROL_VIDUPDATE;
@@ -3268,6 +3269,9 @@ static int chan_pjsip_incoming_ack(struct ast_sip_session *session, struct pjsip
 			ast_trace(-1, "%s: Queueing SRCCHANGE\n", ast_sip_session_get_name(session));
 			ast_queue_control(session->channel, AST_CONTROL_SRCCHANGE);
 		}
+		ast_trace(-1, "%s: Queueing VIDUPDATE\n", ast_sip_session_get_name(session));
+		//ast_queue_control(session->channel, AST_CONTROL_VIDUPDATE);
+		chan_pjsip_indicate(session->channel, AST_CONTROL_VIDUPDATE, NULL, 0);
 	}
 	SCOPE_EXIT_RTN_VALUE(0, "%s\n", ast_sip_session_get_name(session));
 }
