@@ -3269,8 +3269,6 @@ static int chan_pjsip_incoming_ack(struct ast_sip_session *session, struct pjsip
 			ast_trace(-1, "%s: Queueing SRCCHANGE\n", ast_sip_session_get_name(session));
 			ast_queue_control(session->channel, AST_CONTROL_SRCCHANGE);
 		}
-		ast_trace(-1, "%s: Queueing VIDUPDATE\n", ast_sip_session_get_name(session));
-		//ast_queue_control(session->channel, AST_CONTROL_VIDUPDATE);
 		chan_pjsip_indicate(session->channel, AST_CONTROL_VIDUPDATE, NULL, 0);
 	}
 	SCOPE_EXIT_RTN_VALUE(0, "%s\n", ast_sip_session_get_name(session));
