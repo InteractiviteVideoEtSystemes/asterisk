@@ -769,6 +769,7 @@ static void websocket_session_text_t140_callback(struct ast_websocket *websocket
                 }
             }
             AST_LIST_UNLOCK(&websocket_session_text_list);
+            break;
         }
     }
     if (!ws_session) {
@@ -816,7 +817,7 @@ static void websocket_session_text_t140_callback(struct ast_websocket *websocket
     }
 
 end:
-    ast_debug(1, "Exiting websocket text t140 loop %s uri %s\n", ast_websocket_session_id(websocket), ws_session->id);
+    ast_debug(1, "Exiting websocket text t140 loop %s\n", ast_websocket_session_id(websocket));
 
     AST_LIST_LOCK(&websocket_session_text_list);
     AST_LIST_TRAVERSE_SAFE_BEGIN(&websocket_session_text_list, ws_session, entry)
