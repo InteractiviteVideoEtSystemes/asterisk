@@ -298,7 +298,7 @@ static int create_rtp(struct ast_sip_session *session, struct ast_sip_session_me
 	} else if (session_media->type == AST_MEDIA_TYPE_VIDEO) {
 		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_RETRANS_RECV, session->endpoint->media.webrtc);
 		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_RETRANS_SEND, session->endpoint->media.webrtc);
-		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_REMB, session->endpoint->media.webrtc);
+		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_REMB, session->endpoint->media.rtp.use_avpf); // session->endpoint->media.webrtc);
 		if (session->endpoint->media.webrtc) {
 			enable_rtp_extension(session, session_media, AST_RTP_EXTENSION_ABS_SEND_TIME, AST_RTP_EXTENSION_DIRECTION_SENDRECV, sdp);
 			enable_rtp_extension(session, session_media, AST_RTP_EXTENSION_TRANSPORT_WIDE_CC, AST_RTP_EXTENSION_DIRECTION_SENDRECV, sdp);
@@ -428,7 +428,6 @@ static void get_codecs(struct ast_sip_session *session, const struct pjmedia_sdp
 		}
 	}
 
-
 	/* Get the packetization, if it exists */
 	if ((attr = pjmedia_sdp_media_find_attr2(stream, "ptime", NULL))) {
 		unsigned long framing = pj_strtoul(pj_strltrim(&attr->value));
@@ -480,7 +479,6 @@ static struct ast_format_cap *set_incoming_call_offer_cap(
 	struct ast_format_cap *remote;
 	struct ast_rtp_codecs codecs = AST_RTP_CODECS_NULL_INIT;
 	SCOPE_ENTER(1, "%s\n", ast_sip_session_get_name(session));
-
 
 	remote = ast_format_cap_alloc(AST_FORMAT_CAP_FLAG_DEFAULT);
 	if (!remote) {
@@ -1355,33 +1353,32 @@ static void add_rtcp_fb_to_stream(struct ast_sip_session *session,
 	pj_str_t stmp;
 	pjmedia_sdp_attr *attr;
 
-	if (!session->endpoint->media.webrtc) {
-		return;
+	if (session->endpoint->media.webrtc) {
+	
+		/* transport-cc is supposed to be for the entire transport, and any media sources so
+		 * while the header does not appear in audio streams and isn't negotiated there, we still
+		 * place this attribute in as Chrome does.
+		 */
+		attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* transport-cc"));
+		pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
 	}
 
-	/* transport-cc is supposed to be for the entire transport, and any media sources so
-	 * while the header does not appear in audio streams and isn't negotiated there, we still
-	 * place this attribute in as Chrome does.
-	 */
-	attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* transport-cc"));
-	pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
+	if (session_media->type == AST_MEDIA_TYPE_VIDEO) {
+		if (ast_rtp_instance_get_prop(session_media->rtp, AST_RTP_PROPERTY_REMB)) {
+			/*
+			 * For now just automatically add it the stream even though it hasn't
+			 * necessarily been negotiated.
+			 */
+			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* ccm fir"));
+			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
 
-	if (session_media->type != AST_MEDIA_TYPE_VIDEO) {
-		return;
+			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* goog-remb"));
+			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
+
+			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* nack"));
+			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
+		}
 	}
-
-	/*
-	 * For now just automatically add it the stream even though it hasn't
-	 * necessarily been negotiated.
-	 */
-	attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* ccm fir"));
-	pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
-
-	attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* goog-remb"));
-	pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
-
-	attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* nack"));
-	pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
 }
 
 static void add_extmap_to_stream(struct ast_sip_session *session,
