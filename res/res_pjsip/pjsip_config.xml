@@ -998,7 +998,7 @@
 				<configOption name="tos_text">
 					<synopsis>DSCP TOS bits for text streams</synopsis>
 					<description><para>
-						See https://wiki.asterisk.org/wiki/display/AST/IP+Quality+of+Service for more information about QoS settings
+						See https://docs.asterisk.org/Configuration/Channel-Drivers/IP-Quality-of-Service for more information about QoS settings
 					</para></description>
 				</configOption>
 				<configOption name="cos_audio">
@@ -1016,8 +1016,11 @@
 				<configOption name="cos_text">
 					<synopsis>Priority for text streams</synopsis>
 					<description><para>
-							See https://wiki.asterisk.org/wiki/display/AST/IP+Quality+of+Service for more information about QoS settings
+						See https://docs.asterisk.org/Configuration/Channel-Drivers/IP-Quality-of-Service for more information about QoS settings
 					</para></description>
+				</configOption>
+				<configOption name="ws_text" default="no">
+					<synopsis>Allow use of websocket text for WebRTC traffic</synopsis>
 				</configOption>
 				<configOption name="allow_subscribe" default="yes">
 					<synopsis>Determines if endpoint is allowed to initiate subscriptions with Asterisk.</synopsis>

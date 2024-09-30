@@ -51,6 +51,7 @@ struct pjmedia_sdp_media;
 struct pjmedia_sdp_session;
 struct ast_dsp;
 struct ast_udptl;
+struct ast_websocket_session_text;
 
 /*! \brief T.38 states for a session */
 enum ast_sip_session_t38state {
@@ -127,6 +128,9 @@ struct ast_sip_session_media {
 	char *remote_label;
 	/*! \brief Stream name */
 	char *stream_name;
+
+	/*! \brief Websocket session text instance itself */
+	struct ast_websocket_session_text *websocket_session_text;
 };
 
 /*!

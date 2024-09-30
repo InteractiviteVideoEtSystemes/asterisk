@@ -4818,6 +4818,7 @@ int ast_sendtext_data(struct ast_channel *chan, struct ast_msg_data *msg)
 		f.datalen = body_len;
 		f.mallocd = AST_MALLOCD_DATA;
 		f.data.ptr = ast_strdup(body);
+		f.stream_num = ast_stream_get_position(ast_channel_get_default_stream(chan, AST_MEDIA_TYPE_TEXT));
 		if (f.data.ptr) {
 			res = ast_channel_tech(chan)->write_text(chan, &f);
 		} else {

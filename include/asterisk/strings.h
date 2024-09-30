@@ -94,7 +94,7 @@ static force_inline int attribute_pure ast_strlen_zero(const char *s)
   \retval 1 if \a str begins with \a prefix
   \retval 0 otherwise.
  */
-static int force_inline attribute_pure ast_begins_with(const char *str, const char *prefix)
+static force_inline int attribute_pure ast_begins_with(const char *str, const char *prefix)
 {
 	ast_assert(str != NULL);
 	ast_assert(prefix != NULL);
@@ -113,7 +113,7 @@ static int force_inline attribute_pure ast_begins_with(const char *str, const ch
   \retval 1 if \a str ends with \a suffix
   \retval 0 otherwise.
  */
-static int force_inline attribute_pure ast_ends_with(const char *str, const char *suffix)
+static force_inline int attribute_pure ast_ends_with(const char *str, const char *suffix)
 {
 	size_t str_len;
 	size_t suffix_len;

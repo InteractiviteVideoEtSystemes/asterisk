@@ -59,8 +59,8 @@
 #define MOD_DATA_ON_RESPONSE "on_response"
 #define MOD_DATA_NAT_HOOK "nat_hook"
 
-/* Most common case is one audio and one video stream */
-#define DEFAULT_NUM_SESSION_MEDIA 2
+/* Most common case is one audio, one video stream and one text stream */
+#define DEFAULT_NUM_SESSION_MEDIA 3
 
 /* Some forward declarations */
 static void handle_session_begin(struct ast_sip_session *session);

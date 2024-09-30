@@ -384,7 +384,7 @@ static void get_codecs(struct ast_sip_session *session, const struct pjmedia_sdp
 						red_cp = strtok_r(NULL, "/", &rest);
 					}
 
-					if (++red_num_gen > 0) {
+					if (red_num_gen > 0) {
 						ast_log(AST_LOG_NOTICE, "T.140/RED enabled (pt=%d) with %d generations\n", num, red_num_gen);
 						session->endpoint->media.red_enabled = 1;
 						ast_rtp_red_init(session_media->rtp, 300, red_data_pt, red_num_gen);
@@ -975,7 +975,7 @@ static enum ast_sip_session_media_encryption get_media_encryption_type(pj_str_t 
 
 	*optimistic = 0;
 
-	if (!transport_str) {
+	if (!transport_str || !strstr(transport_str, "AVP")) {
 		return AST_SIP_MEDIA_TRANSPORT_INVALID;
 	}
 	if (strstr(transport_str, "UDP/TLS")) {
@@ -1536,6 +1536,12 @@ static int negotiate_incoming_sdp_stream(struct ast_sip_session *session,
 		SCOPE_EXIT_RTN_VALUE(0, "Endpoint has no codecs\n");
 	}
 
+	RAII_VAR(char *, transport_str, ast_strndup(stream->desc.transport.ptr, stream->desc.transport.slen), ast_free);
+
+	if (!transport_str || !strstr(transport_str, "AVP")) {
+		SCOPE_EXIT_RTN_VALUE(0, "Incompatible transport\n");
+	}
+
 	/* Ensure incoming transport is compatible with the endpoint's configuration */
 	if (!session->endpoint->media.rtp.use_received_transport) {
 		encryption = check_endpoint_media_transport(session->endpoint, stream);
@@ -1974,6 +1980,10 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 			media->attr[media->attr_count++] = attr;
 		}
 
+		if (media_type == AST_MEDIA_TYPE_TEXT) {
+			ast_debug(3, "SDP generate RTP frame text %d %s\n", rtp_code, ast_format_get_codec_name(format));
+		}
+
 		if (media_type == AST_MEDIA_TYPE_TEXT && !strcasecmp(ast_format_get_codec_name(format), "red")) {
 			// TODO jpb: En attendant de faire mieux.
 			if (rtp_code == 105 || rtp_code == 96) {
@@ -2148,6 +2158,12 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *session,
 
 	if (!session->channel) {
 		SCOPE_EXIT_RTN_VALUE(1, "No channel\n");
+	}
+
+	RAII_VAR(char *, transport_str, ast_strndup(remote_stream->desc.transport.ptr, remote_stream->desc.transport.slen), ast_free);
+
+	if (!transport_str || !strstr(transport_str, "AVP")) {
+		SCOPE_EXIT_RTN_VALUE(0, "Incompatible transport\n");
 	}
 
 	/* Ensure incoming transport is compatible with the endpoint's configuration */
@@ -2347,7 +2363,7 @@ static void stream_destroy(struct ast_sip_session_media *session_media)
 
 /*! \brief SDP handler for 'audio' media stream */
 static struct ast_sip_session_sdp_handler audio_sdp_handler = {
-	.id = STR_AUDIO,
+	.id = "audio_rtp", //STR_AUDIO, 
 	.negotiate_incoming_sdp_stream = negotiate_incoming_sdp_stream,
 	.create_outgoing_sdp_stream = create_outgoing_sdp_stream,
 	.apply_negotiated_sdp_stream = apply_negotiated_sdp_stream,
@@ -2358,7 +2374,7 @@ static struct ast_sip_session_sdp_handler audio_sdp_handler = {
 
 /*! \brief SDP handler for 'video' media stream */
 static struct ast_sip_session_sdp_handler video_sdp_handler = {
-	.id = STR_VIDEO,
+	.id = "video_rtp", //STR_VIDEO,
 	.negotiate_incoming_sdp_stream = negotiate_incoming_sdp_stream,
 	.create_outgoing_sdp_stream = create_outgoing_sdp_stream,
 	.apply_negotiated_sdp_stream = apply_negotiated_sdp_stream,
@@ -2370,7 +2386,7 @@ static struct ast_sip_session_sdp_handler video_sdp_handler = {
 
 /*! \brief SDP handler for 'text' media stream */
 static struct ast_sip_session_sdp_handler text_sdp_handler = {
-	.id = STR_TEXT,
+	.id = "test_rtp", //STR_TEXT,
 	.negotiate_incoming_sdp_stream = negotiate_incoming_sdp_stream,
 	.create_outgoing_sdp_stream = create_outgoing_sdp_stream,
 	.apply_negotiated_sdp_stream = apply_negotiated_sdp_stream,
@@ -2458,7 +2474,7 @@ static int load_module(void)
 		ast_log(LOG_ERROR, "Unable to register SDP handler for %s stream type\n", STR_VIDEO);
 		goto end;
 	}
-
+	
 	if (ast_sip_session_register_sdp_handler(&text_sdp_handler, STR_TEXT)) {
 		ast_log(LOG_ERROR, "Unable to register SDP handler for %s stream type\n", STR_TEXT);
 		goto end;

@@ -252,6 +252,9 @@
 				<parameter name="RewriteContact">
 					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='endpoint']/configOption[@name='rewrite_contact']/synopsis/node())"/></para>
 				</parameter>
+				<parameter name="WsText">
+					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='endpoint']/configOption[@name='ws_text']/synopsis/node())"/></para>
+				</parameter>
 				<parameter name="Transport">
 					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='endpoint']/configOption[@name='transport']/synopsis/node())"/></para>
 				</parameter>
