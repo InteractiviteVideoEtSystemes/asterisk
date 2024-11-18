@@ -2967,61 +2967,6 @@ static int chan_pjsip_sendhtml(struct ast_channel *ast, int subclass, const char
 	return 0;
 }
 
-static pj_status_t chan_pjsip_sendhtml_response(struct ast_channel *ast, struct pjsip_rx_data *rdata, int st_code, const char *data, int len)
-{
-	struct ast_sip_channel_pvt *channel = ast_channel_tech_pvt(ast);
-	struct ast_sip_session *session = channel->session;
-	pjsip_endpoint *endpt = ast_sip_get_pjsip_endpoint();
-	pjsip_dialog *dlg = pjsip_rdata_get_dlg(rdata);
-	pjsip_transaction *tsx = pjsip_rdata_get_tsx(rdata);
-	const pjsip_hdr *hdr;
-	pj_status_t status;
-
-	const struct ast_sip_body body = {
-		.type = "application",
-		.subtype = "x-www-form-urlencoded",
-		.body_text = data
-	};
-
-	struct pjsip_tx_data *tdata;
-
-	ast_debug(1, "Sending %s HTML with SIP INFO response on %s\n", data, ast_channel_name(ast));
-
-	if (session->inv_session->state == PJSIP_INV_STATE_DISCONNECTED) {
-		ast_log(LOG_ERROR, "Session already DISCONNECTED [reason=%d (%s)]\n", session->inv_session->cause, pjsip_get_status_text(session->inv_session->cause)->ptr);
-		return -1;
-	}
-
-	if (ast_sip_create_response(rdata, st_code, NULL, &tdata)) {
-		ast_log(LOG_ERROR, "Could not create HTML with SIP INFO response\n");
-		return -1;
-	}
-
-	if (ast_sip_add_body(tdata, &body)) {
-		ast_log(LOG_ERROR, "Could not add body to HTML with SIP INFO response\n");
-		return -1;
-	}
-
-	if (dlg && tsx) {
-		ast_debug(1, "*** Sending HTML with SIP INFO dialog response %s on %s\n", data, ast_channel_name(ast));
-		status = pjsip_dlg_send_response(dlg, tsx, tdata);
-	} else {
-		struct ast_sip_endpoint *endpoint;
-
-		ast_debug(1, "*** Sending HTML with SIP INFO stateful response %s on %s\n", data, ast_channel_name(ast));
-
-		endpoint = ast_pjsip_rdata_get_endpoint(rdata);
-		status = ast_sip_send_stateful_response(rdata, tdata, endpoint);
-		ao2_cleanup(endpoint);
-	}
-
-	if (status != PJ_SUCCESS) {
-		ast_log(LOG_ERROR, "Unable to send HTML with SIP INFO response (%d)\n", status);
-	}
-
-	return status;
-}
-
 static void chan_pjsip_session_begin(struct ast_sip_session *session)
 {
 	RAII_VAR(struct ast_datastore *, datastore, NULL, ao2_cleanup);
@@ -3394,8 +3339,6 @@ static void chan_pjsip_incoming_info_response(struct ast_sip_session *session, s
 	if (!session->channel) {
 		SCOPE_EXIT_RTN("%s: No channel\n", ast_sip_session_get_name(session));
 	} else {
-		//chan_pjsip_sendhtml_response(ast_channel_bridge_peer(session->channel), rdata, tsx->status_code, (const char *)rdata->msg_info.msg->body->data, rdata->msg_info.msg->body->len+1);
-
 		SCOPE_EXIT_RTN("%s\n", ast_sip_session_get_name(session));
 	}
 }
