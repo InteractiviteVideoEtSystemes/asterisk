@@ -178,6 +178,17 @@ static struct ast_sip_session_supplement chan_pjsip_prack_supplement = {
 	.incoming_request = chan_pjsip_incoming_prack,
 };
 
+static int chan_pjsip_incoming_info_request(struct ast_sip_session *session, struct pjsip_rx_data *rdata);
+static void chan_pjsip_incoming_info_response(struct ast_sip_session *session, struct pjsip_rx_data *rdata);
+
+static struct ast_sip_session_supplement chan_pjsip_info_supplement = {
+	.method = "INFO",
+	.priority = AST_SIP_SUPPLEMENT_PRIORITY_CHANNEL,
+	.incoming_request = chan_pjsip_incoming_info_request,
+	.incoming_response = chan_pjsip_incoming_info_response,
+	.response_priority = AST_SIP_SESSION_AFTER_MEDIA | AST_SIP_SESSION_BEFORE_MEDIA,
+};
+
 /*! \brief Function called by RTP engine to get local audio RTP peer */
 static enum ast_rtp_glue_result chan_pjsip_get_rtp_peer(struct ast_channel *chan, struct ast_rtp_instance **instance)
 {
@@ -2935,7 +2946,7 @@ static int chan_pjsip_sendhtml(struct ast_channel *ast, int subclass, const char
 
 	struct pjsip_tx_data *tdata;
 
-	ast_verbose("Sending URL %s on %s\n", data, ast_channel_name(ast));
+	ast_debug(1, "Sending %s HTML with SIP INFO on %s\n", data, ast_channel_name(ast));
 
 	if (session->inv_session->state == PJSIP_INV_STATE_DISCONNECTED) {
 		ast_log(LOG_ERROR, "Session already DISCONNECTED [reason=%d (%s)]\n", session->inv_session->cause, pjsip_get_status_text(session->inv_session->cause)->ptr);
@@ -2943,17 +2954,72 @@ static int chan_pjsip_sendhtml(struct ast_channel *ast, int subclass, const char
 	}
 
 	if (ast_sip_create_request("INFO", session->inv_session->dlg, session->endpoint, NULL, NULL, &tdata)) {
-		ast_log(LOG_ERROR, "Could not create html INFO request\n");
+		ast_log(LOG_ERROR, "Could not create HTML with SIP INFO request\n");
 		return -1;
 	}
 
 	if (ast_sip_add_body(tdata, &body)) {
-		ast_log(LOG_ERROR, "Could not add body to html INFO request\n");
+		ast_log(LOG_ERROR, "Could not add body to HTML with SIP INFO request\n");
 		return -1;
 	}
 
 	ast_sip_session_send_request(session, tdata);
 	return 0;
+}
+
+static pj_status_t chan_pjsip_sendhtml_response(struct ast_channel *ast, struct pjsip_rx_data *rdata, int st_code, const char *data, int len)
+{
+	struct ast_sip_channel_pvt *channel = ast_channel_tech_pvt(ast);
+	struct ast_sip_session *session = channel->session;
+	pjsip_endpoint *endpt = ast_sip_get_pjsip_endpoint();
+	pjsip_dialog *dlg = pjsip_rdata_get_dlg(rdata);
+	pjsip_transaction *tsx = pjsip_rdata_get_tsx(rdata);
+	const pjsip_hdr *hdr;
+	pj_status_t status;
+
+	const struct ast_sip_body body = {
+		.type = "application",
+		.subtype = "x-www-form-urlencoded",
+		.body_text = data
+	};
+
+	struct pjsip_tx_data *tdata;
+
+	ast_debug(1, "Sending %s HTML with SIP INFO response on %s\n", data, ast_channel_name(ast));
+
+	if (session->inv_session->state == PJSIP_INV_STATE_DISCONNECTED) {
+		ast_log(LOG_ERROR, "Session already DISCONNECTED [reason=%d (%s)]\n", session->inv_session->cause, pjsip_get_status_text(session->inv_session->cause)->ptr);
+		return -1;
+	}
+
+	if (ast_sip_create_response(rdata, st_code, NULL, &tdata)) {
+		ast_log(LOG_ERROR, "Could not create HTML with SIP INFO response\n");
+		return -1;
+	}
+
+	if (ast_sip_add_body(tdata, &body)) {
+		ast_log(LOG_ERROR, "Could not add body to HTML with SIP INFO response\n");
+		return -1;
+	}
+
+	if (dlg && tsx) {
+		ast_debug(1, "*** Sending HTML with SIP INFO dialog response %s on %s\n", data, ast_channel_name(ast));
+		status = pjsip_dlg_send_response(dlg, tsx, tdata);
+	} else {
+		struct ast_sip_endpoint *endpoint;
+
+		ast_debug(1, "*** Sending HTML with SIP INFO stateful response %s on %s\n", data, ast_channel_name(ast));
+
+		endpoint = ast_pjsip_rdata_get_endpoint(rdata);
+		status = ast_sip_send_stateful_response(rdata, tdata, endpoint);
+		ao2_cleanup(endpoint);
+	}
+
+	if (status != PJ_SUCCESS) {
+		ast_log(LOG_ERROR, "Unable to send HTML with SIP INFO response (%d)\n", status);
+	}
+
+	return status;
 }
 
 static void chan_pjsip_session_begin(struct ast_sip_session *session)
@@ -2985,7 +3051,6 @@ static void chan_pjsip_session_end(struct ast_sip_session *session)
 	if (!session->channel) {
 		SCOPE_EXIT_RTN("No channel\n");
 	}
-
 
 	if (session->active_media_state &&
 		session->active_media_state->default_session[AST_MEDIA_TYPE_AUDIO]) {
@@ -3285,6 +3350,57 @@ static int chan_pjsip_incoming_prack(struct ast_sip_session *session, struct pjs
 	SCOPE_EXIT_RTN_VALUE(0, "%s\n", ast_sip_session_get_name(session));
 }
 
+static int chan_pjsip_incoming_info_request(struct ast_sip_session *session, struct pjsip_rx_data *rdata)
+{
+	SCOPE_ENTER(3, "%s\n", ast_sip_session_get_name(session));
+
+	//if (rdata->msg_info.msg->line.req.method.id == PJSIP_INFO_METHOD) {
+	if (pj_strcmp2(&rdata->msg_info.msg->line.req.method.name, "INFO") == 0) {
+		pjsip_tx_data *tdata;
+		struct pjsip_transaction *tsx = pjsip_rdata_get_tsx(rdata);
+
+		ast_trace(-1, "%s: incoming SIP INFO request\n", ast_sip_session_get_name(session));
+		
+		if (pjsip_dlg_create_response(session->inv_session->dlg, rdata, 200, NULL, &tdata) == PJ_SUCCESS) {
+			pjsip_dlg_send_response(session->inv_session->dlg, tsx, tdata);
+
+			char *body = NULL;
+			unsigned int body_length = 0;
+
+			if (rdata->msg_info.msg->body && rdata->msg_info.msg->body->len > 0) {
+				body_length = rdata->msg_info.msg->body->len + 1;
+				body = ast_malloc(body_length);
+
+				ast_copy_string(body, rdata->msg_info.msg->body->data, rdata->msg_info.msg->body->len + 1);
+			}
+
+			chan_pjsip_sendhtml(ast_channel_bridge_peer(session->channel), 0, body ? body : "", body_length);
+
+			if (body) {
+				ast_free(body);
+			}
+		}
+	}
+	SCOPE_EXIT_RTN_VALUE(0, "%s\n", ast_sip_session_get_name(session));
+}
+
+static void chan_pjsip_incoming_info_response(struct ast_sip_session *session, struct pjsip_rx_data *rdata)
+{
+	struct pjsip_status_line status = rdata->msg_info.msg->line.status;
+	SCOPE_ENTER(3, "%s: Status: %d\n", ast_sip_session_get_name(session), status.code);
+
+	ast_trace(-1, "%s: incoming SIP INFO response\n", ast_sip_session_get_name(session));
+
+	if (!session->channel) {
+		SCOPE_EXIT_RTN("%s: No channel\n", ast_sip_session_get_name(session));
+	} else {
+		//chan_pjsip_sendhtml_response(ast_channel_bridge_peer(session->channel), rdata, tsx->status_code, (const char *)rdata->msg_info.msg->body->data, rdata->msg_info.msg->body->len+1);
+
+		SCOPE_EXIT_RTN("%s\n", ast_sip_session_get_name(session));
+	}
+}
+
+
 static int update_devstate(void *obj, void *arg, int flags)
 {
 	ast_devstate_changed(AST_DEVICE_UNKNOWN, AST_DEVSTATE_CACHABLE,
@@ -3407,6 +3523,7 @@ static int load_module(void)
 	ast_sip_session_register_supplement(&pbx_start_supplement);
 	ast_sip_session_register_supplement(&chan_pjsip_ack_supplement);
 	ast_sip_session_register_supplement(&chan_pjsip_prack_supplement);
+	ast_sip_session_register_supplement(&chan_pjsip_info_supplement);
 
 	if (pjsip_channel_cli_register()) {
 		ast_log(LOG_ERROR, "Unable to register PJSIP Channel CLI\n");
@@ -3425,6 +3542,7 @@ static int load_module(void)
 end:
 	ao2_cleanup(pjsip_uids_onhold);
 	pjsip_uids_onhold = NULL;
+	ast_sip_session_unregister_supplement(&chan_pjsip_info_supplement);
 	ast_sip_session_unregister_supplement(&chan_pjsip_ack_supplement);
 	ast_sip_session_unregister_supplement(&chan_pjsip_prack_supplement);
 	ast_sip_session_unregister_supplement(&pbx_start_supplement);
@@ -3458,6 +3576,7 @@ static int unload_module(void)
 	ast_sip_session_unregister_supplement(&chan_pjsip_supplement_response);
 	ast_sip_session_unregister_supplement(&chan_pjsip_supplement);
 	ast_sip_session_unregister_supplement(&pbx_start_supplement);
+	ast_sip_session_unregister_supplement(&chan_pjsip_info_supplement);
 	ast_sip_session_unregister_supplement(&chan_pjsip_ack_supplement);
 	ast_sip_session_unregister_supplement(&chan_pjsip_prack_supplement);
 	ast_sip_session_unregister_supplement(&call_pickup_supplement);

@@ -4245,7 +4245,6 @@ static pj_bool_t has_supplement(const struct ast_sip_session *session, const pjs
  */
 static void session_on_tsx_state(pjsip_transaction *tsx, pjsip_event *e)
 {
-
 	pjsip_dialog *dlg = pjsip_tsx_get_dlg(tsx);
 	pjsip_inv_session *inv_session = (dlg ? pjsip_dlg_get_inv_session(dlg) : NULL);
 	struct ast_sip_session *session = (inv_session ? inv_session->mod_data[session_module.id] : NULL);
@@ -4267,12 +4266,12 @@ static void session_on_tsx_state(pjsip_transaction *tsx, pjsip_event *e)
  */
 static pj_bool_t session_on_rx_response(pjsip_rx_data *rdata)
 {
-
+	pj_status_t handled = PJ_FALSE;
 	struct pjsip_status_line status = rdata->msg_info.msg->line.status;
 	pjsip_dialog *dlg = pjsip_rdata_get_dlg(rdata);
 	pjsip_inv_session *inv_session = dlg ? pjsip_dlg_get_inv_session(dlg) : NULL;
 	struct ast_sip_session *session = (inv_session ? inv_session->mod_data[session_module.id] : NULL);
-	SCOPE_ENTER(1, "%s Method: %.*s Status: %d\n", ast_sip_session_get_name(session),
+	SCOPE_ENTER(1, "%s: Response: %.*s Status: %d\n", ast_sip_session_get_name(session),
 		(int)rdata->msg_info.cseq->method.name.slen, rdata->msg_info.cseq->method.name.ptr, status.code);
 
 	SCOPE_EXIT_RTN_VALUE(PJ_FALSE);
@@ -4304,7 +4303,7 @@ static pj_bool_t session_on_rx_request(pjsip_rx_data *rdata)
 	struct ast_sip_session *session = (inv_session ? inv_session->mod_data[session_module.id] : NULL);
 	char *req_uri = TRACE_ATLEAST(1) ? ast_alloca(256) : "";
 	int res = TRACE_ATLEAST(1) ? pjsip_uri_print(PJSIP_URI_IN_REQ_URI, rdata->msg_info.msg->line.req.uri, req_uri, 256) : 0;
-	SCOPE_ENTER(1, "%s Request: %.*s %s\n", ast_sip_session_get_name(session),
+	SCOPE_ENTER(1, "%s: Request: %.*s %s\n", ast_sip_session_get_name(session),
 		(int) pj_strlen(&req.method.name), pj_strbuf(&req.method.name), res ? req_uri : "");
 
 	switch (req.method.id) {
@@ -4323,8 +4322,8 @@ static pj_bool_t session_on_rx_request(pjsip_rx_data *rdata)
 		break;
 	}
 
-	SCOPE_EXIT_RTN_VALUE(handled, "%s Handled request %.*s %s ? %s\n", ast_sip_session_get_name(session),
-		(int) pj_strlen(&req.method.name), pj_strbuf(&req.method.name), req_uri,
+	SCOPE_EXIT_RTN_VALUE(handled, "%s: Handled request %.*s %s ? %s\n", ast_sip_session_get_name(session),
+		(int) pj_strlen(&req.method.name), pj_strbuf(&req.method.name), res ? req_uri : "",
 		handled == PJ_TRUE ? "yes" : "no");
 }
 
@@ -4494,7 +4493,7 @@ static void handle_incoming_request(struct ast_sip_session *session, pjsip_rx_da
 {
 	struct ast_sip_session_supplement *supplement;
 	struct pjsip_request_line req = rdata->msg_info.msg->line.req;
-	SCOPE_ENTER(3, "%s: Method is %.*s\n", ast_sip_session_get_name(session), (int) pj_strlen(&req.method.name), pj_strbuf(&req.method.name));
+	SCOPE_ENTER(3, "%s: Method is %.*s, incoming request\n", ast_sip_session_get_name(session), (int) pj_strlen(&req.method.name), pj_strbuf(&req.method.name));
 
 	AST_LIST_TRAVERSE(&session->supplements, supplement, next) {
 		if (supplement->incoming_request && does_method_match(&req.method.name, supplement->method)) {
@@ -4546,14 +4545,18 @@ static void handle_incoming_response(struct ast_sip_session *session, pjsip_rx_d
 {
 	struct ast_sip_session_supplement *supplement;
 	struct pjsip_status_line status = rdata->msg_info.msg->line.status;
-	SCOPE_ENTER(3, "%s: Response is %d %.*s\n", ast_sip_session_get_name(session),
-		status.code, (int) pj_strlen(&status.reason), pj_strbuf(&status.reason));
+	pjsip_cseq_hdr *cseq = pjsip_msg_find_hdr(rdata->msg_info.msg, PJSIP_H_CSEQ, NULL);
+	SCOPE_ENTER(3, "%s: Method is %.*s, incoming response is %d %.*s\n", ast_sip_session_get_name(session),
+		(int)pj_strlen(&cseq->method.name), pj_strbuf(&cseq->method.name), 
+		status.code, 
+		(int)pj_strlen(&status.reason), pj_strbuf(&status.reason));
+
 
 	AST_LIST_TRAVERSE(&session->supplements, supplement, next) {
 		if (!(supplement->response_priority & response_priority)) {
 			continue;
 		}
-		if (supplement->incoming_response && does_method_match(&rdata->msg_info.cseq->method.name, supplement->method)) {
+		if (supplement->incoming_response && does_method_match(&cseq->method.name, supplement->method)) {
 			supplement->incoming_response(session, rdata);
 		}
 	}
@@ -4577,7 +4580,7 @@ static void handle_outgoing_request(struct ast_sip_session *session, pjsip_tx_da
 {
 	struct ast_sip_session_supplement *supplement;
 	struct pjsip_request_line req = tdata->msg->line.req;
-	SCOPE_ENTER(3, "%s: Method is %.*s\n", ast_sip_session_get_name(session),
+	SCOPE_ENTER(3, "%s: Method is %.*s, outgoing request\n", ast_sip_session_get_name(session),
 		(int) pj_strlen(&req.method.name), pj_strbuf(&req.method.name));
 
 	ast_sip_message_apply_transport(session->endpoint->transport, tdata);
@@ -4595,7 +4598,7 @@ static void handle_outgoing_response(struct ast_sip_session *session, pjsip_tx_d
 	struct ast_sip_session_supplement *supplement;
 	struct pjsip_status_line status = tdata->msg->line.status;
 	pjsip_cseq_hdr *cseq = pjsip_msg_find_hdr(tdata->msg, PJSIP_H_CSEQ, NULL);
-	SCOPE_ENTER(3, "%s: Method is %.*s, Response is %d %.*s\n", ast_sip_session_get_name(session),
+	SCOPE_ENTER(3, "%s: Method is %.*s, outgoing response is %d %.*s\n", ast_sip_session_get_name(session),
 		(int) pj_strlen(&cseq->method.name),
 		pj_strbuf(&cseq->method.name), status.code, (int) pj_strlen(&status.reason),
 		pj_strbuf(&status.reason));
@@ -4681,7 +4684,6 @@ static void handle_incoming_before_media(pjsip_inv_session *inv,
 	pjsip_msg *msg;
 	ast_debug(3, "%s: Received %s\n", ast_sip_session_get_name(session), rdata->msg_info.msg->type == PJSIP_REQUEST_MSG ?
 			"request" : "response");
-
 
 	handle_incoming(session, rdata, AST_SIP_SESSION_BEFORE_MEDIA);
 	msg = rdata->msg_info.msg;
@@ -4872,9 +4874,9 @@ static void session_inv_on_tsx_state_changed(pjsip_inv_session *inv, pjsip_trans
 		 */
 		if ((e->body.tsx_state.src.rdata->msg_info.msg->type != PJSIP_REQUEST_MSG) ||
 			(tsx->method.id != PJSIP_BYE_METHOD)) {
-			handle_incoming(session, e->body.tsx_state.src.rdata,
-				AST_SIP_SESSION_AFTER_MEDIA);
+			handle_incoming(session, e->body.tsx_state.src.rdata, AST_SIP_SESSION_AFTER_MEDIA);
 		}
+
 		if (tsx->method.id == PJSIP_INVITE_METHOD) {
 			if (tsx->role == PJSIP_ROLE_UAC) {
 				if (tsx->state == PJSIP_TSX_STATE_COMPLETED) {
