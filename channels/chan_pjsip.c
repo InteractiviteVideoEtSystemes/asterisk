@@ -3300,7 +3300,9 @@ static int chan_pjsip_incoming_info_request(struct ast_sip_session *session, str
 	SCOPE_ENTER(3, "%s\n", ast_sip_session_get_name(session));
 
 	//if (rdata->msg_info.msg->line.req.method.id == PJSIP_INFO_METHOD) {
-	if (pj_strcmp2(&rdata->msg_info.msg->line.req.method.name, "INFO") == 0) {
+	if (!pj_strcmp2(&rdata->msg_info.msg->line.req.method.name, "INFO") && rdata->msg_info.msg->body && 
+		!pj_stricmp2(&rdata->msg_info.msg->body->content_type.type, "application") &&
+		!pj_stricmp2(&rdata->msg_info.msg->body->content_type.subtype, "x-www-form-urlencoded")) {
 		pjsip_tx_data *tdata;
 		struct pjsip_transaction *tsx = pjsip_rdata_get_tsx(rdata);
 
