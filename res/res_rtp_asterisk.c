@@ -6645,10 +6645,11 @@ static struct ast_frame *ast_rtcp_interpret(struct ast_rtp_instance *instance, s
 	position = 0;
 	first_word = ntohl(rtcpheader[position]);
 	if ((first_word & RTCP_VALID_MASK) != RTCP_VALID_VALUE) {
-		ast_debug_rtcp(2, "(%s) RTCP %p -- from %s: Failed first packet validity check\n",
+		ast_debug_rtcp(2, "(%s) RTCP %p -- from %s: Failed first packet validity check, payload %d\n",
 			ast_rtp_instance_get_channel_id(instance),
-			transport_rtp, ast_sockaddr_stringify(addr));
-		return &ast_null_frame;
+			transport_rtp, ast_sockaddr_stringify(addr),
+			((first_word >> RTCP_PAYLOAD_TYPE_SHIFT) & RTCP_PAYLOAD_TYPE_MASK));
+		//return &ast_null_frame;
 	}
 	do {
 		position += ((first_word >> RTCP_LENGTH_SHIFT) & RTCP_LENGTH_MASK) + 1;
