@@ -3405,8 +3405,7 @@ static int __rtp_sendto(struct ast_rtp_instance *instance, void *buf, size_t siz
 	}
 
 #ifdef HAVE_PJPROJECT
-	// JPB
-	if (transport_rtp->ice && 0) {
+	if (transport_rtp->ice) {
 		enum ast_rtp_ice_component_type component = rtcp ? AST_RTP_ICE_COMPONENT_RTCP : AST_RTP_ICE_COMPONENT_RTP;
 		pj_status_t status;
 		struct ice_wrap *ice;
