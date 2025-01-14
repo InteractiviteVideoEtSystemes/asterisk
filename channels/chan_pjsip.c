@@ -353,13 +353,13 @@ static int check_for_rtp_changes(struct ast_channel *chan, struct ast_rtp_instan
 			if (position != -1) {
 				ast_channel_set_fd(chan, position + AST_EXTENDED_FDS, -1);
 			}
-			ast_rtp_instance_set_prop(media->rtp, AST_RTP_PROPERTY_RTCP, 0);
+			ast_rtp_instance_set_prop(media->rtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_DISABLED);
 		}
 	} else if (!ast_sockaddr_isnull(&media->direct_media_addr)){
 		ast_sockaddr_setnull(&media->direct_media_addr);
 		changed = 1;
 		if (media->rtp) {
-			ast_rtp_instance_set_prop(media->rtp, AST_RTP_PROPERTY_RTCP, 1);
+			ast_rtp_instance_set_prop(media->rtp, AST_RTP_PROPERTY_RTCP, AST_RTP_INSTANCE_RTCP_STANDARD);
 			if (position != -1) {
 				ast_channel_set_fd(chan, position + AST_EXTENDED_FDS, ast_rtp_instance_fd(media->rtp, 1));
 			}
@@ -1050,7 +1050,7 @@ static int chan_pjsip_write_stream(struct ast_channel *ast, int stream_num, stru
 		break;
 	case AST_FRAME_RTCP:
 		/* We only support writing out feedback */
-		if (frame->subclass.integer != AST_RTP_RTCP_PSFB || !media) {
+		if ((frame->subclass.integer != AST_RTP_RTCP_PSFB && frame->subclass.integer != AST_RTP_RTCP_RTPFB) || !media) {
 			return 0;
 		} else if (media->type != AST_MEDIA_TYPE_VIDEO) {
 			ast_debug(3, "Channel %s stream %d is of type '%s', not video! Unable to write RTCP feedback.\n",

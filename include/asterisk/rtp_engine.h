@@ -315,9 +315,9 @@ struct ast_rtp_payload_type {
 
 /* Common RTCP report types */
 /*! Sender Report */
-#define AST_RTP_RTCP_SR 200
+#define AST_RTP_RTCP_SR		200
 /*! Receiver Report */
-#define AST_RTP_RTCP_RR 201
+#define AST_RTP_RTCP_RR		201
 /*! Transport Layer Feed Back (From RFC4585 also RFC5104) */
 #define AST_RTP_RTCP_RTPFB	205
 /*! Payload Specific Feed Back (From RFC4585 also RFC5104) */
@@ -325,15 +325,21 @@ struct ast_rtp_payload_type {
 
 /* Common RTCP feedback message types */
 /*! Generic NACK (From RFC4585 also RFC5104) */
-#define AST_RTP_RTCP_FMT_NACK	1
+#define AST_RTP_RTCP_FMT_NACK				 1
+
+#define AST_RTP_RTCP_FMT_TMMBR				 3
+#define AST_RTP_RTCP_FMT_TMMBN				 4
+
 /*! Picture loss indication (From RFC4585) */
-#define AST_RTP_RTCP_FMT_PLI	1
+#define AST_RTP_RTCP_FMT_PLI				 1
 /*! Full INTRA-frame Request (From RFC5104) */
-#define AST_RTP_RTCP_FMT_FIR	4
+#define AST_RTP_RTCP_FMT_FIR				 4
 /*! REMB Information (From draft-alvestrand-rmcat-remb-03) */
-#define AST_RTP_RTCP_FMT_REMB	15
+#define AST_RTP_RTCP_FMT_REMB				15
 /*! Transport-wide congestion control feedback (From draft-holmer-rmcat-transport-wide-cc-extensions-01) */
-#define AST_RTP_RTCP_FMT_TRANSPORT_WIDE_CC 15
+#define AST_RTP_RTCP_FMT_TRANSPORT_WIDE_CC	15
+
+
 
 /*!
  * \since 12
@@ -377,6 +383,8 @@ struct ast_rtp_rtcp_feedback_remb {
 	unsigned int br_mantissa;	/*!< The mantissa of the maximum total media bit rate */
 };
 
+#define ast_rtp_rtcp_feedback_tmmb ast_rtp_rtcp_feedback_remb
+
 /*!
  * \since 15.4.0
  * \brief An object that represents data received in a feedback report */
@@ -384,6 +392,7 @@ struct ast_rtp_rtcp_feedback {
 	unsigned int fmt; /*!< The feedback message type */
 	union {
 		struct ast_rtp_rtcp_feedback_remb remb; /*!< REMB feedback information */
+		struct ast_rtp_rtcp_feedback_tmmb tmmb; /*!< TMMBR/N feedback information */
 	};
 };
 
