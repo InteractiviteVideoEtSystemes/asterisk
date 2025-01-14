@@ -298,7 +298,7 @@ static int create_rtp(struct ast_sip_session *session, struct ast_sip_session_me
 	} else if (session_media->type == AST_MEDIA_TYPE_VIDEO) {
 		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_RETRANS_RECV, session->endpoint->media.webrtc);
 		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_RETRANS_SEND, session->endpoint->media.webrtc);
-		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_REMB, session->endpoint->media.rtp.use_avpf); // session->endpoint->media.webrtc);
+		ast_rtp_instance_set_prop(session_media->rtp, AST_RTP_PROPERTY_REMB, session->endpoint->media.webrtc);
 		if (session->endpoint->media.webrtc) {
 			enable_rtp_extension(session, session_media, AST_RTP_EXTENSION_ABS_SEND_TIME, AST_RTP_EXTENSION_DIRECTION_SENDRECV, sdp);
 			enable_rtp_extension(session, session_media, AST_RTP_EXTENSION_TRANSPORT_WIDE_CC, AST_RTP_EXTENSION_DIRECTION_SENDRECV, sdp);
@@ -1353,18 +1353,24 @@ static void add_rtcp_fb_to_stream(struct ast_sip_session *session,
 	pj_str_t stmp;
 	pjmedia_sdp_attr *attr;
 
-	if (session->endpoint->media.webrtc) {
-	
-		/* transport-cc is supposed to be for the entire transport, and any media sources so
-		 * while the header does not appear in audio streams and isn't negotiated there, we still
-		 * place this attribute in as Chrome does.
-		 */
-		attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* transport-cc"));
-		pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
-	}
-
 	if (session_media->type == AST_MEDIA_TYPE_VIDEO) {
+		if (session->endpoint->media.webrtc) {
+			/* transport-cc is supposed to be for the entire transport, and any media sources so
+			 * while the header does not appear in audio streams and isn't negotiated there, we still
+			 * place this attribute in as Chrome does.
+			 */
+			/**/
+			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* transport-cc"));
+			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
+			/**/
+		}
+
 		if (ast_rtp_instance_get_prop(session_media->rtp, AST_RTP_PROPERTY_REMB)) {
+			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* goog-remb"));
+			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
+		}
+
+		if (session->endpoint->media.rtp.use_avpf) {
 			/*
 			 * For now just automatically add it the stream even though it hasn't
 			 * necessarily been negotiated.
@@ -1372,10 +1378,13 @@ static void add_rtcp_fb_to_stream(struct ast_sip_session *session,
 			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* ccm fir"));
 			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
 
-			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* goog-remb"));
+			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* ccm tmmbr"));
 			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
 
 			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* nack"));
+			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
+
+			attr = pjmedia_sdp_attr_create(pool, "rtcp-fb", pj_cstr(&stmp, "* nack pli"));
 			pjmedia_sdp_attr_add(&media->attr_count, media->attr, attr);
 		}
 	}
@@ -1687,7 +1696,7 @@ static int add_crypto_to_stream(struct ast_sip_session *session,
 		if (!dtls) {
 			return -1;
 		}
-
+/**/
 		switch (dtls->get_connection(session_media->rtp)) {
 		case AST_RTP_DTLS_CONNECTION_NEW:
 			attr = pjmedia_sdp_attr_create(pool, "connection", &STR_NEW);
@@ -1700,32 +1709,38 @@ static int add_crypto_to_stream(struct ast_sip_session *session,
 		default:
 			break;
 		}
-
+/**/
 		/* If this is an answer we need to use our current state, if it's an offer we need to use
 		 * the configured value.
 		 */
 		if (session->inv_session->neg
 			&& pjmedia_sdp_neg_get_state(session->inv_session->neg) != PJMEDIA_SDP_NEG_STATE_DONE) {
 			setup = dtls->get_setup(session_media->rtp);
+			ast_log(LOG_WARNING, "RTP/DTLS setup get value\n");
 		} else {
 			setup = session->endpoint->media.rtp.dtls_cfg.default_setup;
+			ast_log(LOG_WARNING, "RTP/DTLS setup get default\n");
 		}
 
 		switch (setup) {
 		case AST_RTP_DTLS_SETUP_ACTIVE:
+			ast_log(LOG_WARNING, "RTP/DTLS setup: active (%d)\n", setup);
 			attr = pjmedia_sdp_attr_create(pool, "setup", &STR_ACTIVE);
+			//attr = pjmedia_sdp_attr_create(pool, "setup", &STR_PASSIVE);
 			media->attr[media->attr_count++] = attr;
 			break;
 		case AST_RTP_DTLS_SETUP_PASSIVE:
+			ast_log(LOG_WARNING, "RTP/DTLS setup: passive (%d)\n", setup);
 			attr = pjmedia_sdp_attr_create(pool, "setup", &STR_PASSIVE);
 			media->attr[media->attr_count++] = attr;
 			break;
 		case AST_RTP_DTLS_SETUP_ACTPASS:
+			ast_log(LOG_WARNING, "RTP/DTLS setup: actpass (%d)\n", setup);
 			attr = pjmedia_sdp_attr_create(pool, "setup", &STR_ACTPASS);
 			media->attr[media->attr_count++] = attr;
 			break;
 		case AST_RTP_DTLS_SETUP_HOLDCONN:
-			attr = pjmedia_sdp_attr_create(pool, "setup", &STR_HOLDCONN);
+			//attr = pjmedia_sdp_attr_create(pool, "setup", &STR_HOLDCONN);
 			break;
 		default:
 			break;
