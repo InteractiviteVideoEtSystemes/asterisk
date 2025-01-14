@@ -2104,8 +2104,27 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 	add_rtcp_fb_to_stream(session, session_media, pool, media);
 	add_extmap_to_stream(session, session_media, pool, media);
 
+	pjmedia_sdp_bandw *bandw;
+
+	if (media_type == AST_MEDIA_TYPE_VIDEO &&
+		media->bandw_count == 0) {
+		// Ajouter le champ b=AS:448 au niveau d'un média
+		bandw = PJ_POOL_ALLOC_T(pool, pjmedia_sdp_bandw);
+		bandw->modifier = pj_str("AS");
+		bandw->value = 448;
+		media->bandw[media->bandw_count++] = bandw;
+	}
+
 	/* Add the media stream to the SDP */
 	sdp->media[sdp->media_count++] = media;
+
+	if (sdp->bandw_count == 0) {
+		// Ajouter le champ b=AS:512 au niveau d'une session
+		bandw = PJ_POOL_ALLOC_T(pool, pjmedia_sdp_bandw);
+		bandw->modifier = pj_str("AS");
+		bandw->value = 512;
+		sdp->bandw[sdp->bandw_count++] = bandw;
+	}
 
 	SCOPE_EXIT_RTN_VALUE(1, "RC: 1\n");
 }
