@@ -133,6 +133,8 @@
 #define RTCP_PT_BYE     203
 /*! Application defined (From RFC3550) */
 #define RTCP_PT_APP     204
+/* VP8: RTCP Feedback */
+#define RTCP_PT_RTPFB	AST_RTP_RTCP_RTPFB
 
 /*! Payload Specific Feed Back (From RFC4585 also RFC5104) */
 #define RTCP_PT_PSFB    AST_RTP_RTCP_PSFB
@@ -4450,6 +4452,7 @@ static int ast_rtp_dtmf_end_with_duration(struct ast_rtp_instance *instance, cha
 	/* Construct the packet we are going to send */
 	rtpheader[1] = htonl(rtp->lastdigitts);
 	rtpheader[2] = htonl(rtp->ssrc);
+
 	rtpheader[3]  = htonl((digit << 24) | (0xa << 16) | (rtp->send_duration));
 	rtpheader[3] |= htonl((1 << 23));
 
@@ -4963,7 +4966,7 @@ static int ast_rtcp_generate_nack(struct ast_rtp_instance *instance, unsigned ch
 
 	/* Length MUST be 2+n, where n is the number of NACKs. Same as length in words minus 1 */
 	put_unaligned_uint32(rtcpheader, htonl((2 << 30) | (AST_RTP_RTCP_FMT_NACK << 24)
-				| (AST_RTP_RTCP_RTPFB << 16) | ((packet_len / 4) - 1)));
+				| (RTCP_PT_RTPFB << 16) | ((packet_len / 4) - 1)));
 	put_unaligned_uint32(rtcpheader + 4, htonl(rtp->ssrc));
 	put_unaligned_uint32(rtcpheader + 8, htonl(rtp->themssrc));
 
@@ -5370,13 +5373,19 @@ static void rtp_write_rtcp_fir(struct ast_rtp_instance *instance, struct ast_rtp
 	}
 
 	packet_len += res;
-
+/**/
 	fir_len = 20; 
 	put_unaligned_uint32(rtcpheader + packet_len +  0, htonl((2 << 30) | (4 << 24) | (RTCP_PT_PSFB << 16) | ((fir_len / 4) - 1)));
 	put_unaligned_uint32(rtcpheader + packet_len +  4, htonl(rtp->ssrc));
 	put_unaligned_uint32(rtcpheader + packet_len +  8, htonl(rtp->themssrc));
 	put_unaligned_uint32(rtcpheader + packet_len + 12, htonl(rtp->themssrc)); // FCI: SSRC
 	put_unaligned_uint32(rtcpheader + packet_len + 16, htonl(rtp->rtcp->firseq << 24)); // FCI: Sequence number
+/*
+	fir_len = 12;
+	put_unaligned_uint32(rtcpheader + packet_len + 0, htonl((2 << 30) | (1 << 24) | (RTCP_PT_PSFB << 16) | ((fir_len / 4) - 1)));
+	put_unaligned_uint32(rtcpheader + packet_len + 4, htonl(rtp->ssrc));
+	put_unaligned_uint32(rtcpheader + packet_len + 8, htonl(rtp->themssrc));
+*/
 	res = rtcp_sendto(instance, (unsigned int *)rtcpheader, packet_len + fir_len, 0, rtp->bundled ? remote_address : &rtp->rtcp->them, &ice);
 	if (res < 0) {
 		ast_log(LOG_ERROR, "Write an RTCP %s FIR transmission error: %s\n", ast_sockaddr_stringify(rtp->bundled ? remote_address : &rtp->rtcp->them), strerror(errno));
@@ -5470,6 +5479,96 @@ static void rtp_write_rtcp_psfb(struct ast_rtp_instance *instance, struct ast_rt
 	ao2_unlock(instance);
 }
 
+static void rtp_write_rtcp_rtpfb(struct ast_rtp_instance *instance, struct ast_rtp *rtp, struct ast_frame *frame, struct ast_sockaddr *remote_address)
+{
+	struct ast_rtp_rtcp_feedback *feedback = frame->data.ptr;
+	unsigned char *rtcpheader;
+	unsigned char bdata[1024];
+	int tmmb_len = 20;
+	int ice;
+	int res;
+	int sr = 0;
+	int packet_len = 0;
+	//RAII_VAR(struct ast_rtp_rtcp_report *, rtcp_report, NULL, ao2_cleanup);
+
+	if (feedback->fmt != AST_RTP_RTCP_FMT_TMMBN && feedback->fmt != AST_RTP_RTCP_FMT_TMMBR) {
+		ast_debug_rtcp(1, "(%p) RTCP provided feedback frame of format to write %d, but only TMMBR/N is supported\n",
+			instance, feedback->fmt);
+		return;
+	}
+
+	if (!rtp || !rtp->rtcp) {
+		return;
+	}
+
+	/* If REMB support is not enabled don't send this RTCP packet */
+	/*
+	if (!ast_rtp_instance_get_prop(instance, AST_RTP_PROPERTY_REMB)) {
+		ast_debug_rtcp(1, "(%p) RTCP provided feedback REMB report to write, but REMB support not enabled\n",
+			instance);
+		return;
+	}
+	*/
+
+	if (ast_sockaddr_isnull(&rtp->rtcp->them) || rtp->rtcp->schedid < 0) {
+		/*
+		 * RTCP was stopped.
+		 */
+		return;
+	}
+
+	rtcpheader = bdata;
+
+	ao2_lock(instance);
+	/*
+	rtcp_report = ast_rtp_rtcp_report_alloc(rtp->themssrc_valid ? 1 : 0);
+	res = ast_rtcp_generate_compound_prefix(instance, rtcpheader, rtcp_report, &sr);
+
+	if (res == 0 || res == 1) {
+		ao2_unlock(instance);
+		return;
+	}
+
+	packet_len += res;
+	*/
+
+	/*
+	   0                   1                   2                   3
+	   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+	  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	  |V=2|P|   FMT   |       PT      |          length               | 0
+	  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ 
+	  |                  SSRC of packet sender                        | 1/4
+	  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	  |             SSRC of media source (unused) = 0                 | 2/8
+	  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	*/
+	put_unaligned_uint32(rtcpheader + packet_len +  0, htonl((2 << 30) | (feedback->fmt << 24) | (RTCP_PT_RTPFB << 16) | ((tmmb_len / 4) - 1)));
+	put_unaligned_uint32(rtcpheader + packet_len +  4, htonl(rtp->ssrc));
+	//put_unaligned_uint32(rtcpheader + packet_len +  8, htonl(rtp->themssrc));
+	put_unaligned_uint32(rtcpheader + packet_len +  8, 0);
+
+    /* Feedback Control Information (FCI)
+	   0                   1                   2                   3
+	   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+	  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	  |                          SSRC feedback                        | 3/12
+	  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	  | MxTBR Exp |      MxTBR Mantissa             |Measured Overhead| 4/16
+	  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+	*/
+	put_unaligned_uint32(rtcpheader + packet_len + 12, htonl(rtp->themssrc));
+	put_unaligned_uint32(rtcpheader + packet_len + 16, htonl((feedback->tmmb.br_exp << 26) | (feedback->tmmb.br_mantissa << 9) | 0));
+
+	res = rtcp_sendto(instance, (unsigned int *)rtcpheader, packet_len + tmmb_len, 0, rtp->bundled ? remote_address : &rtp->rtcp->them, &ice);
+	if (res < 0) {
+		ast_log(LOG_ERROR, "RTCP RTP-FB TMMB%c transmission error: %s\n", feedback->fmt != AST_RTP_RTCP_FMT_TMMBN ? 'N' : 'R', strerror(errno));
+	} else {
+	}
+
+	ao2_unlock(instance);
+}
+
 /*! \pre instance is locked */
 static int ast_rtp_write(struct ast_rtp_instance *instance, struct ast_frame *frame)
 {
@@ -5493,11 +5592,19 @@ static int ast_rtp_write(struct ast_rtp_instance *instance, struct ast_frame *fr
 		return 0;
 	} else if (frame->frametype == AST_FRAME_RTCP) {
 		struct ast_rtp_rtcp_feedback *feedback = frame->data.ptr;
+
 		uint32_t bitrate = (uint32_t)(feedback->remb.br_mantissa * (1 << feedback->remb.br_exp));
 
 		if (frame->subclass.integer == RTCP_PT_PSFB) {
 			rtp_write_rtcp_psfb(instance, rtp, frame, &remote_address);
 			ast_log(LOG_WARNING, "Sent an RTCP PS-FB/REMB (Payload-specific Feedback) %s bitrate=%u\n"
+				, ast_sockaddr_stringify(&remote_address)
+				, bitrate
+				);
+		} else if (frame->subclass.integer == RTCP_PT_RTPFB) {
+			rtp_write_rtcp_rtpfb(instance, rtp, frame, &remote_address);
+			ast_log(LOG_WARNING, "Sent an RTCP RTP-FB/TMMB%c (Transport-layer Feedback) %s bitrate=%u\n"
+				, feedback->fmt == AST_RTP_RTCP_FMT_TMMBN ? 'N' : 'R'
 				, ast_sockaddr_stringify(&remote_address)
 				, bitrate
 				);
@@ -6426,6 +6533,10 @@ static const char *rtcp_payload_type2str(unsigned int pt)
 		/* Payload-Specific Feedback */
 		str = "PS-FB";
 		break;
+	case RTCP_PT_RTPFB:
+		/* Transport-Layer Feedback */
+		str = "RTP-FB";
+		break;
 	case RTCP_PT_SDES:
 		str = "Source Description";
 		break;
@@ -6442,9 +6553,15 @@ static const char *rtcp_payload_type2str(unsigned int pt)
 static const char *rtcp_payload_subtype2str(unsigned int pt, unsigned int subtype)
 {
 	switch (pt) {
-	case AST_RTP_RTCP_RTPFB:
+	case RTCP_PT_RTPFB:
 		if (subtype == AST_RTP_RTCP_FMT_NACK) {
 			return "NACK";
+		}
+		if (subtype == AST_RTP_RTCP_FMT_TMMBR) {
+			return "TMMBR";
+		}
+		if (subtype == AST_RTP_RTCP_FMT_TMMBN) {
+			return "TMMBN";
 		}
 		break;
 	case RTCP_PT_PSFB:
@@ -6645,10 +6762,11 @@ static struct ast_frame *ast_rtcp_interpret(struct ast_rtp_instance *instance, s
 	position = 0;
 	first_word = ntohl(rtcpheader[position]);
 	if ((first_word & RTCP_VALID_MASK) != RTCP_VALID_VALUE) {
-		ast_debug_rtcp(2, "(%s) RTCP %p -- from %s: Failed first packet validity check\n",
+		ast_debug_rtcp(2, "(%s) RTCP %p -- from %s: Failed first packet validity check, payload %d\n",
 			ast_rtp_instance_get_channel_id(instance),
-			transport_rtp, ast_sockaddr_stringify(addr));
-		return &ast_null_frame;
+			transport_rtp, ast_sockaddr_stringify(addr),
+			((first_word >> RTCP_PAYLOAD_TYPE_SHIFT) & RTCP_PAYLOAD_TYPE_MASK));
+		//return &ast_null_frame;
 	}
 	do {
 		position += ((first_word >> RTCP_LENGTH_SHIFT) & RTCP_LENGTH_MASK) + 1;
@@ -6720,10 +6838,16 @@ static struct ast_frame *ast_rtcp_interpret(struct ast_rtp_instance *instance, s
 			break;
 		case RTCP_PT_FUR:
 			break;
-		case AST_RTP_RTCP_RTPFB:
+		case RTCP_PT_RTPFB:
 			switch (rc) {
 			case AST_RTP_RTCP_FMT_NACK:
 				min_length += RTCP_FB_NACK_BLOCK_WORD_LENGTH;
+				break;
+			case AST_RTP_RTCP_FMT_TMMBR:
+				min_length += RTCP_FB_TMMB_BLOCK_WORD_LENGTH; // by SSRC
+				break;
+			case AST_RTP_RTCP_FMT_TMMBN:
+				min_length += RTCP_FB_TMMB_BLOCK_WORD_LENGTH;
 				break;
 			default:
 				break;
@@ -6784,6 +6908,9 @@ static struct ast_frame *ast_rtcp_interpret(struct ast_rtp_instance *instance, s
 		case RTCP_PT_FUR:
 		case RTCP_PT_PSFB:
 			ssrc = ntohl(rtcpheader[i + 1]);
+			break;
+		case RTCP_PT_RTPFB:
+			ssrc = ntohl(rtcpheader[i + 2]);
 			break;
 		case RTCP_PT_SDES:
 		case RTCP_PT_BYE:
@@ -7007,7 +7134,7 @@ static struct ast_frame *ast_rtcp_interpret(struct ast_rtp_instance *instance, s
 			transport_rtp->f.stream_num = rtp->stream_num;
 			f = &transport_rtp->f;
 			break;
-		case AST_RTP_RTCP_RTPFB:
+		case RTCP_PT_RTPFB:
 			switch (rc) {
 			case AST_RTP_RTCP_FMT_NACK:
 				/* If retransmissions are not enabled ignore this message */
@@ -7034,6 +7161,85 @@ static struct ast_frame *ast_rtcp_interpret(struct ast_rtp_instance *instance, s
 					transport_rtp->f.src = "RTP";
 					f = &transport_rtp->f;
 				}
+				break;
+			case AST_RTP_RTCP_FMT_TMMBR:
+				transport_rtp->f.frametype = AST_FRAME_RTCP;
+				transport_rtp->f.stream_num = rtp->stream_num;
+				transport_rtp->f.data.ptr = rtp->rtcp->frame_buf + AST_FRIENDLY_OFFSET;
+				feedback = transport_rtp->f.data.ptr;
+
+				// We don't actually care about the SSRC information in the feedback message.
+				/* Feedback Control Information (FCI)
+				   0                   1                   2                   3
+				   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+				  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+				  |V=2|P| FMT=3   |   PT=205      |             length            | 0
+				  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+				  |                  SSRC of packet sender                        | 1/4
+				  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+				  |                SSRC of media source (unused) = 0              | 2/8
+				  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+				  |              SSRC feedback = SSRC of media source             | 3/12
+				  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+				  | MxTBR Exp |         MxTBR Mantissa          |Measured Overhead| 4/20
+				  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+				 */
+				first_word = ntohl(rtcpheader[i + 2]); // 2 + 2
+				feedback->tmmb.br_exp = (first_word >> 26) & ((1 << 6) - 1);
+				feedback->tmmb.br_mantissa = (first_word >> 9) & ((1 << 17) - 1);
+
+				uint32_t bitrate = (uint32_t)(feedback->tmmb.br_mantissa * (1 << feedback->tmmb.br_exp));
+				ast_debug_rtcp(1, "Received an RTCP RTP-FB/TMMBR Request %s bitrate=%u, ssrc=0x%08X\n"
+					, ast_sockaddr_stringify(addr)
+					, bitrate
+					, ntohl(rtcpheader[i + 1])
+					);
+				/*
+				if (rtcp_debug_test_addr(addr)) {
+					ast_verbose("Received generic RTCP TMMBR message\n");
+				}
+				*/
+
+				transport_rtp->f.datalen = sizeof(struct ast_rtp_rtcp_feedback);
+				transport_rtp->f.offset = AST_FRIENDLY_OFFSET;
+				transport_rtp->f.samples = 0;
+				transport_rtp->f.mallocd = 0;
+				transport_rtp->f.delivery.tv_sec = 0;
+				transport_rtp->f.delivery.tv_usec = 0;
+				transport_rtp->f.src = "RTP";
+				f = &transport_rtp->f;
+
+				//transport_rtp->f.subclass.integer = pt;
+				//feedback->fmt = rc;
+
+				transport_rtp->f.subclass.integer = RTCP_PT_RTPFB;
+				feedback->fmt = AST_RTP_RTCP_FMT_TMMBN;
+				rtp_write_rtcp_rtpfb(instance, rtp, f, addr);
+				ast_log(LOG_WARNING, "Sent an RTCP RTP-FB/TMMBN (Transport-layer Feedback) %s\n", ast_sockaddr_stringify(addr));
+
+				//transport_rtp->f.subclass.integer = RTCP_PT_PSFB;
+				//feedback->fmt = AST_RTP_RTCP_FMT_REMB;
+				feedback->fmt = AST_RTP_RTCP_FMT_TMMBR;
+				break;
+			case AST_RTP_RTCP_FMT_TMMBN:
+
+				transport_rtp->f.data.ptr = rtp->rtcp->frame_buf + AST_FRIENDLY_OFFSET;
+				feedback = transport_rtp->f.data.ptr;
+
+				// We don't actually care about the SSRC information in the feedback message.
+				first_word = ntohl(rtcpheader[i + 2]);
+				feedback->tmmb.br_exp = (first_word >> 26) & ((1 << 6) - 1);
+				feedback->tmmb.br_mantissa = (first_word >> 9) & ((1 << 17) - 1);
+
+				ast_debug_rtcp(1, "Received an RTCP RTP-FB/TMMBN Request %s bitrate=%u\n"
+					, ast_sockaddr_stringify(addr)
+					, (uint32_t)(feedback->tmmb.br_mantissa * (1 << feedback->tmmb.br_exp))
+					);
+				/*
+				if (rtcp_debug_test_addr(addr)) {
+					ast_verbose("Received generic RTCP TMMBN message\n");
+				}
+				*/
 				break;
 			default:
 				ast_debug_rtcp(1, "Received an RTCP RTP-FB/%d Request\n", rc);
@@ -7633,7 +7839,7 @@ static int rtp_transport_wide_cc_feedback_produce(const void *data)
 
 	/* Add the general RTCP header information */
 	put_unaligned_uint32(rtcpheader, htonl((2 << 30) | (AST_RTP_RTCP_FMT_TRANSPORT_WIDE_CC << 24)
-		| (AST_RTP_RTCP_RTPFB << 16) | ((packet_len / 4) - 1)));
+		| (RTCP_PT_RTPFB << 16) | ((packet_len / 4) - 1)));
 	put_unaligned_uint32(rtcpheader + 4, htonl(rtp->ssrc));
 	put_unaligned_uint32(rtcpheader + 8, htonl(rtp->themssrc));
 
@@ -7872,8 +8078,9 @@ static struct ast_frame *ast_rtp_interpret(struct ast_rtp_instance *instance, st
 			f = ast_frisolate(&srcupdate);
 			AST_LIST_INSERT_TAIL(&frames, f, frame_list);
 
-			// Only to be processed on video media.
-			rtp->timestamp_offset = (rtp->lastividtimestamp - timestamp) + (90 * 1000 / 25); // + 40 millisecondes sur la video.
+			if (ast_format_get_type(rtp->f.subclass.format) == AST_MEDIA_TYPE_VIDEO) {
+				rtp->timestamp_offset = (rtp->lastividtimestamp - timestamp) + (90 * 1000 / 25); // + 40 millisecondes sur la video.
+			}
 
 			rtp->seedrxseqno = 0;
 			rtp->rxcount = 0;
