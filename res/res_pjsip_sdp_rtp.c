@@ -2158,7 +2158,7 @@ static int create_outgoing_sdp_stream(struct ast_sip_session *session, struct as
 	}
 
 	/* Add non-codec formats */
-	if (ast_sip_session_is_pending_stream_default(session, stream) && media_type != AST_MEDIA_TYPE_VIDEO
+	if (ast_sip_session_is_pending_stream_default(session, stream) && media_type == AST_MEDIA_TYPE_AUDIO
 		&& media->desc.fmt_count < PJMEDIA_MAX_SDP_FMT) {
 		for (index = 1LL; index <= AST_RTP_MAX; index <<= 1) {
 			if (!(noncodec & index)) {
@@ -2475,7 +2475,7 @@ static int apply_negotiated_sdp_stream(struct ast_sip_session *session,
 	session_media->encryption = session->endpoint->media.rtp.encryption;
 
 	if (session->endpoint->media.rtp.keepalive > 0 &&
-		(session_media->type == AST_MEDIA_TYPE_AUDIO ||
+		(session_media->type == AST_MEDIA_TYPE_AUDIO || session_media->type == AST_MEDIA_TYPE_TEXT ||
 			session_media->type == AST_MEDIA_TYPE_VIDEO)) {
 		ast_rtp_instance_set_keepalive(session_media->rtp, session->endpoint->media.rtp.keepalive);
 		/* Schedule the initial keepalive early in case this is being used to punch holes through
