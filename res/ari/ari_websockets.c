@@ -553,19 +553,30 @@ static void session_reset(struct ari_ws_session *session)
  * This unlinks the ari_ws_session from the registry and cleans up the
  * decrements the reference count.
  */
-static void session_cleanup(struct ari_ws_session *session)
+static void session_cleanup(void *obj)
 {
+	struct ari_ws_session *session = obj;
+	enum ast_websocket_type wstype;
+
 	if (!session) {
 		return;
 	}
-	ast_debug(3, "%s: Cleaning up ARI websocket session RC: %d\n",
-		session->session_id, (int)ao2_ref(session, 0));
+
+	/*
+	 * We need to save the websocket type because client-per-call websockets
+	 * will get destroyed when they're unlinked from the session_registry
+	 * so we won't be able to test it afterwards.
+	 */
+	wstype = session->type;
+
+	ast_debug(3, "%s: Cleaning up ARI %s websocket session. Refcount: %d\n",
+		session->session_id, ast_websocket_type_to_str(wstype), (int)ao2_ref(session, 0));
 
 	session_reset(session);
 
 	if (session_registry) {
-		ast_debug(3, "%s: Unlinking websocket session from registry RC: %d\n",
-			session->session_id, (int)ao2_ref(session, 0));
+		ast_debug(3, "%s: Unlinking %s websocket session from registry Refcount: %d\n",
+			session->session_id, ast_websocket_type_to_str(wstype), (int)ao2_ref(session, 0));
 		ao2_unlink(session_registry, session);
 	}
 
@@ -574,7 +585,7 @@ static void session_cleanup(struct ari_ws_session *session)
 	 * was held by the registry container so we don't need
 	 * to unref it here.
 	 */
-	if (session->type != AST_WS_TYPE_CLIENT_PER_CALL_CONFIG) {
+	if (wstype != AST_WS_TYPE_CLIENT_PER_CALL_CONFIG) {
 		session_unref(session);
 	}
 }
@@ -722,7 +733,7 @@ static int session_update(struct ari_ws_session *ari_ws_session,
 			general->write_timeout);
 	}
 
-	ao2_ref(ast_ws_session, +1);
+	ast_websocket_ref(ast_ws_session);
 	ari_ws_session->ast_ws_session = ast_ws_session;
 	ao2_lock(ari_ws_session);
 	for (i = 0; i < AST_VECTOR_SIZE(&ari_ws_session->message_queue); i++) {
@@ -842,6 +853,7 @@ static void websocket_established_cb(struct ast_websocket *ast_ws_session,
 			upgrade_headers, ari_ws_session->app_name, msg);
 		ast_json_unref(msg);
 	}
+	ast_websocket_close(ast_ws_session, AST_WEBSOCKET_STATUS_GOING_AWAY);
 	ari_ws_session->connected = 0;
 
 	SCOPE_EXIT("%s: Websocket closed\n", remote_addr);
@@ -877,7 +889,11 @@ static int session_shutdown_cb(void *obj, void *arg, int flags)
 	session->closing = 1;
 	session_cleanup(session);
 	if (session->ast_ws_session) {
+		ast_debug(3, "%s: Closing websocket\n", session->session_id);
 		ast_websocket_close(session->ast_ws_session, 1000);
+	} else if (session->thread) {
+		ast_debug(3, "%s: Cancelling handler thread\n", session->session_id);
+		pthread_cancel(session->thread);
 	}
 
 	return 0;
@@ -928,8 +944,14 @@ static struct ari_ws_session *session_find_by_app(const char *app_name,
  */
 static void *outbound_session_handler_thread(void *obj)
 {
-	RAII_VAR(struct ari_ws_session *, session, obj, session_cleanup);
+	struct ari_ws_session *session = obj;
 	int already_sent_registers = 1;
+
+	/*
+	 * We use pthread_cleanup_push because RAII destructors don't run
+	 * if we cancel the thread.
+	 */
+	pthread_cleanup_push(session_cleanup, obj);
 
 	ast_debug(3, "%s: Starting outbound websocket thread RC: %d\n",
 		session->session_id, (int)ao2_ref(session, 0));
@@ -964,6 +986,13 @@ static void *outbound_session_handler_thread(void *obj)
 
 				break;
 			}
+
+			if (session->closing) {
+				ast_debug(3, "%s: Websocket closing RC: %d\n",
+					session->session_id, (int)ao2_ref(session, 0));
+				break;
+			}
+
 			usleep(session->owc->websocket_client->reconnect_interval * 1000);
 			continue;
 		}
@@ -975,6 +1004,8 @@ static void *outbound_session_handler_thread(void *obj)
 		 * We only want to send "ApplicationRegistered" events in the
 		 * case of a reconnect.  The initial connection will have already sent
 		 * the events when outbound_register_apps() was called.
+		 *
+		 * Note: session_update() bumps astws.
 		 */
 		session_update(session, astws, !already_sent_registers);
 		already_sent_registers = 0;
@@ -992,8 +1023,12 @@ static void *outbound_session_handler_thread(void *obj)
 		if (!upgrade_headers) {
 			ast_log(LOG_WARNING, "%s: Failed to create upgrade header\n", session->session_id);
 			session->thread = 0;
+			session->connected = 0;
 			ast_websocket_close(astws, 1000);
-			return NULL;
+			/* Clean up the reference held by session_update() */
+			ast_websocket_unref(astws);
+			session->ast_ws_session = NULL;
+			break;
 		}
 
 		session->connected = 1;
@@ -1012,6 +1047,8 @@ static void *outbound_session_handler_thread(void *obj)
 		}
 
 		session->connected = 0;
+		ast_websocket_close(session->ast_ws_session, AST_WEBSOCKET_STATUS_GOING_AWAY);
+		/* Clean up the reference held by session_update() */
 		ast_websocket_unref(session->ast_ws_session);
 		session->ast_ws_session = NULL;
 		if (session->closing) {
@@ -1027,6 +1064,8 @@ static void *outbound_session_handler_thread(void *obj)
 	ast_debug(3, "%s: Stopping outbound websocket thread RC: %d\n",
 		session->session_id, (int)ao2_ref(session, 0));
 	session->thread = 0;
+
+	pthread_cleanup_pop(1);
 
 	return NULL;
 }
@@ -1451,7 +1490,11 @@ static void outbound_sessions_load(const char *name)
 				session->closing = 1;
 				session_cleanup(session);
 				if (session->ast_ws_session) {
+					ast_debug(3, "%s: Closing websocket\n", session->session_id);
 					ast_websocket_close(session->ast_ws_session, 1000);
+				} else if (session->thread) {
+					ast_debug(3, "%s: Cancelling handler thread\n", session->session_id);
+					pthread_cancel(session->thread);
 				}
 
 				if (session->type == AST_WS_TYPE_CLIENT_PERSISTENT) {

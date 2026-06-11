@@ -2749,7 +2749,8 @@ void ast_channel_inherit_variables(const struct ast_channel *parent, struct ast_
  * \param chan the channel
  * \param vars a linked list of variables
  *
- * \pre chan is locked
+ * \warning The channel must not be locked if there's a possibility that
+ * a dialplan function would be invoked.
  *
  * \details
  * Variable names can be for a regular channel variable or a dialplan function
@@ -4413,6 +4414,12 @@ int ast_channel_fd_count(const struct ast_channel *chan);
  */
 int ast_channel_fd_add(struct ast_channel *chan, int value);
 
+/* ARI reportable variables accessors */
+size_t ast_channel_internal_ari_reportable_vars_count(const struct ast_channel *chan);
+char *ast_channel_internal_ari_reportable_vars_get(const struct ast_channel *chan, size_t index);
+int ast_channel_internal_ari_reportable_vars_append(struct ast_channel *chan, char *key);
+char *ast_channel_internal_ari_reportable_vars_remove(struct ast_channel *chan, size_t index);
+
 pthread_t ast_channel_blocker(const struct ast_channel *chan);
 void ast_channel_blocker_set(struct ast_channel *chan, pthread_t value);
 
@@ -4447,6 +4454,26 @@ void ast_channel_internal_bridged_channel_set(struct ast_channel *chan, struct a
  * \retval Pointer to an ast_str object containing the desired information which must be freed
  */
 struct ast_str *ast_channel_dialed_causes_channels(const struct ast_channel *chan);
+
+/*!
+ * \since 20.19.0
+ * \since 22.9.0
+ * \since 23.3.0
+ * \brief Retrieve an iterator for dialed cause information
+ *
+ * \details
+ * Each call to ao2_iterator_next() will return a pointer to an ast_control_pvt_cause_code
+ * structure containing the dialed cause information for one channel.  One of the entries
+ * may be for the channel itself if the channel was hung up because of a non-2XX SIP
+ * response code. The rest of the entries will be for channels bridged to the channel for
+ * which dialed cause information is being retrieved.  The caller is responsible for
+ * cleaning up the reference count of each entry returned and destroying the returned
+ * iterator with ao2_iterator_destroy() when it is finished with it.
+ *
+ * \param chan The channel from which to retrieve cause information
+ * \retval ao2_iterator
+ */
+struct ao2_iterator ast_channel_dialed_causes_iterator(const struct ast_channel *chan);
 
 /*!
  * \since 11
@@ -4581,6 +4608,20 @@ void ast_channel_set_ari_vars(size_t varc, char **vars);
  * \retval NULL on error
  */
 struct varshead *ast_channel_get_ari_vars(struct ast_channel *chan);
+
+/*!
+ * \since 20.20.0
+ * \since 22.10.0
+ * \since 23.4.0
+ * \brief Set whether a channel variable should be included in REST events on the channel.
+ *
+ * \param chan Channel to update.
+ * \param variable Variable name or dialplan function expression.
+ * \param report_events Non-zero to include in REST events, zero to omit.
+ * \retval 0 on success
+ * \retval -1 on failure
+ */
+int ast_channel_set_ari_var_reportable(struct ast_channel *chan, const char *variable, int report_events);
 
 /*!
  * \since 12

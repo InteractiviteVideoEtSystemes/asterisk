@@ -223,6 +223,9 @@
 				<parameter name="ExternalSignalingPort">
 					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='transport']/configOption[@name='external_signaling_port']/synopsis/node())"/></para>
 				</parameter>
+				<parameter name="ExternalSignalingHostname">
+					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='transport']/configOption[@name='external_signaling_hostname']/synopsis/node())"/></para>
+				</parameter>
 				<parameter name="ExternalMediaAddress">
 					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='transport']/configOption[@name='external_media_address']/synopsis/node())"/></para>
 				</parameter>
@@ -676,6 +679,12 @@
 				</parameter>
 				<parameter name="RtpTimeoutHold">
 					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='endpoint']/configOption[@name='rtp_timeout_hold']/synopsis/node())"/></para>
+				</parameter>
+				<parameter name="RtpPortStart">
+					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='endpoint']/configOption[@name='rtp_port_start']/synopsis/node())"/></para>
+				</parameter>
+				<parameter name="RtpPortEnd">
+					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='endpoint']/configOption[@name='rtp_port_end']/synopsis/node())"/></para>
 				</parameter>
 				<parameter name="SecurityNegotiation">
 					<para><xi:include xpointer="xpointer(/docs/configInfo[@name='res_pjsip']/configFile[@name='pjsip.conf']/configObject[@name='endpoint']/configOption[@name='security_negotiation']/synopsis/node())"/></para>

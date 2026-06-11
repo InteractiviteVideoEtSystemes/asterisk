@@ -1064,6 +1064,35 @@ int ast_channel_fd_count(const struct ast_channel *chan)
 	return AST_VECTOR_SIZE(&chan->fds);
 }
 
+size_t ast_channel_internal_ari_reportable_vars_count(const struct ast_channel *chan)
+{
+	return AST_VECTOR_SIZE(&chan->ari_report_vars);
+}
+
+char *ast_channel_internal_ari_reportable_vars_get(
+	const struct ast_channel *chan, size_t index)
+{
+	return index < AST_VECTOR_SIZE(&chan->ari_report_vars)
+		? AST_VECTOR_GET(&chan->ari_report_vars, index)
+		: NULL;
+}
+
+int ast_channel_internal_ari_reportable_vars_append(struct ast_channel *chan,
+	char *key)
+{
+	return AST_VECTOR_APPEND(&chan->ari_report_vars, key);
+}
+
+char *ast_channel_internal_ari_reportable_vars_remove(
+	struct ast_channel *chan, size_t index)
+{
+	if (index >= AST_VECTOR_SIZE(&chan->ari_report_vars)) {
+		return NULL;
+	}
+
+	return AST_VECTOR_REMOVE(&chan->ari_report_vars, index, 0);
+}
+
 int ast_channel_fd_add(struct ast_channel *chan, int value)
 {
 	int pos = AST_EXTENDED_FDS;
@@ -1137,6 +1166,11 @@ static int collect_names_cb(void *obj, void *arg, int flags)
 	ast_str_append(str, 0, "%s%s", (ast_str_strlen(*str) ? "," : ""), cause_code->chan_name);
 
 	return 0;
+}
+
+struct ao2_iterator ast_channel_dialed_causes_iterator(const struct ast_channel *chan)
+{
+	return ao2_iterator_init(chan->dialed_causes, 0);
 }
 
 struct ast_str *ast_channel_dialed_causes_channels(const struct ast_channel *chan)
@@ -1264,6 +1298,7 @@ struct ast_channel *__ast_channel_internal_alloc_with_initializers(void (*destru
 	}
 
 	AST_VECTOR_INIT(&tmp->fds, AST_MAX_FDS);
+	AST_VECTOR_INIT(&tmp->ari_report_vars, 8);
 
 	/* Force all channel snapshot segments to be created on first use, so we don't have to check if
 	 * an old snapshot exists.
@@ -1397,6 +1432,8 @@ void ast_channel_internal_cleanup(struct ast_channel *chan)
 
 	ast_channel_internal_set_stream_topology(chan, NULL);
 
+	AST_VECTOR_RESET(&chan->ari_report_vars, ast_free);
+	AST_VECTOR_FREE(&chan->ari_report_vars);
 	AST_VECTOR_FREE(&chan->fds);
 }
 

@@ -714,6 +714,13 @@ static void remove_bridge_playback(char *bridge_id)
 	ast_free(bridge_id);
 }
 
+void stasis_app_bridge_playback_channel_control_remove(const char *bridge_id,
+	struct stasis_app_control *control)
+{
+	ast_assert(!ast_strlen_zero(bridge_id));
+	ao2_unlink(app_controls, control);
+}
+
 static void playback_after_bridge_cb_failed(enum ast_bridge_after_cb_reason reason, void *data)
 {
 	char *bridge_id = data;
@@ -777,7 +784,7 @@ void stasis_app_bridge_playback_channel_remove(char *bridge_id,
 		 * called or is in progress. No need to unlink the control here since that has
 		 * been done or is about to be done in the after bridge callback
 		 */
-		ao2_unlink(app_controls, control);
+		stasis_app_bridge_playback_channel_control_remove(bridge_id, control);
 		ao2_ref(wrapper, -1);
 	}
 }
@@ -911,6 +918,26 @@ void stasis_app_bridge_destroy(const char *bridge_id)
 	ast_debug(1, "Bridge " BRIDGE_PRINTF_SPEC ": unlinked from app_bridges.  current refcount: %d\n",
 		BRIDGE_PRINTF_VARS(bridge), ao2_ref(bridge, 0));
 	ast_bridge_destroy(bridge, 0);
+}
+
+int stasis_app_bridge_set_var_reportable(const char *bridge_id, const char *variable,
+	const char *value, int report_events)
+{
+	RAII_VAR(struct ast_bridge *, bridge, stasis_app_bridge_find_by_id(bridge_id), ao2_cleanup);
+
+	if (!bridge) {
+		return -1;
+	}
+
+	ast_bridge_lock(bridge);
+	if (ast_bridge_set_variable(bridge, variable, value, report_events)) {
+		ast_bridge_unlock(bridge);
+		return -1;
+	}
+	ast_bridge_publish_state(bridge);
+	ast_bridge_unlock(bridge);
+
+	return 0;
 }
 
 struct replace_channel_store {

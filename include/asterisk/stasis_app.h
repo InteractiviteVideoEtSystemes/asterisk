@@ -637,6 +637,19 @@ int stasis_app_control_answer(struct stasis_app_control *control);
 int stasis_app_control_set_channel_var(struct stasis_app_control *control, const char *variable, const char *value);
 
 /*!
+ * \brief Set a variable on the channel associated with this control to value with option of including in events.
+ * \param control Control for \c res_stasis.
+ * \param variable The name of the variable
+ * \param value The value to set the variable to
+ * \param report_events Whether to include this variable in channel events.
+ *
+ * \return 0 for success.
+ * \return -1 for error.
+ */
+int stasis_app_control_set_channel_var_reportable(struct stasis_app_control *control, const char *variable, const char *value, int report_events);
+
+
+/*!
  * \brief Place the channel associated with the control on hold.
  * \param control Control for \c res_stasis.
  */
@@ -796,6 +809,15 @@ int stasis_app_bridge_playback_channel_add(struct ast_bridge *bridge,
 	struct stasis_app_control *control);
 
 /*!
+ * \brief Remove a bridge playback channel's control from the app controls list.
+ *
+ * \param bridge_id The unique ID of the bridge the playback channel is in.
+ * \param control The app control structure for the playback channel
+ */
+void stasis_app_bridge_playback_channel_control_remove(const char *bridge_id,
+	struct stasis_app_control *control);
+
+/*!
  * \brief remove channel from list of ARI playback channels for bridges.
  *
  * \param bridge_id The unique ID of the bridge the playback channel is in.
@@ -901,6 +923,20 @@ struct ast_bridge *stasis_app_get_bridge(struct stasis_app_control *control);
  * \param bridge_id Uniqueid of bridge to be destroyed
  */
 void stasis_app_bridge_destroy(const char *bridge_id);
+
+/*!
+ * \brief Set or clear a variable on a bridge and control ARI event reporting for it.
+ *
+ * \param bridge_id Uniqueid of bridge
+ * \param variable Variable name
+ * \param value Variable value (NULL/empty clears)
+ * \param report_events Non-zero to include in ARI bridge events
+ *
+ * \retval 0 on success
+ * \retval -1 on failure
+ */
+int stasis_app_bridge_set_var_reportable(const char *bridge_id, const char *variable,
+	const char *value, int report_events);
 
 /*!
  * \brief Get the Stasis message sanitizer for app_stasis applications

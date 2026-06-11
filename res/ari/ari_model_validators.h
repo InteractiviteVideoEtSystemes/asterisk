@@ -328,6 +328,22 @@ int ast_ari_validate_variable(struct ast_json *json);
 ari_validator ast_ari_validate_variable_fn(void);
 
 /*!
+ * \brief Validator for Variables.
+ *
+ * A dictionary of channel variables
+ *
+ * \param json JSON object to validate.
+ * \retval True (non-zero) if valid.
+ * \retval False (zero) if invalid.
+ */
+int ast_ari_validate_variables(struct ast_json *json);
+
+/*!
+ * \brief Function pointer to ast_ari_validate_variables().
+ */
+ari_validator ast_ari_validate_variables_fn(void);
+
+/*!
  * \brief Validator for Endpoint.
  *
  * An external device that may offer/accept calls to/from Asterisk.
@@ -748,6 +764,38 @@ int ast_ari_validate_bridge_video_source_changed(struct ast_json *json);
  * \brief Function pointer to ast_ari_validate_bridge_video_source_changed().
  */
 ari_validator ast_ari_validate_bridge_video_source_changed_fn(void);
+
+/*!
+ * \brief Validator for CallBroadcast.
+ *
+ * Notification that a channel is being broadcast to ARI applications for claiming.
+ *
+ * \param json JSON object to validate.
+ * \retval True (non-zero) if valid.
+ * \retval False (zero) if invalid.
+ */
+int ast_ari_validate_call_broadcast(struct ast_json *json);
+
+/*!
+ * \brief Function pointer to ast_ari_validate_call_broadcast().
+ */
+ari_validator ast_ari_validate_call_broadcast_fn(void);
+
+/*!
+ * \brief Validator for CallClaimed.
+ *
+ * Notification that a broadcast channel has been successfully claimed by an ARI application.
+ *
+ * \param json JSON object to validate.
+ * \retval True (non-zero) if valid.
+ * \retval False (zero) if invalid.
+ */
+int ast_ari_validate_call_claimed(struct ast_json *json);
+
+/*!
+ * \brief Function pointer to ast_ari_validate_call_claimed().
+ */
+ari_validator ast_ari_validate_call_claimed_fn(void);
 
 /*!
  * \brief Validator for ChannelCallerId.
@@ -1522,6 +1570,8 @@ ari_validator ast_ari_validate_application_fn(void);
  * - version: string (required)
  * Variable
  * - value: string (required)
+ * Variables
+ * - variables: object (required)
  * Endpoint
  * - channel_ids: List[string] (required)
  * - resource: string (required)
@@ -1592,6 +1642,7 @@ ari_validator ast_ari_validate_application_fn(void);
  * Bridge
  * - bridge_class: string (required)
  * - bridge_type: string (required)
+ * - bridgevars: object
  * - channels: List[string] (required)
  * - creationtime: Date (required)
  * - creator: string (required)
@@ -1719,6 +1770,21 @@ ari_validator ast_ari_validate_application_fn(void);
  * - timestamp: Date (required)
  * - bridge: Bridge (required)
  * - old_video_source_id: string
+ * CallBroadcast
+ * - asterisk_id: string
+ * - type: string (required)
+ * - application: string (required)
+ * - timestamp: Date (required)
+ * - called: string
+ * - caller: string
+ * - channel: Channel (required)
+ * CallClaimed
+ * - asterisk_id: string
+ * - type: string (required)
+ * - application: string (required)
+ * - timestamp: Date (required)
+ * - channel: Channel (required)
+ * - winner_app: string (required)
  * ChannelCallerId
  * - asterisk_id: string
  * - type: string (required)

@@ -762,6 +762,10 @@
 						<version>12.0.0</version>
 					</since>
 					<synopsis>Full SIP URI of the outbound proxy used to send requests</synopsis>
+					<description><para>
+						Proxy through which to send requests, a full SIP URI must be provided (default: "").
+						Consider adding \;lr for loose routing (to keep user@domain in the request URI).
+					</para></description>
 				</configOption>
 				<configOption name="rewrite_contact">
 					<since>
@@ -1659,6 +1663,35 @@
 						channel is hung up. By default this option is set to 0, which means do not check.
 					</para></description>
 				</configOption>
+				<configOption name="rtp_port_start" default="0">
+					<since>
+						<version>20.20.0</version>
+						<version>22.10.0</version>
+						<version>23.4.0</version>
+					</since>
+					<synopsis>Per-endpoint starting RTP port number.</synopsis>
+					<description><para>
+						Defines the starting port number for a dedicated per-endpoint RTP port
+						range, overriding the global rtp.conf setting. Must be used together
+						with <literal>rtp_port_end</literal>. When set to 0, the global
+						rtp.conf range is used. The value must be between 1024 and 65535.
+					</para></description>
+				</configOption>
+				<configOption name="rtp_port_end" default="0">
+					<since>
+						<version>20.20.0</version>
+						<version>22.10.0</version>
+						<version>23.4.0</version>
+					</since>
+					<synopsis>Per-endpoint ending RTP port number.</synopsis>
+					<description><para>
+						Defines the ending port number for a dedicated per-endpoint RTP port
+						range, overriding the global rtp.conf setting. Must be used together
+						with <literal>rtp_port_start</literal>. When set to 0, the global
+						rtp.conf range is used. The value must be greater than
+						<literal>rtp_port_start</literal> and between 1024 and 65535.
+					</para></description>
+				</configOption>
 				<configOption name="acl">
 					<since>
 						<version>13.10.0</version>
@@ -2414,6 +2447,25 @@
 						<version>12.0.0</version>
 					</since>
 					<synopsis>External port for SIP signalling</synopsis>
+				</configOption>
+				<configOption name="external_signaling_hostname">
+					<since>
+						<version>20.21.0</version>
+						<version>22.11.0</version>
+						<version>23.5.0</version>
+					</since>
+					<synopsis>Value to use in SIP Contact and Via headers as hostname</synopsis>
+					<description><para>
+						When set, this value is used in the SIP Contact and Via
+						headers of outgoing messages instead of the automatically
+						determined IP address. This is useful when a remote SIP
+						endpoint requires a fully qualified domain name in these
+						headers rather than an IP address. No validation is performed
+						on the provided value. This option is mutually exclusive with
+    					<literal>external_signaling_address</literal> and both cannot
+    					be set simultaneously. If not set, existing behavior using
+						<literal>external_signaling_address</literal> is preserved.
+					</para></description>
 				</configOption>
 				<configOption name="method">
 					<since>

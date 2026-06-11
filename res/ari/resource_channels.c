@@ -931,6 +931,9 @@ void ast_ari_channels_hangup(struct ast_variable *headers,
 {
 	RAII_VAR(struct ast_channel *, chan, NULL, ao2_cleanup);
 	int cause;
+	struct ast_rtp_glue *glue;
+	struct ast_rtp_instance *rtp = NULL;
+	const struct ast_channel_tech *tech;
 
 	chan = ast_channel_get_by_name(args->channel_id);
 	if (chan == NULL) {
@@ -969,6 +972,34 @@ void ast_ari_channels_hangup(struct ast_variable *headers,
 	}
 
 	ast_channel_hangupcause_set(chan, cause);
+
+	/*
+	 * Only hold the channel lock long enough to get the rtp instance.
+	 * glue->get_rtp_info() will bump the refcount on it.
+	 */
+	ast_channel_lock(chan);
+	tech = ast_channel_tech(chan);
+	glue = ast_rtp_instance_get_glue(tech->type);
+	if (glue) {
+		glue->get_rtp_info(chan, &rtp);
+	}
+	ast_channel_unlock(chan);
+	/*
+	 * If this channel is in a bridge, ast_rtp_instance_set_stats_vars() will
+	 * attempt to lock the bridge peer as well as this channel.  This can cause
+	 * a lock inversion if we already have this channel locked and another
+	 * thread tries to set bridge variables on the peer because it will have
+	 * locked the peer first, then this channel.  For this reason, we must
+	 * NOT have the channel locked when we call ast_rtp_instance_set_stats_vars().
+	 * This should be safe since glue->get_rtp_info() will have bumped the
+	 * refcount on the rtp instance so it can't go away while the channel
+	 * is unlocked.
+	 */
+	if (rtp) {
+		ast_rtp_instance_set_stats_vars(chan, rtp);
+		ao2_ref(rtp, -1);
+	}
+
 	ast_softhangup(chan, AST_SOFTHANGUP_EXPLICIT);
 
 	ast_ari_response_no_content(response);
@@ -1091,6 +1122,7 @@ static struct ast_channel *ari_channels_handle_originate_with_id(const char *arg
 	const char *args_caller_id,
 	int args_timeout,
 	struct ast_variable *variables,
+	struct ast_variable *report_event_variables,
 	const char *args_channel_id,
 	const char *args_other_channel_id,
 	const char *args_originator,
@@ -1341,7 +1373,6 @@ static struct ast_channel *ari_channels_handle_originate_with_id(const char *arg
 		ast_channel_set_connected_line(chan, &connected, NULL);
 	}
 
-	ast_channel_lock(chan);
 	if (variables) {
 		ast_set_variables(chan, variables);
 	}
@@ -1360,8 +1391,19 @@ static struct ast_channel *ari_channels_handle_originate_with_id(const char *arg
 		}
 	}
 
+	if (report_event_variables) {
+		struct ast_variable *var;
+
+		for (var = report_event_variables; var; var = var->next) {
+			if (ast_channel_set_ari_var_reportable(chan, var->name, 1)) {
+				ast_ari_response_alloc_failed(response);
+				ast_dial_destroy(dial);
+				ast_free(origination);
+				return NULL;
+			}
+		}
+	}
 	snapshot = ast_channel_snapshot_get_latest(ast_channel_uniqueid(chan));
-	ast_channel_unlock(chan);
 
 	/* Before starting the async dial bump the ref in case the dial quickly goes away and takes
 	 * the reference with it
@@ -1391,24 +1433,94 @@ static struct ast_channel *ari_channels_handle_originate_with_id(const char *arg
  * \retval 0 on success.
  * \retval -1 on error.
  */
-static int json_to_ast_variables(struct ast_ari_response *response, struct ast_json *json_variables, struct ast_variable **variables)
+static int json_to_ast_variables(struct ast_ari_response *response, struct ast_json *json_variables,
+	struct ast_variable **variables, struct ast_variable **report_event_variables)
 {
-	enum ast_json_to_ast_vars_code res;
+	struct ast_json_iter *it_json_var;
+	struct ast_variable *var_tail = NULL;
+	struct ast_variable *report_var_tail = NULL;
 
-	res = ast_json_to_ast_variables(json_variables, variables);
-	switch (res) {
-	case AST_JSON_TO_AST_VARS_CODE_SUCCESS:
-		return 0;
-	case AST_JSON_TO_AST_VARS_CODE_INVALID_TYPE:
-		ast_ari_response_error(response, 400, "Bad Request",
-			"Only string values in the 'variables' object allowed");
-		break;
-	case AST_JSON_TO_AST_VARS_CODE_OOM:
-		ast_ari_response_alloc_failed(response);
-		break;
+	*variables = NULL;
+	*report_event_variables = NULL;
+
+	for (it_json_var = ast_json_object_iter(json_variables); it_json_var;
+		it_json_var = ast_json_object_iter_next(json_variables, it_json_var)) {
+		struct ast_variable *new_var;
+		const char *key = ast_json_object_iter_key(it_json_var);
+		const char *value = NULL;
+		struct ast_json *json_value = ast_json_object_iter_value(it_json_var);
+		int report_events = 0;
+
+		if (ast_strlen_zero(key)) {
+			continue;
+		}
+
+		if (ast_json_typeof(json_value) == AST_JSON_STRING) {
+			value = ast_json_string_get(json_value);
+		} else if (ast_json_typeof(json_value) == AST_JSON_OBJECT) {
+			struct ast_json *value_field = ast_json_object_get(json_value, "value");
+			struct ast_json *report_field = ast_json_object_get(json_value, "report_events");
+			ast_log(LOG_DEBUG, "Processing variable '%s' with report_events: %s\n", key,
+				report_field ? (ast_json_is_true(report_field) ? "true" : "false") : "not set");
+
+			if (!value_field || ast_json_typeof(value_field) != AST_JSON_STRING) {
+				ast_ari_response_error(response, 400, "Bad Request",
+					"Each object value in 'variables' must include string field 'value'");
+				goto error;
+			}
+
+			value = ast_json_string_get(value_field);
+			ast_log(LOG_DEBUG, "Variable '%s' has value '%s'\n", key, value);
+
+			if (report_field) {
+				enum ast_json_type report_type = ast_json_typeof(report_field);
+
+				if (report_type != AST_JSON_TRUE && report_type != AST_JSON_FALSE) {
+					ast_ari_response_error(response, 400, "Bad Request",
+						"Field 'report_events' in 'variables' entries must be boolean");
+					goto error;
+				}
+
+				report_events = ast_json_is_true(report_field);
+			}
+		} else {
+			ast_ari_response_error(response, 400, "Bad Request",
+				"Each value in 'variables' must be a string or an object with 'value' and optional 'report_events'");
+			goto error;
+		}
+
+		if (!value) {
+			continue;
+		}
+
+		new_var = ast_variable_new(key, value, "");
+		if (!new_var) {
+			ast_ari_response_alloc_failed(response);
+			goto error;
+		}
+
+		var_tail = ast_variable_list_append_hint(variables, var_tail, new_var);
+
+		if (report_events) {
+			struct ast_variable *report_var = ast_variable_new(key, "1", "");
+
+			if (!report_var) {
+				ast_ari_response_alloc_failed(response);
+				goto error;
+			}
+
+			report_var_tail = ast_variable_list_append_hint(report_event_variables,
+				report_var_tail, report_var);
+		}
 	}
-	ast_log(AST_LOG_ERROR, "Unable to convert 'variables' in JSON body to channel variables\n");
 
+	return 0;
+
+error:
+	ast_variables_destroy(*variables);
+	*variables = NULL;
+	ast_variables_destroy(*report_event_variables);
+	*report_event_variables = NULL;
 	return -1;
 }
 
@@ -1417,6 +1529,7 @@ void ast_ari_channels_originate_with_id(struct ast_variable *headers,
 	struct ast_ari_response *response)
 {
 	struct ast_variable *variables = NULL;
+	struct ast_variable *report_event_variables = NULL;
 	struct ast_channel *chan;
 
 	/* Parse any query parameters out of the body parameter */
@@ -1426,7 +1539,8 @@ void ast_ari_channels_originate_with_id(struct ast_variable *headers,
 		ast_ari_channels_originate_with_id_parse_body(args->variables, args);
 		json_variables = ast_json_object_get(args->variables, "variables");
 		if (json_variables
-			&& json_to_ast_variables(response, json_variables, &variables)) {
+			&& json_to_ast_variables(response, json_variables, &variables,
+				&report_event_variables)) {
 			return;
 		}
 	}
@@ -1442,12 +1556,14 @@ void ast_ari_channels_originate_with_id(struct ast_variable *headers,
 		args->caller_id,
 		args->timeout,
 		variables,
+		report_event_variables,
 		args->channel_id,
 		args->other_channel_id,
 		args->originator,
 		args->formats,
 		response);
 	ast_channel_cleanup(chan);
+	ast_variables_destroy(report_event_variables);
 	ast_variables_destroy(variables);
 }
 
@@ -1456,6 +1572,7 @@ void ast_ari_channels_originate(struct ast_variable *headers,
 	struct ast_ari_response *response)
 {
 	struct ast_variable *variables = NULL;
+	struct ast_variable *report_event_variables = NULL;
 	struct ast_channel *chan;
 
 	/* Parse any query parameters out of the body parameter */
@@ -1465,7 +1582,8 @@ void ast_ari_channels_originate(struct ast_variable *headers,
 		ast_ari_channels_originate_parse_body(args->variables, args);
 		json_variables = ast_json_object_get(args->variables, "variables");
 		if (json_variables
-			&& json_to_ast_variables(response, json_variables, &variables)) {
+			&& json_to_ast_variables(response, json_variables, &variables,
+				&report_event_variables)) {
 			return;
 		}
 	}
@@ -1481,12 +1599,14 @@ void ast_ari_channels_originate(struct ast_variable *headers,
 		args->caller_id,
 		args->timeout,
 		variables,
+		report_event_variables,
 		args->channel_id,
 		args->other_channel_id,
 		args->originator,
 		args->formats,
 		response);
 	ast_channel_cleanup(chan);
+	ast_variables_destroy(report_event_variables);
 	ast_variables_destroy(variables);
 }
 
@@ -1559,6 +1679,98 @@ void ast_ari_channels_get_channel_var(struct ast_variable *headers,
 	ast_ari_response_ok(response, ast_json_ref(json));
 }
 
+void ast_ari_channels_get_channel_vars(struct ast_variable *headers,
+	struct ast_ari_channels_get_channel_vars_args *args,
+	struct ast_ari_response *response)
+{
+	int res;
+	RAII_VAR(struct ast_json *, json, ast_json_object_create(), ast_json_unref);
+	RAII_VAR(struct ast_json *, inner_json, ast_json_object_create(), ast_json_unref);
+	RAII_VAR(struct ast_str *, value, ast_str_create(32), ast_free);
+	RAII_VAR(struct ast_channel *, channel, NULL, ast_channel_cleanup);
+
+	ast_assert(response != NULL);
+
+	if (!json || !inner_json || !value) {
+		ast_ari_response_alloc_failed(response);
+		return;
+	}
+
+	if (args->variables_count == 0) {
+		ast_ari_response_error(
+			response, 400, "Bad Request",
+			"At least one variable name is required");
+		return;
+	}
+
+	if (ast_strlen_zero(args->channel_id)) {
+		ast_ari_response_error(
+			response, 400, "Bad Request",
+			"Channel ID is required");
+		return;
+	}
+
+	channel = ast_channel_get_by_name(args->channel_id);
+	if (!channel) {
+		ast_ari_response_error(
+			response, 404, "Channel Not Found",
+			"Provided channel was not found");
+		return;
+	}
+
+	for (int i = 0; i < args->variables_count; i++) {
+		struct ast_json *json_str;
+		char buf[strlen(args->variables[i]) + 1];
+		char *variable;
+
+		strcpy(buf, args->variables[i]);
+		variable = ast_strip(buf);
+		if (ast_strlen_zero(variable)) {
+			ast_ari_response_error(
+				response, 400, "Bad Request",
+				"Variable names are required");
+			return;
+		}
+
+		if (variable[strlen(variable) - 1] == ')') {
+			if (ast_func_read2(channel, variable, &value, 0)) {
+				ast_ari_response_error(
+					response, 500, "Error With Function",
+					"Unable to read provided function");
+				return;
+			}
+		} else {
+			if (!ast_str_retrieve_variable(&value, 0, channel, NULL, variable)) {
+				ast_ari_response_error(
+					response, 404, "Variable Not Found",
+					"Provided variable was not found");
+				return;
+			}
+		}
+
+		json_str = ast_json_string_create(ast_str_buffer(value));
+		if (!json_str) {
+			ast_ari_response_alloc_failed(response);
+			return;
+		}
+
+		res = ast_json_object_set(inner_json, variable, json_str);
+		if (res) {
+			ast_ari_response_alloc_failed(response);
+			ast_json_unref(json_str);
+			return;
+		}
+	}
+
+	res = ast_json_object_set(json, "variables", ast_json_ref(inner_json));
+	if (res) {
+		ast_ari_response_alloc_failed(response);
+		return;
+	}
+
+	ast_ari_response_ok(response, ast_json_ref(json));
+}
+
 void ast_ari_channels_set_channel_var(struct ast_variable *headers,
 	struct ast_ari_channels_set_channel_var_args *args,
 	struct ast_ari_response *response)
@@ -1580,11 +1792,89 @@ void ast_ari_channels_set_channel_var(struct ast_variable *headers,
 		return;
 	}
 
-	if (stasis_app_control_set_channel_var(control, args->variable, args->value)) {
+	if (stasis_app_control_set_channel_var_reportable(control, args->variable, args->value,
+		args->report_events)) {
 		ast_ari_response_error(
 			response, 400, "Bad Request",
 			"Failed to execute function");
 		return;
+	}
+
+	ast_ari_response_no_content(response);
+}
+
+void ast_ari_channels_set_channel_vars(struct ast_variable *headers,
+	struct ast_ari_channels_set_channel_vars_args *args,
+	struct ast_ari_response *response)
+{
+	struct ast_json *json_variables;
+	struct ast_variable *var;
+	RAII_VAR(struct ast_variable *, variables, NULL, ast_variables_destroy);
+	RAII_VAR(struct ast_variable *, report_event_variables, NULL, ast_variables_destroy);
+	RAII_VAR(struct ast_channel *, channel, NULL, ast_channel_cleanup);
+	RAII_VAR(struct stasis_app_control *, control, NULL, ao2_cleanup);
+
+	ast_assert(response != NULL);
+
+	if (!args->variables) {
+		ast_ari_response_error(
+			response, 400, "Bad Request",
+			"The 'variables' field is required");
+		return;
+	}
+
+	channel = ast_channel_get_by_name(args->channel_id);
+	if (!channel) {
+		ast_ari_response_error(
+			response, 404, "Channel Not Found",
+			"Provided channel was not found");
+		return;
+	}
+
+	control = find_control(response, args->channel_id);
+	if (control == NULL) {
+		/* response filled in by find_control */
+		return;
+	}
+
+	json_variables = ast_json_object_get(args->variables, "variables");
+	if (!json_variables || ast_json_typeof(json_variables) != AST_JSON_OBJECT) {
+		ast_ari_response_error(
+			response, 400, "Bad Request",
+			"The 'variables' field must be a JSON object");
+		return;
+	}
+
+	if (json_to_ast_variables(response, json_variables, &variables,
+		&report_event_variables)) {
+		return;
+	}
+
+	for (var = variables; var; var = var->next) {
+		int report_events = 0;
+		struct ast_variable *report_var;
+		char buf[strlen(var->name) + 1];
+		char *variable;
+		strcpy(buf, var->name);
+		/* Strip whitespace from the variable name */
+		variable = ast_strip(buf);
+
+		/* See if the variable is in the report event list */
+		for (report_var = report_event_variables; report_var;
+			report_var = report_var->next) {
+			if (!strcmp(report_var->name, var->name)) {
+				report_events = 1;
+				break;
+			}
+		}
+
+		if (stasis_app_control_set_channel_var_reportable(control, variable,
+			var->value, report_events)) {
+			ast_ari_response_error(
+				response, 400, "Bad Request",
+				"Failed to execute function");
+			return;
+		}
 	}
 
 	ast_ari_response_no_content(response);
@@ -1801,6 +2091,7 @@ void ast_ari_channels_create(struct ast_variable *headers,
 	struct ast_ari_response *response)
 {
 	RAII_VAR(struct ast_variable *, variables, NULL, ast_variables_destroy);
+	RAII_VAR(struct ast_variable *, report_event_variables, NULL, ast_variables_destroy);
 	struct ast_assigned_ids assignedids;
 	struct ari_channel_thread_data *chan_data;
 	struct ast_channel_snapshot *snapshot;
@@ -1818,8 +2109,9 @@ void ast_ari_channels_create(struct ast_variable *headers,
 
 		ast_ari_channels_create_parse_body(args->variables, args);
 		json_variables = ast_json_object_get(args->variables, "variables");
-		if (json_variables
-			&& json_to_ast_variables(response, json_variables, &variables)) {
+		if (json_variables &&
+			json_to_ast_variables(response, json_variables, &variables, &report_event_variables)) {
+			ast_log(LOG_ERROR, "Failed to parse variables from request body for channel creation\n");
 			return;
 		}
 	}
@@ -1938,6 +2230,18 @@ void ast_ari_channels_create(struct ast_variable *headers,
 
 	if (variables) {
 		ast_set_variables(chan_data->chan, variables);
+	}
+	if (report_event_variables) {
+		struct ast_variable *var;
+
+		for (var = report_event_variables; var; var = var->next) {
+			if (ast_channel_set_ari_var_reportable(chan_data->chan, var->name, 1)) {
+				ast_ari_response_alloc_failed(response);
+				ast_channel_cleanup(originator);
+				chan_data_destroy(chan_data);
+				return;
+			}
+		}
 	}
 
 	ast_channel_cleanup(originator);
@@ -2109,6 +2413,7 @@ void ast_ari_channels_rtpstatistics(struct ast_variable *headers,
 
 static int external_media_rtp_udp(struct ast_ari_channels_external_media_args *args,
 	struct ast_variable *variables,
+	struct ast_variable *report_event_variables,
 	struct ast_ari_response *response)
 {
 	char *endpoint;
@@ -2132,6 +2437,7 @@ static int external_media_rtp_udp(struct ast_ari_channels_external_media_args *a
 		NULL,
 		0,
 		variables,
+		report_event_variables,
 		args->channel_id,
 		NULL,
 		NULL,
@@ -2156,6 +2462,7 @@ static int external_media_rtp_udp(struct ast_ari_channels_external_media_args *a
 
 static int external_media_audiosocket_tcp(struct ast_ari_channels_external_media_args *args,
 	struct ast_variable *variables,
+	struct ast_variable *report_event_variables,
 	struct ast_ari_response *response)
 {
 	char *endpoint;
@@ -2178,6 +2485,7 @@ static int external_media_audiosocket_tcp(struct ast_ari_channels_external_media
 		NULL,
 		0,
 		variables,
+		report_event_variables,
 		args->channel_id,
 		NULL,
 		NULL,
@@ -2202,6 +2510,7 @@ static int external_media_audiosocket_tcp(struct ast_ari_channels_external_media
 
 static int external_media_websocket(struct ast_ari_channels_external_media_args *args,
 	struct ast_variable *variables,
+	struct ast_variable *report_event_variables,
 	struct ast_ari_response *response)
 {
 	char *endpoint;
@@ -2236,6 +2545,7 @@ static int external_media_websocket(struct ast_ari_channels_external_media_args 
 		NULL,
 		0,
 		variables,
+		report_event_variables,
 		args->channel_id,
 		NULL,
 		NULL,
@@ -2265,6 +2575,7 @@ void ast_ari_channels_external_media(struct ast_variable *headers,
 	struct ast_ari_channels_external_media_args *args, struct ast_ari_response *response)
 {
 	RAII_VAR(struct ast_variable *, variables, NULL, ast_variables_destroy);
+	RAII_VAR(struct ast_variable *, report_event_variables, NULL, ast_variables_destroy);
 	char *external_host;
 	char *host = NULL;
 	char *port = NULL;
@@ -2278,7 +2589,8 @@ void ast_ari_channels_external_media(struct ast_variable *headers,
 		ast_ari_channels_external_media_parse_body(args->variables, args);
 		json_variables = ast_json_object_get(args->variables, "variables");
 		if (json_variables
-			&& json_to_ast_variables(response, json_variables, &variables)) {
+			&& json_to_ast_variables(response, json_variables, &variables,
+				&report_event_variables)) {
 			return;
 		}
 	}
@@ -2370,7 +2682,7 @@ void ast_ari_channels_external_media(struct ast_variable *headers,
 	}
 
 	if (strcasecmp(args->encapsulation, "rtp") == 0 && strcasecmp(args->transport, "udp") == 0) {
-		if (external_media_rtp_udp(args, variables, response)) {
+		if (external_media_rtp_udp(args, variables, report_event_variables, response)) {
 			ast_ari_response_error(
 				response, 500, "Internal Server Error",
 				"An internal error prevented this request from being handled");
@@ -2378,13 +2690,13 @@ void ast_ari_channels_external_media(struct ast_variable *headers,
 	} else if (strcasecmp(args->encapsulation, "audiosocket") == 0 && strcasecmp(args->transport, "tcp") == 0) {
 		if (ast_strlen_zero(args->data)) {
 			ast_ari_response_error(response, 400, "Bad Request", "data can not be empty");
-		} else if (external_media_audiosocket_tcp(args, variables, response)) {
+		} else if (external_media_audiosocket_tcp(args, variables, report_event_variables, response)) {
 			ast_ari_response_error(
 				response, 500, "Internal Server Error",
 				"An internal error prevented this request from being handled");
 		}
 	} else if (strcasecmp(args->encapsulation, "none") == 0 && strcasecmp(args->transport, "websocket") == 0) {
-		if (external_media_websocket(args, variables, response)) {
+		if (external_media_websocket(args, variables, report_event_variables, response)) {
 			ast_ari_response_error(
 				response, 500, "Internal Server Error",
 				"An internal error prevented this request from being handled");

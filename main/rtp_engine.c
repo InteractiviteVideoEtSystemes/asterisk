@@ -232,6 +232,10 @@ struct ast_rtp_instance {
 	AST_VECTOR(, int) extmap_negotiated;
 	/*! Negotiated RTP extensions (using index based on unique id) */
 	AST_VECTOR(, struct rtp_extmap) extmap_unique_ids;
+	/*! Per-instance RTP port range start (0 means use global) */
+	unsigned int rtp_port_start;
+	/*! Per-instance RTP port range end (0 means use global) */
+	unsigned int rtp_port_end;
 };
 
 /*!
@@ -494,10 +498,20 @@ struct ast_rtp_instance *ast_rtp_instance_new(const char *engine_name,
 		struct ast_sched_context *sched, const struct ast_sockaddr *sa,
 		void *data)
 {
+	return ast_rtp_instance_new_with_options(
+		engine_name, sched, sa, data, NULL);
+}
+
+struct ast_rtp_instance *ast_rtp_instance_new_with_options(const char *engine_name,
+		struct ast_sched_context *sched, const struct ast_sockaddr *sa,
+		void *data, const struct ast_rtp_instance_options *options)
+{
 	struct ast_sockaddr address = {{0,}};
 	struct ast_rtp_instance *instance = NULL;
 	struct ast_rtp_engine *engine = NULL;
 	struct ast_module *mod_ref;
+	unsigned int port_start = options ? options->port_start : 0;
+	unsigned int port_end = options ? options->port_end : 0;
 
 	AST_RWLIST_RDLOCK(&engines);
 
@@ -538,6 +552,10 @@ struct ast_rtp_instance *ast_rtp_instance_new(const char *engine_name,
 	ast_sockaddr_copy(&instance->local_address, sa);
 	ast_sockaddr_copy(&address, sa);
 
+	/* Set the per-instance port range before the engine allocates the transport */
+	instance->rtp_port_start = port_start;
+	instance->rtp_port_end = port_end;
+
 	if (ast_rtp_codecs_payloads_initialize(&instance->codecs)) {
 		ao2_ref(instance, -1);
 		return NULL;
@@ -551,7 +569,12 @@ struct ast_rtp_instance *ast_rtp_instance_new(const char *engine_name,
 		return NULL;
 	}
 
-	ast_debug(1, "Using engine '%s' for RTP instance '%p'\n", engine->name, instance);
+	if (port_start && port_end) {
+		ast_debug(1, "Using engine '%s' for RTP instance '%p' with port range %d-%d\n",
+			engine->name, instance, port_start, port_end);
+	} else {
+		ast_debug(1, "Using engine '%s' for RTP instance '%p'\n", engine->name, instance);
+	}
 
 	/*
 	 * And pass it off to the engine to setup
@@ -2704,14 +2727,47 @@ char *ast_rtp_instance_get_quality(struct ast_rtp_instance *instance, enum ast_r
 	return buf;
 }
 
+#define SET_STATS_VAR_HELPER(var_prefix, field) \
+({ \
+	value = ast_rtp_instance_get_quality(instance, field, quality_buf, sizeof(quality_buf)); \
+	if (value) { \
+		if (!chanvars || ast_strlen_zero(ast_var_find(chanvars, var_prefix))) { \
+			pbx_builtin_setvar_helper(chan, var_prefix, value); \
+			chanchanges++; \
+		} \
+		if (bridge) { \
+			if (!bridgevars || ast_strlen_zero(ast_var_find(bridgevars, var_prefix "BRIDGED"))) { \
+				pbx_builtin_setvar_helper(bridge, var_prefix "BRIDGED", value); \
+				bridgechanges++; \
+			} \
+		} \
+	} \
+})
+
+/*!
+ * \internal
+ *
+ * \warning Absolutely _NO_ channel locks should be held before calling this function.
+ * If the channel is in a bridge, ast_rtp_instance_set_stats_vars() will
+ * attempt to lock the bridge peer as well as this channel.  This can cause
+ * a lock inversion if we already have this channel locked and another
+ * thread tries to set bridge variables on the peer because it will have
+ * locked the peer first, then this channel.  For this reason, we must
+ * NOT have the channel locked when we call ast_rtp_instance_set_stats_vars().
+ */
 void ast_rtp_instance_set_stats_vars(struct ast_channel *chan, struct ast_rtp_instance *instance)
 {
 	char quality_buf[AST_MAX_USER_FIELD];
-	char *quality;
+	char *value;
 	struct ast_channel *bridge;
+	struct varshead *chanvars = ast_channel_varshead(chan);
+	struct varshead *bridgevars = NULL;
+	int chanchanges = 0;
+	int bridgechanges = 0;
 
 	bridge = ast_channel_bridge_peer(chan);
 	if (bridge) {
+		bridgevars = ast_channel_varshead(bridge);
 		ast_channel_lock_both(chan, bridge);
 		ast_channel_stage_snapshot(bridge);
 	} else {
@@ -2719,55 +2775,28 @@ void ast_rtp_instance_set_stats_vars(struct ast_channel *chan, struct ast_rtp_in
 	}
 	ast_channel_stage_snapshot(chan);
 
-	quality = ast_rtp_instance_get_quality(instance, AST_RTP_INSTANCE_STAT_FIELD_QUALITY,
-		quality_buf, sizeof(quality_buf));
-	if (quality) {
-		pbx_builtin_setvar_helper(chan, "RTPAUDIOQOS", quality);
-		if (bridge) {
-			pbx_builtin_setvar_helper(bridge, "RTPAUDIOQOSBRIDGED", quality);
-		}
-	}
+	SET_STATS_VAR_HELPER("RTPAUDIOQOS", AST_RTP_INSTANCE_STAT_FIELD_QUALITY);
 
-	quality = ast_rtp_instance_get_quality(instance,
-		AST_RTP_INSTANCE_STAT_FIELD_QUALITY_JITTER, quality_buf, sizeof(quality_buf));
-	if (quality) {
-		pbx_builtin_setvar_helper(chan, "RTPAUDIOQOSJITTER", quality);
-		if (bridge) {
-			pbx_builtin_setvar_helper(bridge, "RTPAUDIOQOSJITTERBRIDGED", quality);
-		}
-	}
+	SET_STATS_VAR_HELPER("RTPAUDIOQOSJITTER", AST_RTP_INSTANCE_STAT_FIELD_QUALITY_JITTER);
 
-	quality = ast_rtp_instance_get_quality(instance,
-		AST_RTP_INSTANCE_STAT_FIELD_QUALITY_LOSS, quality_buf, sizeof(quality_buf));
-	if (quality) {
-		pbx_builtin_setvar_helper(chan, "RTPAUDIOQOSLOSS", quality);
-		if (bridge) {
-			pbx_builtin_setvar_helper(bridge, "RTPAUDIOQOSLOSSBRIDGED", quality);
-		}
-	}
+	SET_STATS_VAR_HELPER("RTPAUDIOQOSLOSS", AST_RTP_INSTANCE_STAT_FIELD_QUALITY_LOSS);
 
-	quality = ast_rtp_instance_get_quality(instance,
-		AST_RTP_INSTANCE_STAT_FIELD_QUALITY_RTT, quality_buf, sizeof(quality_buf));
-	if (quality) {
-		pbx_builtin_setvar_helper(chan, "RTPAUDIOQOSRTT", quality);
-		if (bridge) {
-			pbx_builtin_setvar_helper(bridge, "RTPAUDIOQOSRTTBRIDGED", quality);
-		}
-	}
+	SET_STATS_VAR_HELPER("RTPAUDIOQOSRTT", AST_RTP_INSTANCE_STAT_FIELD_QUALITY_RTT);
 
-	quality = ast_rtp_instance_get_quality(instance,
-		AST_RTP_INSTANCE_STAT_FIELD_QUALITY_MES, quality_buf, sizeof(quality_buf));
-	if (quality) {
-		pbx_builtin_setvar_helper(chan, "RTPAUDIOQOSMES", quality);
-		if (bridge) {
-			pbx_builtin_setvar_helper(bridge, "RTPAUDIOQOSMESBRIDGED", quality);
-		}
-	}
+	SET_STATS_VAR_HELPER("RTPAUDIOQOSMES", AST_RTP_INSTANCE_STAT_FIELD_QUALITY_MES);
 
-	ast_channel_stage_snapshot_done(chan);
+	if (chanchanges) {
+		ast_channel_stage_snapshot_done(chan);
+	} else {
+		ast_clear_flag(ast_channel_flags(chan), AST_FLAG_SNAPSHOT_STAGE);
+	}
 	ast_channel_unlock(chan);
 	if (bridge) {
-		ast_channel_stage_snapshot_done(bridge);
+		if (bridgechanges) {
+			ast_channel_stage_snapshot_done(bridge);
+		} else {
+			ast_clear_flag(ast_channel_flags(bridge), AST_FLAG_SNAPSHOT_STAGE);
+		}
 		ast_channel_unlock(bridge);
 		ast_channel_unref(bridge);
 	}
@@ -2911,6 +2940,16 @@ int ast_rtp_instance_get_hold_timeout(struct ast_rtp_instance *instance)
 int ast_rtp_instance_get_keepalive(struct ast_rtp_instance *instance)
 {
 	return instance->keepalive;
+}
+
+unsigned int ast_rtp_instance_get_port_start(struct ast_rtp_instance *instance)
+{
+	return instance->rtp_port_start;
+}
+
+unsigned int ast_rtp_instance_get_port_end(struct ast_rtp_instance *instance)
+{
+	return instance->rtp_port_end;
 }
 
 struct ast_rtp_engine *ast_rtp_instance_get_engine(struct ast_rtp_instance *instance)

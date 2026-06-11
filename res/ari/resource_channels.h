@@ -70,7 +70,7 @@ struct ast_ari_channels_originate_args {
 	const char *caller_id;
 	/*! Timeout (in seconds) before giving up dialing, or -1 for no timeout. */
 	int timeout;
-	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice" } } */
+	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Each variable value may be either a string or an object containing "value" (string) and optional "report_events" (boolean) to include updates for that variable in channel events (defaults to false). Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice", "Call_State": { "value": "WaitingForAgent", "report_events": true } } } */
 	struct ast_json *variables;
 	/*! The unique id to assign the channel on creation. */
 	const char *channel_id;
@@ -118,7 +118,7 @@ struct ast_ari_channels_create_args {
 	const char *originator;
 	/*! The format name capability list to use if originator is not specified. Ex. "ulaw,slin16".  Format names can be found with "core show codecs". */
 	const char *formats;
-	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice" } } */
+	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Each variable value may be either a string or an object containing "value" (string) and optional "report_events" (boolean) to include updates for that variable in channel events (defaults to false). Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice", "Call_State": { "value": "WaitingForAgent", "report_events": true } } } */
 	struct ast_json *variables;
 };
 /*!
@@ -175,7 +175,7 @@ struct ast_ari_channels_originate_with_id_args {
 	const char *caller_id;
 	/*! Timeout (in seconds) before giving up dialing, or -1 for no timeout. */
 	int timeout;
-	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice" } } */
+	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Each variable value may be either a string or an object containing "value" (string) and optional "report_events" (boolean) to include updates for that variable in channel events (defaults to false). Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice", "Call_State": { "value": "WaitingForAgent", "report_events": true } } } */
 	struct ast_json *variables;
 	/*! The unique id to assign the second channel when using local channels. */
 	const char *other_channel_id;
@@ -706,6 +706,8 @@ struct ast_ari_channels_set_channel_var_args {
 	const char *variable;
 	/*! The value to set the variable to */
 	const char *value;
+	/*! Whether this variable should be included in channel events. Defaults to false. */
+	int report_events;
 };
 /*!
  * \brief Body parsing function for /channels/{channelId}/variable.
@@ -726,6 +728,62 @@ int ast_ari_channels_set_channel_var_parse_body(
  * \param[out] response HTTP response
  */
 void ast_ari_channels_set_channel_var(struct ast_variable *headers, struct ast_ari_channels_set_channel_var_args *args, struct ast_ari_response *response);
+/*! Argument struct for ast_ari_channels_get_channel_vars() */
+struct ast_ari_channels_get_channel_vars_args {
+	/*! Channel's id */
+	const char *channel_id;
+	/*! Array of The channel variables or functions to get */
+	const char **variables;
+	/*! Length of variables array. */
+	size_t variables_count;
+	/*! Parsing context for variables. */
+	char *variables_parse;
+};
+/*!
+ * \brief Body parsing function for /channels/{channelId}/variables.
+ * \param body The JSON body from which to parse parameters.
+ * \param[out] args The args structure to parse into.
+ * \retval zero on success
+ * \retval non-zero on failure
+ */
+int ast_ari_channels_get_channel_vars_parse_body(
+	struct ast_json *body,
+	struct ast_ari_channels_get_channel_vars_args *args);
+
+/*!
+ * \brief Get the value of multiple channel variables or functions.
+ *
+ * \param headers HTTP headers
+ * \param args Swagger parameters
+ * \param[out] response HTTP response
+ */
+void ast_ari_channels_get_channel_vars(struct ast_variable *headers, struct ast_ari_channels_get_channel_vars_args *args, struct ast_ari_response *response);
+/*! Argument struct for ast_ari_channels_set_channel_vars() */
+struct ast_ari_channels_set_channel_vars_args {
+	/*! Channel's id */
+	const char *channel_id;
+	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel. Each variable value may be either a string or an object containing "value" (string) and optional "report_events" (boolean) to include updates for that variable in channel events (defaults to false). Ex. { "variables": { "CALLERID(name)": "Alice", "Call_State": { "value": "WaitingForAgent", "report_events": true } } } */
+	struct ast_json *variables;
+};
+/*!
+ * \brief Body parsing function for /channels/{channelId}/variables.
+ * \param body The JSON body from which to parse parameters.
+ * \param[out] args The args structure to parse into.
+ * \retval zero on success
+ * \retval non-zero on failure
+ */
+int ast_ari_channels_set_channel_vars_parse_body(
+	struct ast_json *body,
+	struct ast_ari_channels_set_channel_vars_args *args);
+
+/*!
+ * \brief Set the values of multiple channel variables or functions.
+ *
+ * \param headers HTTP headers
+ * \param args Swagger parameters
+ * \param[out] response HTTP response
+ */
+void ast_ari_channels_set_channel_vars(struct ast_variable *headers, struct ast_ari_channels_set_channel_vars_args *args, struct ast_ari_response *response);
 /*! Argument struct for ast_ari_channels_snoop_channel() */
 struct ast_ari_channels_snoop_channel_args {
 	/*! Channel's id */
@@ -845,7 +903,7 @@ struct ast_ari_channels_external_media_args {
 	const char *channel_id;
 	/*! Stasis Application to place channel into */
 	const char *app;
-	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice" } } */
+	/*! The "variables" key in the body object holds variable key/value pairs to set on the channel on creation. Each variable value may be either a string or an object containing "value" (string) and optional "report_events" (boolean) to include updates for that variable in channel events (defaults to false). Other keys in the body object are interpreted as query parameters. Ex. { "endpoint": "SIP/Alice", "variables": { "CALLERID(name)": "Alice", "Call_State": { "value": "WaitingForAgent", "report_events": true } } } */
 	struct ast_json *variables;
 	/*! Hostname/ip:port or websocket_client connection ID of external host.  May be empty for a websocket server connection. */
 	const char *external_host;

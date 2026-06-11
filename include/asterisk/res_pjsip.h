@@ -236,6 +236,8 @@ struct ast_sip_transport {
 		AST_STRING_FIELD(external_media_address);
 		/*! Optional domain to use for messages if provided could not be found */
 		AST_STRING_FIELD(domain);
+		/*! Optional FQDN to use in SIP Contact and Via headers instead of external_signaling_address */
+		AST_STRING_FIELD(external_signaling_hostname);
 		);
 	/*! Type of transport */
 	enum ast_transport type;
@@ -966,6 +968,10 @@ struct ast_sip_media_rtp_configuration {
 	unsigned int follow_early_media_fork;
 	/*! Accept updated SDPs on non-100rel 18X and 2XX responses with the same To tag */
 	unsigned int accept_multiple_sdp_answers;
+	/*! Per-endpoint RTP port range start (0 means use global rtp.conf setting) */
+	unsigned int port_start;
+	/*! Per-endpoint RTP port range end (0 means use global rtp.conf setting) */
+	unsigned int port_end;
 };
 
 /*!

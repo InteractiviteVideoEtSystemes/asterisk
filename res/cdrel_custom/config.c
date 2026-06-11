@@ -432,6 +432,7 @@ static struct cdrel_field *field_alloc(struct cdrel_config *config, const char *
 			if (strchr(qualifier, '%') != NULL) {
 				data_swap = ast_strdupa(qualifier);
 				ast_set_flag(&field_flags, cdrel_flag_format_spec);
+				forced_output_data_type = cdrel_type_string;
 				ast_debug(3, "   Using qualifier '%s' for field '%s' flags: %s\n", qualifier,
 					field_name, ast_str_tmp(128, cdrel_get_field_flags(&field_flags, &STR_TMP)));
 			}
@@ -464,6 +465,17 @@ static struct cdrel_field *field_alloc(struct cdrel_config *config, const char *
 		ast_log(LOG_WARNING, "%s->%s: Field '%s' not found\n",
 			cdrel_basename(config->config_filename), cdrel_basename(config->output_filename), field_name);
 		return NULL;
+	}
+
+	if (ast_test_flag(&field_flags, cdrel_flag_format_spec)
+		&& registered_field->input_data_type != cdrel_type_timeval) {
+		ast_log(LOG_WARNING, "%s->%s: Custom format '%s' ignored for field '%s'."
+			" Only timeval types can use custom format strings.\n",
+			cdrel_basename(config->config_filename), cdrel_basename(config->output_filename),
+			data, field_name);
+		forced_output_data_type = cdrel_data_type_end;
+		ast_clear_flag(&field_flags, cdrel_flag_format_spec);
+		data = NULL;
 	}
 
 	field = ast_calloc(1, sizeof(*registered_field) + strlen(input_field_template) + 1);
@@ -861,7 +873,11 @@ static int open_database(struct cdrel_config *config)
 		return -1;
 	}
 
+#if SQLITE_VERSION_NUMBER >= 3020000
 	res = sqlite3_prepare_v3(config->db, sql, -1, SQLITE_PREPARE_PERSISTENT, &config->insert, NULL);
+#else
+	res = sqlite3_prepare_v2(config->db, sql, -1, &config->insert, NULL);
+#endif
 	if (res != SQLITE_OK) {
 		ast_log(LOG_ERROR, "%s->%s: Unable to prepare INSERT statement '%s': %s\n",
 			cdrel_basename(config->config_filename), cdrel_basename(config->output_filename),
@@ -1041,7 +1057,7 @@ static int load_database_config_file(enum cdrel_record_type record_type, struct 
 		return -1;
 	} else if (cfg == CONFIG_STATUS_FILEUNCHANGED) {
 		ast_debug(1, "%s: Config file unchanged, not reloading\n", config_filename);
-		return 0;
+		return 1;
 	}
 
 	while ((category = ast_category_browse_filtered(cfg, NULL, category, NULL))) {
@@ -1127,7 +1143,7 @@ static struct cdrel_config *load_text_file_legacy_config(enum cdrel_record_type 
 		return NULL;
 	}
 
-	ast_log(LOG_NOTICE, "%s->%s: Logging %s records\n",
+	ast_log(LOG_NOTICE, "%s->%s: Logging legacy %s records as advanced\n",
 		cdrel_basename(config->config_filename), cdrel_basename(config->output_filename),
 		RECORD_TYPE_STR(config->record_type));
 
@@ -1310,7 +1326,7 @@ static int load_text_file_config_file(enum cdrel_record_type record_type,
 		return -1;
 	} else if (cfg == CONFIG_STATUS_FILEUNCHANGED) {
 		ast_debug(1, "%s: Config file unchanged, not reloading\n", config_filename);
-		return 0;
+		return 1;
 	}
 
 	while ((category = ast_category_browse_filtered(cfg, NULL, category, NULL))) {
@@ -1397,23 +1413,22 @@ int cdrel_reload_module(enum cdrel_backend_type output_type, enum cdrel_record_t
 	}
 
 	res = load_config_file(output_type, record_type, new_configs, filename, 1);
-	if (res != 0) {
+	if (res < 0) {
 		AST_VECTOR_RESET(new_configs, config_free);
 		AST_VECTOR_PTR_FREE(new_configs);
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
-	/* Now swap the new ones in. */
-	*configs = new_configs;
+	if (res == 0) {
+		/* Now swap the new ones in. */
+		*configs = new_configs;
 
-	/* Free the old ones. */
-	AST_VECTOR_RESET(old_configs, config_free);
-	AST_VECTOR_PTR_FREE(old_configs);
+		/* Free the old ones. */
+		AST_VECTOR_RESET(old_configs, config_free);
+		AST_VECTOR_PTR_FREE(old_configs);
+	}
 
 	return AST_MODULE_LOAD_SUCCESS;
-
-
-	return -1;
 }
 
 struct cdrel_configs *cdrel_load_module(enum cdrel_backend_type backend_type,
