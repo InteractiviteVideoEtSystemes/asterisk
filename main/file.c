@@ -498,6 +498,8 @@ static struct ast_filestream *get_filestream(struct ast_format_def *fmt, FILE *b
 		s->fr.frametype = AST_FRAME_VOICE;
 	} else if (ast_format_get_type(fmt->format) == AST_MEDIA_TYPE_VIDEO) {
 		s->fr.frametype = AST_FRAME_VIDEO;
+	} else if (ast_format_get_type(fmt->format) == AST_MEDIA_TYPE_TEXT) {
+		s->fr.frametype = AST_FRAME_TEXT;
 	}
 	s->fr.mallocd = 0;
 	s->fr.subclass.format = ao2_bump(fmt->format);
